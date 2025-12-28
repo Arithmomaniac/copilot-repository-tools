@@ -3,6 +3,7 @@
 import json
 import os
 import platform
+import sqlite3
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -218,7 +219,6 @@ def _parse_vscdb_file(
     """
     sessions = []
     try:
-        import sqlite3
         conn = sqlite3.connect(str(file_path))
         cursor = conn.cursor()
         
@@ -249,7 +249,7 @@ def _parse_vscdb_file(
                     pass
         
         conn.close()
-    except Exception:
+    except (sqlite3.DatabaseError, sqlite3.OperationalError, OSError):
         # SQLite database might not have expected structure or might be corrupted
         pass
     

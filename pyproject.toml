@@ -43,6 +43,13 @@ Repository = "https://github.com/Arithmomaniac/copilot-repository-tools"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/copilot_chat_archive"]
+artifacts = ["src/copilot_chat_archive/templates/*"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/copilot_chat_archive/**/*.py",
+    "src/copilot_chat_archive/templates/*.html",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
