@@ -1,27 +1,85 @@
-"""Scanner module to find and parse VS Code Copilot chat history files."""
+"""Scanner module to find and parse VS Code Copilot chat history files.
+
+Data structures are informed by:
+- Arbuzov/copilot-chat-history (https://github.com/Arbuzov/copilot-chat-history)
+- microsoft/vscode-copilot-chat (https://github.com/microsoft/vscode-copilot-chat)
+"""
 
 import json
 import os
 import platform
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Iterator
 
 
 @dataclass
+class ToolInvocation:
+    """Represents a tool invocation in a chat response.
+    
+    Based on ChatToolInvocation from Arbuzov/copilot-chat-history.
+    """
+    
+    name: str
+    input: str | None = None
+    result: str | None = None
+    status: str | None = None
+    start_time: int | None = None
+    end_time: int | None = None
+
+
+@dataclass
+class FileChange:
+    """Represents a file change in a chat response.
+    
+    Based on ChatFileChange from Arbuzov/copilot-chat-history.
+    """
+    
+    path: str
+    diff: str | None = None
+    content: str | None = None
+    explanation: str | None = None
+    language_id: str | None = None
+
+
+@dataclass
+class CommandRun:
+    """Represents a command execution in a chat response.
+    
+    Based on ChatCommandRun from Arbuzov/copilot-chat-history.
+    """
+    
+    command: str
+    title: str | None = None
+    result: str | None = None
+    status: str | None = None
+    output: str | None = None
+    timestamp: int | None = None
+
+
+@dataclass
 class ChatMessage:
-    """Represents a single message in a chat session."""
+    """Represents a single message in a chat session.
+    
+    Enhanced based on ChatMessage/ChatResponseItem from Arbuzov/copilot-chat-history.
+    """
 
     role: str  # 'user' or 'assistant'
     content: str
     timestamp: str | None = None
+    tool_invocations: list[ToolInvocation] = field(default_factory=list)
+    file_changes: list[FileChange] = field(default_factory=list)
+    command_runs: list[CommandRun] = field(default_factory=list)
 
 
 @dataclass
 class ChatSession:
-    """Represents a Copilot chat session."""
+    """Represents a Copilot chat session.
+    
+    Based on ChatSession/ChatSessionData from Arbuzov/copilot-chat-history.
+    """
 
     session_id: str
     workspace_name: str | None
@@ -31,6 +89,9 @@ class ChatSession:
     updated_at: str | None = None
     source_file: str | None = None
     vscode_edition: str = "stable"  # 'stable' or 'insider'
+    custom_title: str | None = None
+    requester_username: str | None = None
+    responder_username: str | None = None
 
 
 def get_vscode_storage_paths() -> list[tuple[str, str]]:
@@ -153,60 +214,190 @@ def _parse_workspace_json(workspace_dir: Path) -> tuple[str | None, str | None]:
     return None, None
 
 
+def _parse_tool_invocations(raw_invocations: list) -> list[ToolInvocation]:
+    """Parse tool invocations from raw data."""
+    invocations = []
+    for inv in raw_invocations:
+        if isinstance(inv, dict):
+            invocations.append(ToolInvocation(
+                name=inv.get("name", inv.get("toolName", "unknown")),
+                input=str(inv.get("input", inv.get("arguments", ""))) if inv.get("input") or inv.get("arguments") else None,
+                result=str(inv.get("result", inv.get("output", ""))) if inv.get("result") or inv.get("output") else None,
+                status=inv.get("status"),
+                start_time=inv.get("startTime"),
+                end_time=inv.get("endTime"),
+            ))
+    return invocations
+
+
+def _parse_file_changes(raw_changes: list) -> list[FileChange]:
+    """Parse file changes from raw data."""
+    changes = []
+    for change in raw_changes:
+        if isinstance(change, dict):
+            path = change.get("path") or change.get("uri", "")
+            if path.startswith("file://"):
+                path = path[7:]
+            changes.append(FileChange(
+                path=path,
+                diff=change.get("diff"),
+                content=change.get("content"),
+                explanation=change.get("explanation"),
+                language_id=change.get("languageId"),
+            ))
+    return changes
+
+
+def _parse_command_runs(raw_commands: list) -> list[CommandRun]:
+    """Parse command runs from raw data."""
+    commands = []
+    for cmd in raw_commands:
+        if isinstance(cmd, dict):
+            commands.append(CommandRun(
+                command=cmd.get("command", "unknown"),
+                title=cmd.get("title"),
+                result=str(cmd.get("result", "")) if cmd.get("result") else None,
+                status=cmd.get("status"),
+                output=cmd.get("output"),
+                timestamp=cmd.get("timestamp"),
+            ))
+    return commands
+
+
 def _parse_chat_session_file(
     file_path: Path, workspace_name: str | None, workspace_path: str | None, edition: str
 ) -> ChatSession | None:
-    """Parse a single chat session JSON file."""
+    """Parse a single chat session JSON file.
+    
+    Supports multiple formats including:
+    - Standard messages array format
+    - VS Code Copilot Chat "requests" format (from Arbuzov/copilot-chat-history)
+    """
     try:
         with open(file_path, encoding="utf-8") as f:
             data = json.load(f)
     except (json.JSONDecodeError, OSError):
         return None
 
-    # Handle different JSON formats
     messages = []
 
     # Try to extract messages from various possible structures
-    raw_messages = data.get("messages", []) or data.get("exchanges", [])
+    # The "requests" format is from VS Code Copilot Chat (Arbuzov/copilot-chat-history)
+    raw_messages = (
+        data.get("requests", []) or 
+        data.get("messages", []) or 
+        data.get("exchanges", [])
+    )
 
     for msg in raw_messages:
         if isinstance(msg, dict):
-            role = msg.get("role", msg.get("type", "unknown"))
-            # Normalize roles
-            if role in ("human", "user"):
-                role = "user"
-            elif role in ("assistant", "copilot", "ai"):
-                role = "assistant"
+            # Handle "requests" format from VS Code Copilot Chat
+            # Each request has message.text (user) and response[] (assistant)
+            if "message" in msg and isinstance(msg.get("message"), dict):
+                # User message
+                user_text = msg["message"].get("text", "")
+                if user_text:
+                    messages.append(ChatMessage(
+                        role="user",
+                        content=user_text,
+                        timestamp=str(msg.get("timestamp")) if msg.get("timestamp") else None,
+                    ))
+                
+                # Assistant response with tool invocations, file changes, etc.
+                response_items = msg.get("response", [])
+                if response_items:
+                    response_content = []
+                    tool_invocations = []
+                    file_changes = []
+                    command_runs = []
+                    
+                    for item in response_items:
+                        if isinstance(item, dict):
+                            # Extract text content
+                            if item.get("value"):
+                                response_content.append(str(item["value"]))
+                            
+                            # Extract tool invocations
+                            if item.get("toolInvocations"):
+                                tool_invocations.extend(
+                                    _parse_tool_invocations(item["toolInvocations"])
+                                )
+                            
+                            # Extract file changes
+                            for key in ("fileChanges", "fileEdits", "files"):
+                                if item.get(key):
+                                    file_changes.extend(_parse_file_changes(item[key]))
+                            
+                            # Extract command runs
+                            if item.get("commandRuns"):
+                                command_runs.extend(_parse_command_runs(item["commandRuns"]))
+                    
+                    # Also check top-level of the request
+                    if msg.get("toolInvocations"):
+                        tool_invocations.extend(_parse_tool_invocations(msg["toolInvocations"]))
+                    if msg.get("commandRuns"):
+                        command_runs.extend(_parse_command_runs(msg["commandRuns"]))
+                    if msg.get("fileChanges"):
+                        file_changes.extend(_parse_file_changes(msg["fileChanges"]))
+                    
+                    if response_content or tool_invocations or file_changes or command_runs:
+                        messages.append(ChatMessage(
+                            role="assistant",
+                            content="\n".join(response_content),
+                            tool_invocations=tool_invocations,
+                            file_changes=file_changes,
+                            command_runs=command_runs,
+                        ))
+            else:
+                # Standard message format
+                role = msg.get("role", msg.get("type", "unknown"))
+                if role in ("human", "user"):
+                    role = "user"
+                elif role in ("assistant", "copilot", "ai"):
+                    role = "assistant"
 
-            content = msg.get("content", msg.get("text", msg.get("message", "")))
+                content = msg.get("content", msg.get("text", msg.get("message", "")))
+                if isinstance(content, list):
+                    content = "\n".join(
+                        str(c.get("text", c) if isinstance(c, dict) else c)
+                        for c in content
+                    )
 
-            # Handle content that might be a list
-            if isinstance(content, list):
-                content = "\n".join(
-                    str(c.get("text", c) if isinstance(c, dict) else c)
-                    for c in content
-                )
+                timestamp = msg.get("timestamp", msg.get("createdAt"))
+                
+                # Parse tool invocations and file changes from standard format
+                tool_invocations = _parse_tool_invocations(msg.get("toolInvocations", []))
+                file_changes = _parse_file_changes(msg.get("fileChanges", []) or msg.get("fileEdits", []))
+                command_runs = _parse_command_runs(msg.get("commandRuns", []))
 
-            timestamp = msg.get("timestamp", msg.get("createdAt"))
-
-            messages.append(ChatMessage(role=role, content=str(content), timestamp=timestamp))
+                messages.append(ChatMessage(
+                    role=role,
+                    content=str(content),
+                    timestamp=str(timestamp) if timestamp else None,
+                    tool_invocations=tool_invocations,
+                    file_changes=file_changes,
+                    command_runs=command_runs,
+                ))
 
     if not messages:
         return None
 
     session_id = data.get("sessionId", data.get("id", file_path.stem))
-    created_at = data.get("createdAt", data.get("created"))
-    updated_at = data.get("updatedAt", data.get("lastModified"))
+    created_at = data.get("createdAt", data.get("created", data.get("creationDate")))
+    updated_at = data.get("updatedAt", data.get("lastModified", data.get("lastMessageDate")))
 
     return ChatSession(
         session_id=str(session_id),
         workspace_name=workspace_name,
         workspace_path=workspace_path,
         messages=messages,
-        created_at=created_at,
-        updated_at=updated_at,
+        created_at=str(created_at) if created_at else None,
+        updated_at=str(updated_at) if updated_at else None,
         source_file=str(file_path),
         vscode_edition=edition,
+        custom_title=data.get("customTitle"),
+        requester_username=data.get("requesterUsername"),
+        responder_username=data.get("responderUsername"),
     )
 
 
@@ -260,11 +451,15 @@ def _extract_session_from_dict(
     data: dict, workspace_name: str | None, workspace_path: str | None, 
     edition: str, source_file: str
 ) -> ChatSession | None:
-    """Extract a chat session from a dictionary structure."""
+    """Extract a chat session from a dictionary structure.
+    
+    Supports the VS Code Copilot Chat format with requests, tool invocations, etc.
+    """
     messages = []
     
-    # Look for messages in various formats
+    # Look for messages in various formats - "requests" is the VS Code Copilot format
     raw_messages = (
+        data.get("requests", []) or
         data.get("messages", []) or
         data.get("exchanges", []) or
         data.get("history", [])
@@ -275,36 +470,91 @@ def _extract_session_from_dict(
     
     for msg in raw_messages:
         if isinstance(msg, dict):
-            role = msg.get("role", msg.get("type", "unknown"))
-            if role in ("human", "user"):
-                role = "user"
-            elif role in ("assistant", "copilot", "ai"):
-                role = "assistant"
-            
-            content = msg.get("content", msg.get("text", msg.get("message", "")))
-            if isinstance(content, list):
-                content = "\n".join(
-                    str(c.get("text", c) if isinstance(c, dict) else c)
-                    for c in content
-                )
-            
-            timestamp = msg.get("timestamp", msg.get("createdAt"))
-            messages.append(ChatMessage(role=role, content=str(content), timestamp=timestamp))
+            # Handle "requests" format from VS Code Copilot Chat
+            if "message" in msg and isinstance(msg.get("message"), dict):
+                user_text = msg["message"].get("text", "")
+                if user_text:
+                    messages.append(ChatMessage(
+                        role="user",
+                        content=user_text,
+                        timestamp=str(msg.get("timestamp")) if msg.get("timestamp") else None,
+                    ))
+                
+                response_items = msg.get("response", [])
+                if response_items:
+                    response_content = []
+                    tool_invocations = []
+                    file_changes = []
+                    command_runs = []
+                    
+                    for item in response_items:
+                        if isinstance(item, dict):
+                            if item.get("value"):
+                                response_content.append(str(item["value"]))
+                            if item.get("toolInvocations"):
+                                tool_invocations.extend(_parse_tool_invocations(item["toolInvocations"]))
+                            for key in ("fileChanges", "fileEdits", "files"):
+                                if item.get(key):
+                                    file_changes.extend(_parse_file_changes(item[key]))
+                            if item.get("commandRuns"):
+                                command_runs.extend(_parse_command_runs(item["commandRuns"]))
+                    
+                    if response_content or tool_invocations or file_changes or command_runs:
+                        messages.append(ChatMessage(
+                            role="assistant",
+                            content="\n".join(response_content),
+                            tool_invocations=tool_invocations,
+                            file_changes=file_changes,
+                            command_runs=command_runs,
+                        ))
+            else:
+                # Standard format
+                role = msg.get("role", msg.get("type", "unknown"))
+                if role in ("human", "user"):
+                    role = "user"
+                elif role in ("assistant", "copilot", "ai"):
+                    role = "assistant"
+                
+                content = msg.get("content", msg.get("text", msg.get("message", "")))
+                if isinstance(content, list):
+                    content = "\n".join(
+                        str(c.get("text", c) if isinstance(c, dict) else c)
+                        for c in content
+                    )
+                
+                timestamp = msg.get("timestamp", msg.get("createdAt"))
+                tool_invocations = _parse_tool_invocations(msg.get("toolInvocations", []))
+                file_changes = _parse_file_changes(msg.get("fileChanges", []) or msg.get("fileEdits", []))
+                command_runs = _parse_command_runs(msg.get("commandRuns", []))
+                
+                messages.append(ChatMessage(
+                    role=role,
+                    content=str(content),
+                    timestamp=str(timestamp) if timestamp else None,
+                    tool_invocations=tool_invocations,
+                    file_changes=file_changes,
+                    command_runs=command_runs,
+                ))
     
     if not messages:
         return None
     
     session_id = data.get("sessionId", data.get("id", str(hash(source_file))))
+    created_at = data.get("createdAt", data.get("created", data.get("creationDate")))
+    updated_at = data.get("updatedAt", data.get("lastModified", data.get("lastMessageDate")))
     
     return ChatSession(
         session_id=str(session_id),
         workspace_name=workspace_name,
         workspace_path=workspace_path,
         messages=messages,
-        created_at=data.get("createdAt", data.get("created")),
-        updated_at=data.get("updatedAt", data.get("lastModified")),
+        created_at=str(created_at) if created_at else None,
+        updated_at=str(updated_at) if updated_at else None,
         source_file=source_file,
         vscode_edition=edition,
+        custom_title=data.get("customTitle"),
+        requester_username=data.get("requesterUsername"),
+        responder_username=data.get("responderUsername"),
     )
 
 

@@ -1,4 +1,9 @@
-"""Database module for storing and querying Copilot chat sessions."""
+"""Database module for storing and querying Copilot chat sessions.
+
+Schema design inspired by:
+- tad-hq/universal-session-viewer: FTS5 full-text search
+- jazzyalex/agent-sessions: SQLite indexing patterns
+"""
 
 import json
 import sqlite3
@@ -6,11 +11,14 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-from .scanner import ChatMessage, ChatSession
+from .scanner import ChatMessage, ChatSession, ToolInvocation, FileChange, CommandRun
 
 
 class Database:
-    """SQLite database for storing Copilot chat sessions."""
+    """SQLite database for storing Copilot chat sessions.
+    
+    Uses FTS5 for full-text search (inspired by tad-hq/universal-session-viewer).
+    """
 
     SCHEMA = """
     CREATE TABLE IF NOT EXISTS sessions (
@@ -22,6 +30,9 @@ class Database:
         updated_at TEXT,
         source_file TEXT,
         vscode_edition TEXT DEFAULT 'stable',
+        custom_title TEXT,
+        requester_username TEXT,
+        responder_username TEXT,
         imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
@@ -35,12 +46,53 @@ class Database:
         FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
     );
 
+    -- Tool invocations table (from Arbuzov/copilot-chat-history types)
+    CREATE TABLE IF NOT EXISTS tool_invocations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        message_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        input TEXT,
+        result TEXT,
+        status TEXT,
+        start_time INTEGER,
+        end_time INTEGER,
+        FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
+    );
+
+    -- File changes table (from Arbuzov/copilot-chat-history types)
+    CREATE TABLE IF NOT EXISTS file_changes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        message_id INTEGER NOT NULL,
+        path TEXT NOT NULL,
+        diff TEXT,
+        content TEXT,
+        explanation TEXT,
+        language_id TEXT,
+        FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
+    );
+
+    -- Command runs table (from Arbuzov/copilot-chat-history types)
+    CREATE TABLE IF NOT EXISTS command_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        message_id INTEGER NOT NULL,
+        command TEXT NOT NULL,
+        title TEXT,
+        result TEXT,
+        status TEXT,
+        output TEXT,
+        timestamp INTEGER,
+        FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
+    );
+
     CREATE INDEX IF NOT EXISTS idx_sessions_workspace ON sessions(workspace_name);
     CREATE INDEX IF NOT EXISTS idx_sessions_created ON sessions(created_at);
     CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
     CREATE INDEX IF NOT EXISTS idx_messages_role ON messages(role);
+    CREATE INDEX IF NOT EXISTS idx_tool_invocations_message ON tool_invocations(message_id);
+    CREATE INDEX IF NOT EXISTS idx_file_changes_message ON file_changes(message_id);
+    CREATE INDEX IF NOT EXISTS idx_command_runs_message ON command_runs(message_id);
     
-    -- Full-text search for messages
+    -- Full-text search for messages (FTS5 inspired by tad-hq/universal-session-viewer)
     CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
         content,
         content='messages',
@@ -112,13 +164,13 @@ class Database:
             if cursor.fetchone():
                 return False
 
-            # Insert session
+            # Insert session with new fields
             cursor.execute(
                 """
                 INSERT INTO sessions 
                 (session_id, workspace_name, workspace_path, created_at, updated_at, 
-                 source_file, vscode_edition)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                 source_file, vscode_edition, custom_title, requester_username, responder_username)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session.session_id,
@@ -128,10 +180,13 @@ class Database:
                     session.updated_at,
                     session.source_file,
                     session.vscode_edition,
+                    session.custom_title,
+                    session.requester_username,
+                    session.responder_username,
                 ),
             )
 
-            # Insert messages
+            # Insert messages and associated data
             for idx, msg in enumerate(session.messages):
                 cursor.execute(
                     """
@@ -147,6 +202,63 @@ class Database:
                         msg.timestamp,
                     ),
                 )
+                message_id = cursor.lastrowid
+
+                # Insert tool invocations
+                for tool in msg.tool_invocations:
+                    cursor.execute(
+                        """
+                        INSERT INTO tool_invocations
+                        (message_id, name, input, result, status, start_time, end_time)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            message_id,
+                            tool.name,
+                            tool.input,
+                            tool.result,
+                            tool.status,
+                            tool.start_time,
+                            tool.end_time,
+                        ),
+                    )
+
+                # Insert file changes
+                for change in msg.file_changes:
+                    cursor.execute(
+                        """
+                        INSERT INTO file_changes
+                        (message_id, path, diff, content, explanation, language_id)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            message_id,
+                            change.path,
+                            change.diff,
+                            change.content,
+                            change.explanation,
+                            change.language_id,
+                        ),
+                    )
+
+                # Insert command runs
+                for cmd in msg.command_runs:
+                    cursor.execute(
+                        """
+                        INSERT INTO command_runs
+                        (message_id, command, title, result, status, output, timestamp)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            message_id,
+                            cmd.command,
+                            cmd.title,
+                            cmd.result,
+                            cmd.status,
+                            cmd.output,
+                            cmd.timestamp,
+                        ),
+                    )
 
             return True
 
@@ -186,19 +298,80 @@ class Database:
             if not row:
                 return None
 
+            # Get messages with their IDs for fetching related data
             cursor.execute(
                 """
-                SELECT role, content, timestamp 
+                SELECT id, role, content, timestamp 
                 FROM messages 
                 WHERE session_id = ? 
                 ORDER BY message_index
                 """,
                 (session_id,),
             )
-            messages = [
-                ChatMessage(role=r["role"], content=r["content"], timestamp=r["timestamp"])
-                for r in cursor.fetchall()
-            ]
+            message_rows = cursor.fetchall()
+
+            messages = []
+            for msg_row in message_rows:
+                message_id = msg_row["id"]
+
+                # Get tool invocations for this message
+                cursor.execute(
+                    "SELECT * FROM tool_invocations WHERE message_id = ?",
+                    (message_id,),
+                )
+                tool_invocations = [
+                    ToolInvocation(
+                        name=t["name"],
+                        input=t["input"],
+                        result=t["result"],
+                        status=t["status"],
+                        start_time=t["start_time"],
+                        end_time=t["end_time"],
+                    )
+                    for t in cursor.fetchall()
+                ]
+
+                # Get file changes for this message
+                cursor.execute(
+                    "SELECT * FROM file_changes WHERE message_id = ?",
+                    (message_id,),
+                )
+                file_changes = [
+                    FileChange(
+                        path=f["path"],
+                        diff=f["diff"],
+                        content=f["content"],
+                        explanation=f["explanation"],
+                        language_id=f["language_id"],
+                    )
+                    for f in cursor.fetchall()
+                ]
+
+                # Get command runs for this message
+                cursor.execute(
+                    "SELECT * FROM command_runs WHERE message_id = ?",
+                    (message_id,),
+                )
+                command_runs = [
+                    CommandRun(
+                        command=c["command"],
+                        title=c["title"],
+                        result=c["result"],
+                        status=c["status"],
+                        output=c["output"],
+                        timestamp=c["timestamp"],
+                    )
+                    for c in cursor.fetchall()
+                ]
+
+                messages.append(ChatMessage(
+                    role=msg_row["role"],
+                    content=msg_row["content"],
+                    timestamp=msg_row["timestamp"],
+                    tool_invocations=tool_invocations,
+                    file_changes=file_changes,
+                    command_runs=command_runs,
+                ))
 
             return ChatSession(
                 session_id=row["session_id"],
@@ -209,6 +382,9 @@ class Database:
                 updated_at=row["updated_at"],
                 source_file=row["source_file"],
                 vscode_edition=row["vscode_edition"],
+                custom_title=row["custom_title"] if "custom_title" in row.keys() else None,
+                requester_username=row["requester_username"] if "requester_username" in row.keys() else None,
+                responder_username=row["responder_username"] if "responder_username" in row.keys() else None,
             )
 
     def list_sessions(

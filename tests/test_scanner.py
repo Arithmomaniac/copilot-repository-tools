@@ -130,3 +130,81 @@ class TestChatSession:
         assert session.updated_at is None
         assert session.source_file is None
         assert session.vscode_edition == "stable"
+
+
+class TestToolInvocationsAndFileChanges:
+    """Tests for the new tool invocation and file change data structures."""
+
+    def test_chat_message_with_tool_invocations(self):
+        """Test ChatMessage with tool invocations."""
+        from copilot_chat_archive.scanner import ToolInvocation
+
+        msg = ChatMessage(
+            role="assistant",
+            content="Running a command...",
+            tool_invocations=[
+                ToolInvocation(
+                    name="run_command",
+                    input="ls -la",
+                    result="file1.txt\nfile2.txt",
+                    status="success",
+                )
+            ],
+        )
+        assert len(msg.tool_invocations) == 1
+        assert msg.tool_invocations[0].name == "run_command"
+        assert msg.tool_invocations[0].status == "success"
+
+    def test_chat_message_with_file_changes(self):
+        """Test ChatMessage with file changes."""
+        from copilot_chat_archive.scanner import FileChange
+
+        msg = ChatMessage(
+            role="assistant",
+            content="Made some changes...",
+            file_changes=[
+                FileChange(
+                    path="/home/user/project/main.py",
+                    diff="+ added line",
+                    language_id="python",
+                )
+            ],
+        )
+        assert len(msg.file_changes) == 1
+        assert msg.file_changes[0].path == "/home/user/project/main.py"
+        assert msg.file_changes[0].language_id == "python"
+
+    def test_chat_message_with_command_runs(self):
+        """Test ChatMessage with command runs."""
+        from copilot_chat_archive.scanner import CommandRun
+
+        msg = ChatMessage(
+            role="assistant",
+            content="Executing...",
+            command_runs=[
+                CommandRun(
+                    command="npm install",
+                    title="Install dependencies",
+                    status="success",
+                    output="added 100 packages",
+                )
+            ],
+        )
+        assert len(msg.command_runs) == 1
+        assert msg.command_runs[0].command == "npm install"
+        assert msg.command_runs[0].status == "success"
+
+    def test_chat_session_with_extended_fields(self):
+        """Test ChatSession with new extended fields."""
+        session = ChatSession(
+            session_id="test-extended",
+            workspace_name="my-project",
+            workspace_path="/home/user/my-project",
+            messages=[],
+            custom_title="My Important Chat",
+            requester_username="user",
+            responder_username="copilot",
+        )
+        assert session.custom_title == "My Important Chat"
+        assert session.requester_username == "user"
+        assert session.responder_username == "copilot"

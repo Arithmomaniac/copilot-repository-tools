@@ -2,13 +2,23 @@
 
 Create a searchable archive of your VS Code GitHub Copilot chat history, with a web viewer similar to [simonw/claude-code-transcripts](https://github.com/simonw/claude-code-transcripts).
 
+This project was informed by and borrows patterns from several excellent open-source projects:
+
+| Project | What We Borrowed |
+|---------|------------------|
+| [simonw/claude-code-transcripts](https://github.com/simonw/claude-code-transcripts) | HTML transcript generation, pagination approach, CLI structure |
+| [Arbuzov/copilot-chat-history](https://github.com/Arbuzov/copilot-chat-history) | VS Code Copilot chat session data format, workspace organization |
+| [jazzyalex/agent-sessions](https://github.com/jazzyalex/agent-sessions) | Multi-agent session concept, SQLite indexing patterns |
+| [tad-hq/universal-session-viewer](https://github.com/tad-hq/universal-session-viewer) | FTS5 full-text search design, session metadata schema |
+
 ## Features
 
-- **Scan** VS Code workspace storage to find Copilot chat sessions
+- **Scan** VS Code workspace storage to find Copilot chat sessions (format based on [Arbuzov/copilot-chat-history](https://github.com/Arbuzov/copilot-chat-history))
 - **Support** for both VS Code Stable and Insiders editions
-- **Store** chat history in a SQLite database with full-text search
-- **Generate** static HTML files for browsing and searching your archive
+- **Store** chat history in a SQLite database with FTS5 full-text search (inspired by [tad-hq/universal-session-viewer](https://github.com/tad-hq/universal-session-viewer))
+- **Generate** static HTML files for browsing and searching your archive (similar to [simonw/claude-code-transcripts](https://github.com/simonw/claude-code-transcripts))
 - **Export/Import** sessions as JSON for backup or migration
+- **Tool invocations & file changes** tracking from chat sessions
 
 ## Installation
 
