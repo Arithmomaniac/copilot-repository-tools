@@ -1,0 +1,305 @@
+"""Command-line interface for Copilot Chat Archive."""
+
+import sys
+from pathlib import Path
+
+import click
+
+from . import __version__
+from .database import Database
+from .scanner import get_vscode_storage_paths, scan_chat_sessions
+from .viewer import generate_html
+
+
+@click.group()
+@click.version_option(version=__version__)
+def main():
+    """Copilot Chat Archive - Create a searchable archive of VS Code GitHub Copilot chats."""
+    pass
+
+
+@main.command()
+@click.option(
+    "--db",
+    "-d",
+    default="copilot_chats.db",
+    help="Path to SQLite database file.",
+    type=click.Path(dir_okay=False),
+)
+@click.option(
+    "--storage-path",
+    "-s",
+    multiple=True,
+    help="Custom VS Code storage path(s) to scan. Can be specified multiple times.",
+    type=click.Path(exists=True, file_okay=False),
+)
+@click.option(
+    "--edition",
+    "-e",
+    default="both",
+    type=click.Choice(["stable", "insider", "both"]),
+    help="VS Code edition to scan.",
+)
+@click.option("--verbose", "-v", is_flag=True, help="Show verbose output.")
+def scan(db: str, storage_path: tuple, edition: str, verbose: bool):
+    """Scan for and import Copilot chat sessions into the database."""
+    database = Database(db)
+
+    # Determine storage paths
+    if storage_path:
+        # Use custom paths
+        paths = [(str(p), "custom") for p in storage_path]
+    else:
+        # Use default paths based on edition
+        all_paths = get_vscode_storage_paths()
+        if edition == "both":
+            paths = all_paths
+        else:
+            paths = [(p, e) for p, e in all_paths if e == edition]
+
+    click.echo(f"Scanning for Copilot chat sessions...")
+    if verbose:
+        for path, ed in paths:
+            click.echo(f"  Checking: {path} ({ed})")
+
+    added = 0
+    skipped = 0
+
+    for session in scan_chat_sessions(paths):
+        if database.add_session(session):
+            added += 1
+            if verbose:
+                workspace = session.workspace_name or "Unknown workspace"
+                click.echo(f"  Added: {workspace} ({len(session.messages)} messages)")
+        else:
+            skipped += 1
+
+    click.echo(f"\nImport complete:")
+    click.echo(f"  Added: {added} sessions")
+    click.echo(f"  Skipped (already exists): {skipped} sessions")
+
+    stats = database.get_stats()
+    click.echo(f"\nDatabase now contains:")
+    click.echo(f"  {stats['session_count']} sessions")
+    click.echo(f"  {stats['message_count']} messages")
+    click.echo(f"  {stats['workspace_count']} workspaces")
+
+
+@main.command()
+@click.option(
+    "--db",
+    "-d",
+    default="copilot_chats.db",
+    help="Path to SQLite database file.",
+    type=click.Path(exists=True, dir_okay=False),
+)
+@click.option(
+    "--output",
+    "-o",
+    default="./archive",
+    help="Output directory for HTML files.",
+    type=click.Path(file_okay=False),
+)
+@click.option(
+    "--title",
+    "-t",
+    default="Copilot Chat Archive",
+    help="Title for the archive.",
+)
+def generate(db: str, output: str, title: str):
+    """Generate static HTML files from the database."""
+    if not Path(db).exists():
+        click.echo(f"Error: Database file '{db}' not found.", err=True)
+        click.echo("Run 'copilot-chat-archive scan' first to import chat sessions.", err=True)
+        sys.exit(1)
+
+    database = Database(db)
+    stats = database.get_stats()
+
+    if stats["session_count"] == 0:
+        click.echo("Warning: Database is empty. Run 'copilot-chat-archive scan' first.", err=True)
+
+    click.echo(f"Generating HTML archive...")
+    index_path = generate_html(database, output, title)
+
+    click.echo(f"\nArchive generated successfully!")
+    click.echo(f"  Output directory: {output}")
+    click.echo(f"  Index file: {index_path}")
+    click.echo(f"\nOpen {index_path} in a browser to view your archive.")
+
+
+@main.command()
+@click.option(
+    "--db",
+    "-d",
+    default="copilot_chats.db",
+    help="Path to SQLite database file.",
+    type=click.Path(exists=True, dir_okay=False),
+)
+@click.argument("query")
+@click.option(
+    "--limit",
+    "-l",
+    default=20,
+    help="Maximum number of results to show.",
+)
+def search(db: str, query: str, limit: int):
+    """Search chat messages in the database."""
+    if not Path(db).exists():
+        click.echo(f"Error: Database file '{db}' not found.", err=True)
+        sys.exit(1)
+
+    database = Database(db)
+    results = database.search(query, limit=limit)
+
+    if not results:
+        click.echo(f"No results found for '{query}'")
+        return
+
+    click.echo(f"Found {len(results)} result(s) for '{query}':\n")
+
+    for result in results:
+        click.echo(f"Session: {result['session_id'][:8]}...")
+        if result["workspace_name"]:
+            click.echo(f"  Workspace: {result['workspace_name']}")
+        click.echo(f"  Role: {result['role']}")
+
+        # Show a snippet of the content
+        content = result["content"]
+        if len(content) > 200:
+            content = content[:200] + "..."
+        click.echo(f"  Content: {content}")
+        click.echo()
+
+
+@main.command()
+@click.option(
+    "--db",
+    "-d",
+    default="copilot_chats.db",
+    help="Path to SQLite database file.",
+    type=click.Path(exists=True, dir_okay=False),
+)
+def stats(db: str):
+    """Show database statistics."""
+    if not Path(db).exists():
+        click.echo(f"Error: Database file '{db}' not found.", err=True)
+        sys.exit(1)
+
+    database = Database(db)
+    stats_data = database.get_stats()
+
+    click.echo("Database Statistics:")
+    click.echo(f"  Sessions: {stats_data['session_count']}")
+    click.echo(f"  Messages: {stats_data['message_count']}")
+    click.echo(f"  Workspaces: {stats_data['workspace_count']}")
+
+    if stats_data["editions"]:
+        click.echo("\n  By VS Code Edition:")
+        for edition, count in stats_data["editions"].items():
+            click.echo(f"    {edition}: {count}")
+
+    # Show workspaces
+    workspaces = database.get_workspaces()
+    if workspaces:
+        click.echo("\n  Workspaces:")
+        for ws in workspaces[:10]:
+            click.echo(f"    {ws['workspace_name']}: {ws['session_count']} sessions")
+        if len(workspaces) > 10:
+            click.echo(f"    ... and {len(workspaces) - 10} more")
+
+
+@main.command()
+@click.option(
+    "--db",
+    "-d",
+    default="copilot_chats.db",
+    help="Path to SQLite database file.",
+    type=click.Path(exists=True, dir_okay=False),
+)
+@click.option(
+    "--output",
+    "-o",
+    default="-",
+    help="Output file (- for stdout).",
+    type=click.Path(dir_okay=False),
+)
+def export(db: str, output: str):
+    """Export the database as JSON."""
+    if not Path(db).exists():
+        click.echo(f"Error: Database file '{db}' not found.", err=True)
+        sys.exit(1)
+
+    database = Database(db)
+    json_data = database.export_json()
+
+    if output == "-":
+        click.echo(json_data)
+    else:
+        Path(output).write_text(json_data, encoding="utf-8")
+        click.echo(f"Exported to {output}")
+
+
+@main.command()
+@click.option(
+    "--db",
+    "-d",
+    default="copilot_chats.db",
+    help="Path to SQLite database file.",
+    type=click.Path(dir_okay=False),
+)
+@click.argument("json_file", type=click.Path(exists=True, dir_okay=False))
+def import_json(db: str, json_file: str):
+    """Import sessions from a JSON file."""
+    import json
+
+    from .scanner import ChatMessage, ChatSession
+
+    database = Database(db)
+
+    with open(json_file, encoding="utf-8") as f:
+        data = json.load(f)
+
+    if not isinstance(data, list):
+        click.echo("Error: JSON file must contain an array of sessions.", err=True)
+        sys.exit(1)
+
+    added = 0
+    skipped = 0
+
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+
+        messages = [
+            ChatMessage(
+                role=m.get("role", "unknown"),
+                content=m.get("content", ""),
+                timestamp=m.get("timestamp"),
+            )
+            for m in item.get("messages", [])
+        ]
+
+        session = ChatSession(
+            session_id=item.get("session_id", str(hash(str(item)))),
+            workspace_name=item.get("workspace_name"),
+            workspace_path=item.get("workspace_path"),
+            messages=messages,
+            created_at=item.get("created_at"),
+            updated_at=item.get("updated_at"),
+            source_file=json_file,
+            vscode_edition=item.get("vscode_edition", "imported"),
+        )
+
+        if database.add_session(session):
+            added += 1
+        else:
+            skipped += 1
+
+    click.echo(f"Import complete:")
+    click.echo(f"  Added: {added} sessions")
+    click.echo(f"  Skipped: {skipped} sessions")
+
+
+if __name__ == "__main__":
+    main()
