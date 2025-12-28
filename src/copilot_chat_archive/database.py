@@ -373,6 +373,13 @@ class Database:
                     command_runs=command_runs,
                 ))
 
+            # Helper to safely get optional fields from sqlite3.Row
+            def safe_get(key):
+                try:
+                    return row[key]
+                except (IndexError, KeyError):
+                    return None
+
             return ChatSession(
                 session_id=row["session_id"],
                 workspace_name=row["workspace_name"],
@@ -382,9 +389,9 @@ class Database:
                 updated_at=row["updated_at"],
                 source_file=row["source_file"],
                 vscode_edition=row["vscode_edition"],
-                custom_title=row["custom_title"] if "custom_title" in row.keys() else None,
-                requester_username=row["requester_username"] if "requester_username" in row.keys() else None,
-                responder_username=row["responder_username"] if "responder_username" in row.keys() else None,
+                custom_title=safe_get("custom_title"),
+                requester_username=safe_get("requester_username"),
+                responder_username=safe_get("responder_username"),
             )
 
     def list_sessions(

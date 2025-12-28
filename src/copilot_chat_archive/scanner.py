@@ -214,15 +214,23 @@ def _parse_workspace_json(workspace_dir: Path) -> tuple[str | None, str | None]:
     return None, None
 
 
+def _get_first_truthy_value(*values):
+    """Return the first truthy value from the arguments, or None if none are truthy."""
+    for v in values:
+        if v:
+            return str(v)
+    return None
+
+
 def _parse_tool_invocations(raw_invocations: list) -> list[ToolInvocation]:
     """Parse tool invocations from raw data."""
     invocations = []
     for inv in raw_invocations:
         if isinstance(inv, dict):
             invocations.append(ToolInvocation(
-                name=inv.get("name", inv.get("toolName", "unknown")),
-                input=str(inv.get("input", inv.get("arguments", ""))) if inv.get("input") or inv.get("arguments") else None,
-                result=str(inv.get("result", inv.get("output", ""))) if inv.get("result") or inv.get("output") else None,
+                name=inv.get("name") or inv.get("toolName") or "unknown",
+                input=_get_first_truthy_value(inv.get("input"), inv.get("arguments")),
+                result=_get_first_truthy_value(inv.get("result"), inv.get("output")),
                 status=inv.get("status"),
                 start_time=inv.get("startTime"),
                 end_time=inv.get("endTime"),
@@ -235,7 +243,7 @@ def _parse_file_changes(raw_changes: list) -> list[FileChange]:
     changes = []
     for change in raw_changes:
         if isinstance(change, dict):
-            path = change.get("path") or change.get("uri", "")
+            path = change.get("path") or change.get("uri") or ""
             if path.startswith("file://"):
                 path = path[7:]
             changes.append(FileChange(
@@ -253,10 +261,11 @@ def _parse_command_runs(raw_commands: list) -> list[CommandRun]:
     commands = []
     for cmd in raw_commands:
         if isinstance(cmd, dict):
+            result_val = cmd.get("result")
             commands.append(CommandRun(
-                command=cmd.get("command", "unknown"),
+                command=cmd.get("command") or "unknown",
                 title=cmd.get("title"),
-                result=str(cmd.get("result", "")) if cmd.get("result") else None,
+                result=str(result_val) if result_val is not None else None,
                 status=cmd.get("status"),
                 output=cmd.get("output"),
                 timestamp=cmd.get("timestamp"),
@@ -283,11 +292,14 @@ def _parse_chat_session_file(
 
     # Try to extract messages from various possible structures
     # The "requests" format is from VS Code Copilot Chat (Arbuzov/copilot-chat-history)
-    raw_messages = (
-        data.get("requests", []) or 
-        data.get("messages", []) or 
-        data.get("exchanges", [])
-    )
+    # Check each key explicitly to avoid the issue where empty list [] is falsy
+    raw_messages = None
+    for key in ("requests", "messages", "exchanges"):
+        val = data.get(key)
+        if val:  # Only use if non-empty
+            raw_messages = val
+            break
+    raw_messages = raw_messages or []
 
     for msg in raw_messages:
         if isinstance(msg, dict):
@@ -458,12 +470,13 @@ def _extract_session_from_dict(
     messages = []
     
     # Look for messages in various formats - "requests" is the VS Code Copilot format
-    raw_messages = (
-        data.get("requests", []) or
-        data.get("messages", []) or
-        data.get("exchanges", []) or
-        data.get("history", [])
-    )
+    # Check each key explicitly to avoid the issue where empty list [] is falsy
+    raw_messages = None
+    for key in ("requests", "messages", "exchanges", "history"):
+        val = data.get(key)
+        if val:  # Only use if non-empty
+            raw_messages = val
+            break
     
     if not raw_messages:
         return None
