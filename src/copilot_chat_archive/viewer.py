@@ -402,6 +402,239 @@ footer {
     font-size: 0.85em;
     text-align: center;
 }
+
+/* Message header with anchor link */
+.message-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.message-anchor {
+    color: var(--text-secondary);
+    text-decoration: none;
+    font-size: 0.8em;
+    opacity: 0.5;
+    transition: opacity 0.2s;
+}
+
+.message-anchor:hover {
+    opacity: 1;
+    color: var(--link-color);
+}
+
+.message.highlighted {
+    animation: highlight-pulse 2s ease-out;
+}
+
+@keyframes highlight-pulse {
+    0% { box-shadow: 0 0 0 4px var(--link-color); }
+    100% { box-shadow: none; }
+}
+
+/* Session ID display */
+.session-id {
+    margin-top: 10px;
+    color: var(--text-secondary);
+}
+
+.session-id code {
+    font-size: 0.85em;
+    background-color: var(--code-bg);
+    padding: 2px 6px;
+    border-radius: 3px;
+}
+
+/* Collapsible sections for tool invocations, file changes, etc. */
+.collapsible {
+    margin-top: 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background-color: var(--bg-tertiary);
+}
+
+.collapsible summary {
+    padding: 10px 14px;
+    cursor: pointer;
+    font-weight: 500;
+    font-size: 0.9em;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    user-select: none;
+}
+
+.collapsible summary:hover {
+    background-color: var(--border-color);
+}
+
+.collapsible-icon {
+    font-size: 0.7em;
+    transition: transform 0.2s;
+}
+
+.collapsible-content {
+    padding: 12px 14px;
+    border-top: 1px solid var(--border-color);
+}
+
+/* Tool invocations */
+.tool-invocation {
+    margin-bottom: 16px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.tool-invocation:last-child {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: none;
+}
+
+.tool-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.tool-section {
+    margin-top: 8px;
+}
+
+.tool-label {
+    display: block;
+    font-size: 0.8em;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+}
+
+.tool-section pre {
+    margin: 0;
+    padding: 10px;
+    font-size: 0.85em;
+    max-height: 200px;
+    overflow: auto;
+}
+
+/* Status badges */
+.status-badge {
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 0.75em;
+    font-weight: 500;
+}
+
+.status-badge.success {
+    background-color: #dafbe1;
+    color: #1a7f37;
+}
+
+.status-badge.error, .status-badge.failed {
+    background-color: #ffebe9;
+    color: #cf222e;
+}
+
+.status-badge.pending, .status-badge.running {
+    background-color: #fff8c5;
+    color: #9a6700;
+}
+
+@media (prefers-color-scheme: dark) {
+    .status-badge.success {
+        background-color: #238636;
+        color: #dafbe1;
+    }
+    .status-badge.error, .status-badge.failed {
+        background-color: #da3633;
+        color: #ffebe9;
+    }
+    .status-badge.pending, .status-badge.running {
+        background-color: #9e6a03;
+        color: #fff8c5;
+    }
+}
+
+/* File changes */
+.file-change {
+    margin-bottom: 16px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.file-change:last-child {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: none;
+}
+
+.file-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.language-badge {
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 0.75em;
+    background-color: var(--bg-secondary);
+    color: var(--text-secondary);
+}
+
+.file-explanation {
+    color: var(--text-secondary);
+    font-size: 0.9em;
+    margin-bottom: 8px;
+}
+
+pre.diff {
+    margin: 0;
+    padding: 10px;
+    font-size: 0.85em;
+    max-height: 300px;
+    overflow: auto;
+}
+
+/* Command runs */
+.command-run {
+    margin-bottom: 16px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.command-run:last-child {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: none;
+}
+
+.command-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+}
+
+.command-text {
+    font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+    background-color: var(--code-bg);
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 0.9em;
+}
+
+pre.command-output {
+    margin: 0;
+    padding: 10px;
+    font-size: 0.85em;
+    max-height: 200px;
+    overflow: auto;
+}
 """
     (static_dir / "style.css").write_text(css_content.strip(), encoding="utf-8")
 

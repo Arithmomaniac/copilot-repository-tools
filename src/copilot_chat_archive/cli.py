@@ -167,14 +167,80 @@ def generate(db: str, output: str, title: str):
     default=20,
     help="Maximum number of results to show.",
 )
-def search(db: str, query: str, limit: int):
-    """Search chat messages in the database."""
+@click.option(
+    "--role",
+    "-r",
+    type=click.Choice(["user", "assistant"]),
+    help="Filter by message role (user requests or assistant responses).",
+)
+@click.option(
+    "--title",
+    "-t",
+    help="Filter by session title or workspace name.",
+)
+@click.option(
+    "--no-tools",
+    is_flag=True,
+    help="Exclude tool invocations from search results.",
+)
+@click.option(
+    "--no-files",
+    is_flag=True,
+    help="Exclude file changes from search results.",
+)
+@click.option(
+    "--tools-only",
+    is_flag=True,
+    help="Only search in tool invocations.",
+)
+@click.option(
+    "--files-only",
+    is_flag=True,
+    help="Only search in file changes.",
+)
+def search(
+    db: str,
+    query: str,
+    limit: int,
+    role: str | None,
+    title: str | None,
+    no_tools: bool,
+    no_files: bool,
+    tools_only: bool,
+    files_only: bool,
+):
+    """Search chat messages in the database.
+    
+    By default, searches message content, tool invocations, and file changes.
+    Use --role to filter by user requests or assistant responses.
+    Use --title to filter by session/workspace name.
+    Use --no-tools or --no-files to exclude specific content types.
+    Use --tools-only or --files-only to search only specific content types.
+    """
     if not Path(db).exists():
         click.echo(f"Error: Database file '{db}' not found.", err=True)
         sys.exit(1)
 
+    # Handle exclusive search modes
+    include_tool_calls = not no_tools
+    include_file_changes = not no_files
+
+    if tools_only:
+        # For tools-only, we need a different approach
+        include_file_changes = False
+    if files_only:
+        # For files-only, we need a different approach
+        include_tool_calls = False
+
     database = Database(db)
-    results = database.search(query, limit=limit)
+    results = database.search(
+        query,
+        limit=limit,
+        role=role,
+        include_tool_calls=include_tool_calls,
+        include_file_changes=include_file_changes,
+        session_title=title,
+    )
 
     if not results:
         click.echo(f"No results found for '{query}'")
@@ -184,9 +250,13 @@ def search(db: str, query: str, limit: int):
 
     for result in results:
         click.echo(f"Session: {result['session_id'][:8]}...")
-        if result["workspace_name"]:
+        if result.get("workspace_name"):
             click.echo(f"  Workspace: {result['workspace_name']}")
+        if result.get("custom_title"):
+            click.echo(f"  Title: {result['custom_title']}")
         click.echo(f"  Role: {result['role']}")
+        if result.get("match_type") and result["match_type"] != "message":
+            click.echo(f"  Match type: {result['match_type']}")
 
         # Show a snippet of the content
         content = result["content"]

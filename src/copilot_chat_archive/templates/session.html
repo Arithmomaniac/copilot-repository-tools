@@ -17,8 +17,10 @@
         <a href="../index.html" class="back-link">&larr; Back to all sessions</a>
 
         <div class="session-header">
-            <h2>
-                {% if session.workspace_name %}
+            <h2 id="session-title">
+                {% if session.custom_title %}
+                    {{ session.custom_title }}
+                {% elif session.workspace_name %}
                     {{ session.workspace_name }}
                 {% else %}
                     Session {{ session.session_id[:8] }}...
@@ -34,15 +36,109 @@
                 {% endif %}
                 <span class="edition-badge {{ session.vscode_edition }}">{{ session.vscode_edition }}</span>
             </div>
+            <div class="session-id">
+                <small>Session ID: <code>{{ session.session_id }}</code></small>
+            </div>
         </div>
 
         <div class="messages">
             {% for message in session.messages %}
-            <div class="message {{ message.role }}">
-                <div class="message-role">{{ message.role }}</div>
+            <div class="message {{ message.role }}" id="msg-{{ loop.index }}">
+                <div class="message-header">
+                    <div class="message-role">{{ message.role }}</div>
+                    <a href="#msg-{{ loop.index }}" class="message-anchor" title="Link to this message">#{{ loop.index }}</a>
+                </div>
                 <div class="message-content">
                     {{ message.content | markdown | safe }}
                 </div>
+
+                {% if message.tool_invocations %}
+                <details class="collapsible tool-invocations">
+                    <summary>
+                        <span class="collapsible-icon">▶</span>
+                        Tool Invocations ({{ message.tool_invocations | length }})
+                    </summary>
+                    <div class="collapsible-content">
+                        {% for tool in message.tool_invocations %}
+                        <div class="tool-invocation">
+                            <div class="tool-header">
+                                <strong>{{ tool.name }}</strong>
+                                {% if tool.status %}
+                                <span class="status-badge {{ tool.status }}">{{ tool.status }}</span>
+                                {% endif %}
+                            </div>
+                            {% if tool.input %}
+                            <div class="tool-section">
+                                <span class="tool-label">Input:</span>
+                                <pre><code>{{ tool.input }}</code></pre>
+                            </div>
+                            {% endif %}
+                            {% if tool.result %}
+                            <div class="tool-section">
+                                <span class="tool-label">Result:</span>
+                                <pre><code>{{ tool.result }}</code></pre>
+                            </div>
+                            {% endif %}
+                        </div>
+                        {% endfor %}
+                    </div>
+                </details>
+                {% endif %}
+
+                {% if message.file_changes %}
+                <details class="collapsible file-changes">
+                    <summary>
+                        <span class="collapsible-icon">▶</span>
+                        File Changes ({{ message.file_changes | length }})
+                    </summary>
+                    <div class="collapsible-content">
+                        {% for change in message.file_changes %}
+                        <div class="file-change">
+                            <div class="file-header">
+                                <strong>{{ change.path }}</strong>
+                                {% if change.language_id %}
+                                <span class="language-badge">{{ change.language_id }}</span>
+                                {% endif %}
+                            </div>
+                            {% if change.explanation %}
+                            <div class="file-explanation">{{ change.explanation }}</div>
+                            {% endif %}
+                            {% if change.diff %}
+                            <pre class="diff"><code>{{ change.diff }}</code></pre>
+                            {% endif %}
+                        </div>
+                        {% endfor %}
+                    </div>
+                </details>
+                {% endif %}
+
+                {% if message.command_runs %}
+                <details class="collapsible command-runs">
+                    <summary>
+                        <span class="collapsible-icon">▶</span>
+                        Command Runs ({{ message.command_runs | length }})
+                    </summary>
+                    <div class="collapsible-content">
+                        {% for cmd in message.command_runs %}
+                        <div class="command-run">
+                            <div class="command-header">
+                                {% if cmd.title %}
+                                <strong>{{ cmd.title }}</strong>
+                                {% endif %}
+                                <code class="command-text">{{ cmd.command }}</code>
+                                {% if cmd.status %}
+                                <span class="status-badge {{ cmd.status }}">{{ cmd.status }}</span>
+                                {% endif %}
+                            </div>
+                            {% if cmd.output %}
+                            <pre class="command-output"><code>{{ cmd.output }}</code></pre>
+                            {% endif %}
+                        </div>
+                        {% endfor %}
+                    </div>
+                </details>
+                {% endif %}
+
                 {% if message.timestamp %}
                 <div class="message-timestamp">{{ message.timestamp }}</div>
                 {% endif %}
@@ -56,5 +152,28 @@
             Generated by <a href="https://github.com/Arithmomaniac/copilot-repository-tools">Copilot Chat Archive</a>
         </div>
     </footer>
+
+    <script>
+        // Handle anchor scrolling with smooth scroll
+        document.addEventListener('DOMContentLoaded', function() {
+            if (window.location.hash) {
+                const target = document.querySelector(window.location.hash);
+                if (target) {
+                    target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    target.classList.add('highlighted');
+                }
+            }
+
+            // Toggle collapsible icon on details open/close
+            document.querySelectorAll('details.collapsible').forEach(details => {
+                details.addEventListener('toggle', function() {
+                    const icon = this.querySelector('.collapsible-icon');
+                    if (icon) {
+                        icon.textContent = this.open ? '▼' : '▶';
+                    }
+                });
+            });
+        });
+    </script>
 </body>
 </html>

@@ -440,40 +440,120 @@ class Database:
             cursor.execute(query, params)
             return [dict(row) for row in cursor.fetchall()]
 
-    def search(self, query: str, limit: int = 50) -> list[dict]:
-        """Search messages using full-text search.
+    def search(
+        self,
+        query: str,
+        limit: int = 50,
+        role: str | None = None,
+        include_tool_calls: bool = True,
+        include_file_changes: bool = True,
+        session_title: str | None = None,
+    ) -> list[dict]:
+        """Search messages using full-text search with field filtering.
 
         Args:
             query: The search query.
             limit: Maximum number of results to return.
+            role: Filter by message role ('user', 'assistant', or None for both).
+            include_tool_calls: Whether to also search tool invocations.
+            include_file_changes: Whether to also search file changes.
+            session_title: Filter by session title/workspace name.
 
         Returns:
             List of matching messages with session info.
         """
+        results = []
+
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
-            cursor.execute(
-                """
+            # Search messages
+            message_query = """
                 SELECT 
                     m.id,
                     m.session_id,
                     m.role,
                     m.content,
                     s.workspace_name,
+                    s.custom_title,
                     s.created_at,
                     s.vscode_edition,
-                    highlight(messages_fts, 0, '<mark>', '</mark>') as highlighted
+                    highlight(messages_fts, 0, '<mark>', '</mark>') as highlighted,
+                    'message' as match_type
                 FROM messages_fts
                 JOIN messages m ON messages_fts.rowid = m.id
                 JOIN sessions s ON m.session_id = s.session_id
                 WHERE messages_fts MATCH ?
-                ORDER BY rank
-                LIMIT ?
-                """,
-                (query, limit),
-            )
-            return [dict(row) for row in cursor.fetchall()]
+            """
+            params = [query]
+
+            if role:
+                message_query += " AND m.role = ?"
+                params.append(role)
+
+            if session_title:
+                message_query += " AND (s.workspace_name LIKE ? OR s.custom_title LIKE ?)"
+                params.extend([f"%{session_title}%", f"%{session_title}%"])
+
+            message_query += " ORDER BY rank LIMIT ?"
+            params.append(limit)
+
+            cursor.execute(message_query, params)
+            results.extend([dict(row) for row in cursor.fetchall()])
+
+            # Search tool invocations
+            if include_tool_calls and len(results) < limit:
+                remaining = limit - len(results)
+                cursor.execute(
+                    """
+                    SELECT 
+                        t.id,
+                        m.session_id,
+                        'assistant' as role,
+                        t.name || ': ' || COALESCE(t.input, '') || ' -> ' || COALESCE(t.result, '') as content,
+                        s.workspace_name,
+                        s.custom_title,
+                        s.created_at,
+                        s.vscode_edition,
+                        t.name || ': ' || COALESCE(t.input, '') as highlighted,
+                        'tool_invocation' as match_type
+                    FROM tool_invocations t
+                    JOIN messages m ON t.message_id = m.id
+                    JOIN sessions s ON m.session_id = s.session_id
+                    WHERE t.name LIKE ? OR t.input LIKE ? OR t.result LIKE ?
+                    LIMIT ?
+                    """,
+                    (f"%{query}%", f"%{query}%", f"%{query}%", remaining),
+                )
+                results.extend([dict(row) for row in cursor.fetchall()])
+
+            # Search file changes
+            if include_file_changes and len(results) < limit:
+                remaining = limit - len(results)
+                cursor.execute(
+                    """
+                    SELECT 
+                        f.id,
+                        m.session_id,
+                        'assistant' as role,
+                        f.path || ': ' || COALESCE(f.explanation, '') as content,
+                        s.workspace_name,
+                        s.custom_title,
+                        s.created_at,
+                        s.vscode_edition,
+                        f.path as highlighted,
+                        'file_change' as match_type
+                    FROM file_changes f
+                    JOIN messages m ON f.message_id = m.id
+                    JOIN sessions s ON m.session_id = s.session_id
+                    WHERE f.path LIKE ? OR f.explanation LIKE ? OR f.diff LIKE ?
+                    LIMIT ?
+                    """,
+                    (f"%{query}%", f"%{query}%", f"%{query}%", remaining),
+                )
+                results.extend([dict(row) for row in cursor.fetchall()])
+
+        return results[:limit]
 
     def get_workspaces(self) -> list[dict]:
         """Get all unique workspaces.
