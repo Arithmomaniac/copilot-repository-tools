@@ -58,7 +58,12 @@ copilot-chat-archive scan --storage-path /path/to/workspaceStorage
 
 # Verbose output
 copilot-chat-archive scan --verbose
+
+# Force re-import of existing sessions (updates changed sessions)
+copilot-chat-archive scan --force
 ```
+
+**Incremental Updates**: By default, the `scan` command only adds new sessions and skips existing ones. Use `--force` to re-import and update sessions that may have new messages.
 
 ### 2. Generate HTML Archive
 

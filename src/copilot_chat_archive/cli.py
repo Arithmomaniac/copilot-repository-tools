@@ -41,7 +41,8 @@ def main():
     help="VS Code edition to scan.",
 )
 @click.option("--verbose", "-v", is_flag=True, help="Show verbose output.")
-def scan(db: str, storage_path: tuple, edition: str, verbose: bool):
+@click.option("--force", "-f", is_flag=True, help="Force re-import of existing sessions (updates changed sessions).")
+def scan(db: str, storage_path: tuple, edition: str, verbose: bool, force: bool):
     """Scan for and import Copilot chat sessions into the database."""
     database = Database(db)
 
@@ -58,25 +59,48 @@ def scan(db: str, storage_path: tuple, edition: str, verbose: bool):
             paths = [(p, e) for p, e in all_paths if e == edition]
 
     click.echo(f"Scanning for Copilot chat sessions...")
+    if force:
+        click.echo("  (Force mode: will update existing sessions)")
     if verbose:
         for path, ed in paths:
             click.echo(f"  Checking: {path} ({ed})")
 
     added = 0
+    updated = 0
     skipped = 0
 
+    def log_session_action(action: str, session):
+        """Log a session action if verbose mode is enabled."""
+        if verbose:
+            workspace = session.workspace_name or "Unknown workspace"
+            click.echo(f"  {action}: {workspace} ({len(session.messages)} messages)")
+
     for session in scan_chat_sessions(paths):
-        if database.add_session(session):
-            added += 1
-            if verbose:
-                workspace = session.workspace_name or "Unknown workspace"
-                click.echo(f"  Added: {workspace} ({len(session.messages)} messages)")
+        if force:
+            # In force mode, update existing sessions
+            existing = database.get_session(session.session_id)
+            if existing:
+                database.update_session(session)
+                updated += 1
+                log_session_action("Updated", session)
+            else:
+                database.add_session(session)
+                added += 1
+                log_session_action("Added", session)
         else:
-            skipped += 1
+            # Normal mode: skip existing sessions
+            if database.add_session(session):
+                added += 1
+                log_session_action("Added", session)
+            else:
+                skipped += 1
 
     click.echo(f"\nImport complete:")
     click.echo(f"  Added: {added} sessions")
-    click.echo(f"  Skipped (already exists): {skipped} sessions")
+    if force:
+        click.echo(f"  Updated: {updated} sessions")
+    else:
+        click.echo(f"  Skipped (already exists): {skipped} sessions")
 
     stats = database.get_stats()
     click.echo(f"\nDatabase now contains:")

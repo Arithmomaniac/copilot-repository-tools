@@ -151,3 +151,26 @@ class TestCLI:
         db = Database(db_path)
         stats = db.get_stats()
         assert stats["session_count"] == 1
+
+    def test_scan_force_flag(self, runner, tmp_path):
+        """Test scan command with --force flag."""
+        db_path = tmp_path / "force_test.db"
+        
+        # First, create a database with an existing session
+        db = Database(db_path)
+        session = ChatSession(
+            session_id="force-test-session",
+            workspace_name="force-workspace",
+            workspace_path="/home/user/force-test",
+            messages=[
+                ChatMessage(role="user", content="Original message"),
+            ],
+            created_at="2025-01-15T10:00:00Z",
+            vscode_edition="stable",
+        )
+        db.add_session(session)
+        
+        # Test that --force flag is recognized
+        result = runner.invoke(main, ["scan", "--db", str(db_path), "--force"])
+        assert result.exit_code == 0
+        assert "Force mode" in result.output or "Updated:" in result.output
