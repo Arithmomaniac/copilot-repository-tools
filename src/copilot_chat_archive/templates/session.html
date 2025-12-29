@@ -54,8 +54,8 @@
 
                 {% if message.tool_invocations %}
                 <details class="collapsible tool-invocations">
-                    <summary>
-                        <span class="collapsible-icon">▶</span>
+                    <summary aria-label="Toggle tool invocations section">
+                        <span class="collapsible-icon" aria-hidden="true">▶</span>
                         Tool Invocations ({{ message.tool_invocations | length }})
                     </summary>
                     <div class="collapsible-content">
@@ -87,8 +87,8 @@
 
                 {% if message.file_changes %}
                 <details class="collapsible file-changes">
-                    <summary>
-                        <span class="collapsible-icon">▶</span>
+                    <summary aria-label="Toggle file changes section">
+                        <span class="collapsible-icon" aria-hidden="true">▶</span>
                         File Changes ({{ message.file_changes | length }})
                     </summary>
                     <div class="collapsible-content">
@@ -114,8 +114,8 @@
 
                 {% if message.command_runs %}
                 <details class="collapsible command-runs">
-                    <summary>
-                        <span class="collapsible-icon">▶</span>
+                    <summary aria-label="Toggle command runs section">
+                        <span class="collapsible-icon" aria-hidden="true">▶</span>
                         Command Runs ({{ message.command_runs | length }})
                     </summary>
                     <div class="collapsible-content">

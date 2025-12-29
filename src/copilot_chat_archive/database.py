@@ -445,6 +445,7 @@ class Database:
         query: str,
         limit: int = 50,
         role: str | None = None,
+        include_messages: bool = True,
         include_tool_calls: bool = True,
         include_file_changes: bool = True,
         session_title: str | None = None,
@@ -455,6 +456,7 @@ class Database:
             query: The search query.
             limit: Maximum number of results to return.
             role: Filter by message role ('user', 'assistant', or None for both).
+            include_messages: Whether to search message content.
             include_tool_calls: Whether to also search tool invocations.
             include_file_changes: Whether to also search file changes.
             session_title: Filter by session title/workspace name.
@@ -467,17 +469,18 @@ class Database:
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
-            # Search messages
-            message_query = """
-                SELECT 
-                    m.id,
-                    m.session_id,
-                    m.role,
-                    m.content,
-                    s.workspace_name,
-                    s.custom_title,
-                    s.created_at,
-                    s.vscode_edition,
+            # Search messages (only if include_messages is True)
+            if include_messages:
+                message_query = """
+                    SELECT 
+                        m.id,
+                        m.session_id,
+                        m.role,
+                        m.content,
+                        s.workspace_name,
+                        s.custom_title,
+                        s.created_at,
+                        s.vscode_edition,
                     highlight(messages_fts, 0, '<mark>', '</mark>') as highlighted,
                     'message' as match_type
                 FROM messages_fts
@@ -485,21 +488,21 @@ class Database:
                 JOIN sessions s ON m.session_id = s.session_id
                 WHERE messages_fts MATCH ?
             """
-            params = [query]
+                params = [query]
 
-            if role:
-                message_query += " AND m.role = ?"
-                params.append(role)
+                if role:
+                    message_query += " AND m.role = ?"
+                    params.append(role)
 
-            if session_title:
-                message_query += " AND (s.workspace_name LIKE ? OR s.custom_title LIKE ?)"
-                params.extend([f"%{session_title}%", f"%{session_title}%"])
+                if session_title:
+                    message_query += " AND (s.workspace_name LIKE ? OR s.custom_title LIKE ?)"
+                    params.extend([f"%{session_title}%", f"%{session_title}%"])
 
-            message_query += " ORDER BY rank LIMIT ?"
-            params.append(limit)
+                message_query += " ORDER BY rank LIMIT ?"
+                params.append(limit)
 
-            cursor.execute(message_query, params)
-            results.extend([dict(row) for row in cursor.fetchall()])
+                cursor.execute(message_query, params)
+                results.extend([dict(row) for row in cursor.fetchall()])
 
             # Search tool invocations
             if include_tool_calls and len(results) < limit:

@@ -221,22 +221,28 @@ def search(
         click.echo(f"Error: Database file '{db}' not found.", err=True)
         sys.exit(1)
 
-    # Handle exclusive search modes
+    # Handle search mode options
+    include_messages = True
     include_tool_calls = not no_tools
     include_file_changes = not no_files
 
     if tools_only:
-        # For tools-only, we need a different approach
+        # Search only in tool invocations
+        include_messages = False
         include_file_changes = False
-    if files_only:
-        # For files-only, we need a different approach
+        include_tool_calls = True
+    elif files_only:
+        # Search only in file changes
+        include_messages = False
         include_tool_calls = False
+        include_file_changes = True
 
     database = Database(db)
     results = database.search(
         query,
         limit=limit,
         role=role,
+        include_messages=include_messages,
         include_tool_calls=include_tool_calls,
         include_file_changes=include_file_changes,
         session_title=title,
