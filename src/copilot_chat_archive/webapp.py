@@ -1,5 +1,6 @@
 """Flask web application for viewing Copilot chat archive."""
 
+import re
 from datetime import datetime
 from urllib.parse import unquote
 
@@ -32,11 +33,16 @@ def _markdown_to_html(text: str) -> str:
     if not text:
         return ""
     
+    # Pre-process: Add newlines before inline numbered list items (e.g., " 1. ", " 2. ")
+    # This helps display inline numbered lists that weren't properly formatted
+    # Pattern matches: letter/punctuation + space + digit(s) + dot + space
+    processed = re.sub(r'(?<=[a-zA-Z.!?:]) (\d+)\. ', r'\n\1. ', text)
+    
     # Reset the markdown converter state for each conversion
     _md_converter.reset()
     
     # Convert markdown to HTML
-    result = _md_converter.convert(text)
+    result = _md_converter.convert(processed)
     
     return result
 
@@ -93,7 +99,6 @@ def create_app(db_path: str, title: str = "Copilot Chat Archive") -> Flask:
         if not content:
             return ""
         # Normalize whitespace (replace newlines and multiple spaces with single space)
-        import re
         normalized = re.sub(r'\s+', ' ', content).strip()
         if len(normalized) > max_length:
             return normalized[:max_length] + "..."

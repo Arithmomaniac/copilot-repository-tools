@@ -75,6 +75,13 @@ class TestMarkdownToHtml:
         assert "<code" in result
         assert "print" in result
 
+    def test_inline_numbered_list_converted(self):
+        """Test that inline numbered lists get line breaks."""
+        text = "I should: 1. First do this 2. Then do that 3. Finally finish"
+        result = _markdown_to_html(text)
+        # Should have line breaks inserted before numbered items
+        assert "<br" in result or "<li>" in result
+
 
 class TestWebappRoutes:
     """Tests for the webapp routes."""
