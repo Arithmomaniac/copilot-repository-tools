@@ -11,19 +11,27 @@ This document specifies the behavior of the Flask webapp that replaces static HT
 - **Workspace Name**: The VS Code workspace/project name where the chat occurred
 - **FTS5**: SQLite Full-Text Search extension version 5
 - **Snippet**: A highlighted excerpt from a matching message in search results
+- **Workspace Filter**: Checkbox-based filter to show sessions from selected workspaces only
 
 ## Routes
 
 ### GET /
 
-Lists all chat sessions with optional search filtering.
+Lists all chat sessions with optional search and workspace filtering.
 
 **Query Parameters:**
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `q` | string | Optional search query for FTS5 full-text search |
+| `workspace` | string (multiple) | Optional workspace name(s) to filter by. Can be specified multiple times. |
 
 **Response:** HTML page with session list
+
+**Examples:**
+- `/?q=Flask` - Search for "Flask" across all workspaces
+- `/?workspace=my-project` - Show only sessions from "my-project" workspace
+- `/?workspace=project-a&workspace=project-b` - Show sessions from multiple workspaces
+- `/?q=debug&workspace=my-project` - Combined search and workspace filter
 
 ### GET /session/<session_id>
 
@@ -76,12 +84,33 @@ Each session item displays:
    - Falls back to truncated `session_id` if neither available
    
 2. **Workspace Name** (as property, not link)
-   - Displayed in session metadata when different from title
+   - Displayed below title with 📁 icon when `custom_title` is present
+   - Only shown when different from the clickable title
 
 3. **Metadata**
    - Message count
-   - Creation timestamp (formatted)
+   - Creation timestamp (formatted as "YYYY-MM-DD HH:MM:SS")
    - VS Code edition badge (stable/insider)
+
+### Workspace Filter
+
+The index page includes a workspace filter section:
+
+1. **Filter Checkboxes**
+   - Each workspace is displayed as a labeled checkbox
+   - Shows workspace name and session count (e.g., "my-project (5)")
+   - Multiple workspaces can be selected simultaneously
+   - Selected checkboxes have visual highlighting
+
+2. **Filter Actions**
+   - **Apply Filter** button: Submits selected workspaces as URL parameters
+   - **Clear** button: Removes all workspace filters and unchecks all boxes
+
+3. **Filter Behavior**
+   - Filter state persists in URL via `?workspace=` parameter(s)
+   - When filters are applied, only sessions from selected workspaces are shown
+   - Filter works in combination with search query
+   - Empty filter selection shows all sessions
 
 ### Search Behavior
 
@@ -99,26 +128,27 @@ When `?q=<term>` is provided:
 ### Edge Cases
 
 - Empty query (`?q=` or `?q=  `): Shows all sessions
-- No matching results: Shows empty list with sessions container
+- No matching results: Shows empty list with "No sessions found" message
 - Invalid FTS5 syntax: Returns error gracefully
+- No workspaces selected after clear: Shows all sessions
 
 ## Session View Behavior
 
 ### Header
 
-- Back link to index (`/`)
-- Session title (h2)
+- Back link to index (`← Back to all sessions`)
+- Session title (h2) - uses custom_title or workspace_name
 - Metadata: message count, workspace path, creation date, edition badge
-- Session ID (in small text)
+- Session ID displayed in small monospace text
 
 ### Message Display
 
 Each message shows:
 
 1. **Header row**
-   - Role badge (USER / ASSISTANT)
-   - Timestamp (if available)
-   - Anchor link (#N)
+   - Role badge (USER / ASSISTANT) with distinct styling
+   - Timestamp (if available, formatted)
+   - Anchor link (#N) for direct linking
 
 2. **Content**
    - Markdown rendered to HTML
@@ -127,20 +157,21 @@ Each message shows:
    - Tables rendered correctly
 
 3. **Collapsible sections** (if applicable)
-   - Tool Invocations
-   - File Changes
-   - Command Runs
+   - Tool Invocations: Shows tool name, input, result, status
+   - File Changes: Shows file path, diff, explanation
+   - Command Runs: Shows command, output, status
 
 ### Markdown Rendering
 
-The markdown filter must:
+The markdown filter uses Python-Markdown with these extensions:
 
-- Convert fenced code blocks to `<pre><code>`
-- Convert inline code to `<code>`
-- Render tables with proper styling
-- Preserve paragraph breaks (double newline → new paragraph)
-- Convert single newlines to `<br>` within paragraphs
-- Handle smart quotes and dashes
+| Extension | Purpose |
+|-----------|---------|
+| `tables` | Render markdown tables |
+| `fenced_code` | Support ```code blocks``` |
+| `sane_lists` | Better list handling |
+| `smarty` | Smart quotes and dashes |
+| `nl2br` | Convert newlines to `<br>` tags |
 
 ### Content Blocks
 
@@ -164,7 +195,7 @@ Displayed when `session_id` doesn't exist in database:
 
 - Title: "Session not found"
 - Message: "No session found with ID: {session_id}"
-- Link back to index
+- Link back to index (`← Back to all sessions`)
 
 ### Database Errors
 
@@ -200,3 +231,25 @@ The app registers these custom filters:
 | `markdown` | Converts markdown text to HTML |
 | `urldecode` | Decodes URL-encoded text |
 | `format_timestamp` | Formats epoch milliseconds to "YYYY-MM-DD HH:MM:SS" |
+
+## Testing
+
+### Unit Tests
+
+Located in `tests/test_webapp.py`:
+- Markdown conversion tests
+- Route response tests
+- Filter registration tests
+- Empty database handling
+
+### End-to-End Tests
+
+Located in `tests/test_webapp_e2e.py` (requires Playwright):
+- Index page loading and content
+- Session display with custom titles
+- Search functionality with snippets
+- Workspace filter checkboxes
+- Session view with messages
+- Anchor navigation
+- 404 error handling
+- Back navigation

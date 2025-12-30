@@ -235,3 +235,80 @@ class TestErrorHandling:
         
         back_link.click()
         assert page.url == f"{live_server}/"
+
+
+class TestWorkspaceFilter:
+    """Playwright tests for workspace filter functionality."""
+
+    def test_workspace_checkboxes_displayed(self, live_server, page):
+        """Test that workspace filter checkboxes are displayed."""
+        page.goto(live_server)
+        
+        # Check that workspace checkboxes exist
+        my_workspace_checkbox = page.locator("input[type='checkbox'][value='my-workspace']")
+        another_project_checkbox = page.locator("input[type='checkbox'][value='another-project']")
+        
+        assert my_workspace_checkbox.is_visible()
+        assert another_project_checkbox.is_visible()
+
+    def test_apply_filter_button_exists(self, live_server, page):
+        """Test that Apply Filter and Clear buttons exist."""
+        page.goto(live_server)
+        
+        apply_btn = page.locator("button:has-text('Apply Filter')")
+        clear_btn = page.locator("button:has-text('Clear')")
+        
+        assert apply_btn.is_visible()
+        assert clear_btn.is_visible()
+
+    def test_filter_by_workspace(self, live_server, page):
+        """Test that selecting a workspace and applying filter works."""
+        page.goto(live_server)
+        
+        # Initially both sessions should be visible
+        assert page.locator("a:has-text('VS Code debug')").is_visible()
+        assert page.locator("a:has-text('another-project')").is_visible()
+        
+        # Check my-workspace checkbox
+        page.locator("input[type='checkbox'][value='my-workspace']").check()
+        
+        # Click Apply Filter
+        page.locator("button:has-text('Apply Filter')").click()
+        
+        # URL should have workspace parameter
+        assert "workspace=my-workspace" in page.url
+        
+        # Only my-workspace session should be visible
+        assert page.locator("a:has-text('VS Code debug')").is_visible()
+        assert not page.locator("a:has-text('another-project')").is_visible()
+
+    def test_clear_filter(self, live_server, page):
+        """Test that Clear button removes all filters."""
+        # Start with a filter applied
+        page.goto(f"{live_server}/?workspace=my-workspace")
+        
+        # Only one session should be visible
+        assert page.locator("a:has-text('VS Code debug')").is_visible()
+        assert not page.locator("a:has-text('another-project')").is_visible()
+        
+        # Click Clear button
+        page.locator("button:has-text('Clear')").click()
+        
+        # URL should not have workspace parameter
+        assert "workspace=" not in page.url
+        
+        # Both sessions should be visible
+        assert page.locator("a:has-text('VS Code debug')").is_visible()
+        assert page.locator("a:has-text('another-project')").is_visible()
+
+    def test_filter_persists_in_url(self, live_server, page):
+        """Test that filter state persists in URL."""
+        page.goto(f"{live_server}/?workspace=another-project")
+        
+        # Checkbox should be checked
+        checkbox = page.locator("input[type='checkbox'][value='another-project']")
+        assert checkbox.is_checked()
+        
+        # Only another-project session should be visible
+        assert page.locator("a:has-text('another-project')").is_visible()
+        assert not page.locator("a:has-text('VS Code debug')").is_visible()
