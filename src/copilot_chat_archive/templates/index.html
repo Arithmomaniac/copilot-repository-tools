@@ -52,7 +52,7 @@
                 <div class="session-meta">
                     <span>{{ session.message_count }} messages</span>
                     {% if session.created_at %}
-                    <span>Created: {{ session.created_at }}</span>
+                    <span>Created: {{ session.created_at | format_timestamp }}</span>
                     {% endif %}
                     <span class="edition-badge {{ session.vscode_edition }}">{{ session.vscode_edition }}</span>
                 </div>

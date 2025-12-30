@@ -238,6 +238,155 @@ def _get_first_truthy_value(*values):
     return None
 
 
+def _extract_inline_reference_name(item: dict) -> str | None:
+    """Extract the display name from an inline reference item and format as markdown.
+    
+    VS Code Copilot Chat includes file references as separate response items with
+    kind="inlineReference". These can have different structures:
+    - {kind: "inlineReference", name: "filename.ext", inlineReference: {path: "..."}}
+    - {kind: "inlineReference", inlineReference: {name: "filename.ext", ...}}
+    - {kind: "inlineReference", inlineReference: {path: "/path/to/file"}}
+    
+    VS Code renders these as markdown links with backticked labels: [`filename`](path)
+    We format them similarly for consistent rendering.
+    
+    Returns the formatted reference as markdown, or None if no valid reference found.
+    """
+    name = None
+    path = None
+    
+    # Try top-level name first
+    if item.get("name"):
+        name = str(item["name"])
+    
+    # Check inlineReference object for more details
+    ref = item.get("inlineReference")
+    if isinstance(ref, dict):
+        # Try name from reference if not already found
+        if not name and ref.get("name"):
+            name = str(ref["name"])
+        
+        # Get the path for link target
+        if ref.get("path"):
+            path = str(ref["path"])
+        elif ref.get("fsPath"):
+            path = str(ref["fsPath"])
+        elif ref.get("external"):
+            path = str(ref["external"])
+        
+        # If no name yet, extract from path
+        if not name and path:
+            # Extract just the filename from the path
+            if "/" in path:
+                name = path.split("/")[-1]
+            elif "\\" in path:
+                name = path.split("\\")[-1]
+            else:
+                name = path
+    
+    if not name:
+        return None
+    
+    # Format as backticked text (matching VS Code's inline code style for file refs)
+    # If we have a path, we could make it a link, but for archived HTML the paths
+    # may not be valid, so just use backticks for clear visual distinction
+    return f"`{name}`"
+
+
+def _extract_uri_filename(uri_obj: dict) -> str | None:
+    """Extract filename from a URI object.
+    
+    URI objects in VS Code Copilot Chat have structures like:
+    - {fsPath: "c:\\path\\file.ext", path: "/c:/path/file.ext", ...}
+    - {path: "/path/to/file.ext", scheme: "file", ...}
+    
+    Returns the filename portion, or None if not extractable.
+    """
+    path = None
+    
+    # Try fsPath first (Windows-style)
+    if uri_obj.get("fsPath"):
+        path = str(uri_obj["fsPath"])
+    elif uri_obj.get("path"):
+        path = str(uri_obj["path"])
+    elif uri_obj.get("external"):
+        path = str(uri_obj["external"])
+    
+    if not path:
+        return None
+    
+    # Extract just the filename
+    if "\\" in path:
+        return path.split("\\")[-1]
+    elif "/" in path:
+        return path.split("/")[-1]
+    return path
+
+
+def _extract_edit_group_text(item: dict, edit_type: str = "Edited") -> str | None:
+    """Extract text representation from textEditGroup, notebookEditGroup, or codeblockUri.
+    
+    These items represent file edits and should be rendered as:
+    "Edited `filename.ext`" or similar.
+    """
+    uri = item.get("uri")
+    if not isinstance(uri, dict):
+        return None
+    
+    filename = _extract_uri_filename(uri)
+    if not filename:
+        return None
+    
+    return f"{edit_type} `{filename}`"
+
+
+def _merge_content_blocks(blocks: list[tuple[str, str]]) -> list[ContentBlock]:
+    """Merge consecutive non-thinking content blocks into single blocks.
+    
+    Takes a list of (kind, content) tuples and merges consecutive non-thinking
+    blocks into single ContentBlock objects. This ensures that inline references
+    and text flow together as a single rendered unit.
+    
+    Args:
+        blocks: List of (kind, content) tuples where kind is 'thinking' or 'text'
+    
+    Returns:
+        List of ContentBlock objects with consecutive text blocks merged
+    """
+    if not blocks:
+        return []
+    
+    merged = []
+    current_kind = None
+    current_content = []
+    
+    for kind, content in blocks:
+        # Treat all non-thinking blocks as text for merging purposes
+        effective_kind = "thinking" if kind == "thinking" else "text"
+        
+        if effective_kind == current_kind:
+            # Continue accumulating content of the same kind
+            current_content.append(content)
+        else:
+            # Kind changed - flush the accumulated content
+            if current_content:
+                merged.append(ContentBlock(
+                    kind=current_kind or "text",
+                    content="".join(current_content)
+                ))
+            current_kind = effective_kind
+            current_content = [content]
+    
+    # Flush any remaining content
+    if current_content:
+        merged.append(ContentBlock(
+            kind=current_kind or "text",
+            content="".join(current_content)
+        ))
+    
+    return merged
+
+
 def _parse_tool_invocations(raw_invocations: list) -> list[ToolInvocation]:
     """Parse tool invocations from raw data."""
     invocations = []
@@ -335,7 +484,7 @@ def _parse_chat_session_file(
                 response_items = msg.get("response", [])
                 if response_items:
                     response_content = []
-                    content_blocks = []
+                    raw_blocks = []  # Collect as (kind, content) tuples for merging
                     tool_invocations = []
                     file_changes = []
                     command_runs = []
@@ -347,7 +496,31 @@ def _parse_chat_session_file(
                                 value = str(item["value"])
                                 kind = item.get("kind", "text")
                                 response_content.append(value)
-                                content_blocks.append(ContentBlock(kind=kind, content=value))
+                                raw_blocks.append((kind, value))
+                            # Handle inline file references (VS Code Copilot Chat format)
+                            # These appear as separate array items with kind="inlineReference"
+                            elif item.get("kind") == "inlineReference":
+                                ref_name = _extract_inline_reference_name(item)
+                                if ref_name:
+                                    # Append as inline text to flow with surrounding content
+                                    response_content.append(ref_name)
+                                    raw_blocks.append(("text", ref_name))
+                            # Handle file edit indicators (textEditGroup, notebookEditGroup, codeblockUri)
+                            elif item.get("kind") == "textEditGroup":
+                                edit_text = _extract_edit_group_text(item, "Edited")
+                                if edit_text:
+                                    response_content.append(edit_text)
+                                    raw_blocks.append(("text", edit_text))
+                            elif item.get("kind") == "notebookEditGroup":
+                                edit_text = _extract_edit_group_text(item, "Edited notebook")
+                                if edit_text:
+                                    response_content.append(edit_text)
+                                    raw_blocks.append(("text", edit_text))
+                            elif item.get("kind") == "codeblockUri":
+                                edit_text = _extract_edit_group_text(item, "Editing")
+                                if edit_text:
+                                    response_content.append(edit_text)
+                                    raw_blocks.append(("text", edit_text))
                             
                             # Extract tool invocations
                             if item.get("toolInvocations"):
@@ -373,9 +546,11 @@ def _parse_chat_session_file(
                         file_changes.extend(_parse_file_changes(msg["fileChanges"]))
                     
                     if response_content or tool_invocations or file_changes or command_runs:
+                        # Merge consecutive text blocks for better markdown rendering
+                        content_blocks = _merge_content_blocks(raw_blocks)
                         messages.append(ChatMessage(
                             role="assistant",
-                            content="\n".join(response_content),
+                            content="".join(response_content),
                             tool_invocations=tool_invocations,
                             file_changes=file_changes,
                             command_runs=command_runs,
@@ -517,7 +692,7 @@ def _extract_session_from_dict(
                 response_items = msg.get("response", [])
                 if response_items:
                     response_content = []
-                    content_blocks = []
+                    raw_blocks = []  # Collect as (kind, content) tuples for merging
                     tool_invocations = []
                     file_changes = []
                     command_runs = []
@@ -528,7 +703,29 @@ def _extract_session_from_dict(
                                 value = str(item["value"])
                                 kind = item.get("kind", "text")
                                 response_content.append(value)
-                                content_blocks.append(ContentBlock(kind=kind, content=value))
+                                raw_blocks.append((kind, value))
+                            # Handle inline file references (VS Code Copilot Chat format)
+                            elif item.get("kind") == "inlineReference":
+                                ref_name = _extract_inline_reference_name(item)
+                                if ref_name:
+                                    response_content.append(ref_name)
+                                    raw_blocks.append(("text", ref_name))
+                            # Handle file edit indicators
+                            elif item.get("kind") == "textEditGroup":
+                                edit_text = _extract_edit_group_text(item, "Edited")
+                                if edit_text:
+                                    response_content.append(edit_text)
+                                    raw_blocks.append(("text", edit_text))
+                            elif item.get("kind") == "notebookEditGroup":
+                                edit_text = _extract_edit_group_text(item, "Edited notebook")
+                                if edit_text:
+                                    response_content.append(edit_text)
+                                    raw_blocks.append(("text", edit_text))
+                            elif item.get("kind") == "codeblockUri":
+                                edit_text = _extract_edit_group_text(item, "Editing")
+                                if edit_text:
+                                    response_content.append(edit_text)
+                                    raw_blocks.append(("text", edit_text))
                             if item.get("toolInvocations"):
                                 tool_invocations.extend(_parse_tool_invocations(item["toolInvocations"]))
                             for key in ("fileChanges", "fileEdits", "files"):
@@ -538,9 +735,11 @@ def _extract_session_from_dict(
                                 command_runs.extend(_parse_command_runs(item["commandRuns"]))
                     
                     if response_content or tool_invocations or file_changes or command_runs:
+                        # Merge consecutive text blocks for better markdown rendering
+                        content_blocks = _merge_content_blocks(raw_blocks)
                         messages.append(ChatMessage(
                             role="assistant",
-                            content="\n".join(response_content),
+                            content="".join(response_content),
                             tool_invocations=tool_invocations,
                             file_changes=file_changes,
                             command_runs=command_runs,

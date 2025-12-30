@@ -1,9 +1,13 @@
 """Web viewer module for displaying Copilot chat archive."""
 
 import html
+import re
 from pathlib import Path
 from typing import Any
 
+import markdown
+from markdown.extensions.tables import TableExtension
+from markdown.extensions.fenced_code import FencedCodeExtension
 from urllib.parse import unquote
 
 from jinja2 import Environment, PackageLoader, select_autoescape
@@ -11,63 +15,46 @@ from jinja2 import Environment, PackageLoader, select_autoescape
 from .database import Database
 
 
+# Create a reusable markdown converter with extensions
+_md_converter = markdown.Markdown(
+    extensions=[
+        'tables',           # Support markdown tables
+        'fenced_code',      # Support ```code blocks```
+        'sane_lists',       # Better list handling
+        'smarty',           # Smart quotes and dashes
+    ],
+    extension_configs={
+        'smarty': {
+            'smart_dashes': True,
+            'smart_quotes': True,
+        },
+    },
+)
+
+
 def _markdown_to_html(text: str) -> str:
-    """Simple markdown-like conversion to HTML.
+    """Convert markdown text to HTML using the markdown library.
 
     Handles:
-    - Code blocks (```)
+    - Code blocks (fenced with ```)
     - Inline code (`)
+    - Tables
+    - Headers
+    - Bold/italic
+    - Lists
+    - Links
     - Line breaks
     """
     if not text:
         return ""
-
-    result = []
-    lines = text.split("\n")
-    in_code_block = False
-    code_block_content = []
-    code_language = ""
-
-    for line in lines:
-        if line.startswith("```"):
-            if in_code_block:
-                # End code block
-                code = html.escape("\n".join(code_block_content))
-                result.append(f'<pre><code class="language-{code_language}">{code}</code></pre>')
-                code_block_content = []
-                in_code_block = False
-            else:
-                # Start code block
-                in_code_block = True
-                code_language = line[3:].strip() or "text"
-        elif in_code_block:
-            code_block_content.append(line)
-        else:
-            # Handle inline code
-            processed = ""
-            i = 0
-            while i < len(line):
-                if line[i] == "`":
-                    # Find closing backtick
-                    end = line.find("`", i + 1)
-                    if end != -1:
-                        code = html.escape(line[i + 1 : end])
-                        processed += f"<code>{code}</code>"
-                        i = end + 1
-                    else:
-                        processed += html.escape(line[i])
-                        i += 1
-                else:
-                    processed += html.escape(line[i])
-                    i += 1
-            result.append(processed)
-
-    # Handle unclosed code block
-    if in_code_block and code_block_content:
-        code = html.escape("\n".join(code_block_content))
-        result.append(f'<pre><code class="language-{code_language}">{code}</code></pre>')
-
-    return "<br>\n".join(result)
+    
+    # Reset the markdown converter state for each conversion
+    _md_converter.reset()
+    
+    # Convert markdown to HTML
+    result = _md_converter.convert(text)
+    
+    return result
 
 
 def _urldecode(text: str) -> str:
@@ -75,6 +62,23 @@ def _urldecode(text: str) -> str:
     if not text:
         return ""
     return unquote(text)
+
+
+def _format_timestamp(value: str) -> str:
+    """Format an epoch timestamp (milliseconds) to a human-readable date string."""
+    if not value:
+        return ""
+    try:
+        from datetime import datetime
+        # Handle both string and numeric values
+        epoch_ms = float(value)
+        # Convert milliseconds to seconds
+        epoch_s = epoch_ms / 1000
+        dt = datetime.fromtimestamp(epoch_s)
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+    except (ValueError, TypeError, OSError):
+        # If parsing fails, return original value
+        return str(value)
 
 
 def get_jinja_env() -> Environment:
@@ -85,6 +89,7 @@ def get_jinja_env() -> Environment:
     )
     env.filters["markdown"] = _markdown_to_html
     env.filters["urldecode"] = _urldecode
+    env.filters["format_timestamp"] = _format_timestamp
     return env
 
 
@@ -434,6 +439,13 @@ footer {
     color: var(--link-color);
 }
 
+.message-timestamp {
+    color: var(--text-secondary);
+    font-size: 0.8em;
+    margin-left: auto;
+    margin-right: 8px;
+}
+
 .message.highlighted {
     animation: highlight-pulse 2s ease-out;
 }
@@ -714,6 +726,53 @@ pre.command-output {
     font-size: 0.85em;
     max-height: 200px;
     overflow: auto;
+}
+
+/* Tables - with light grey borders */
+.message-content table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 12px 0;
+    font-size: 0.9em;
+}
+
+.message-content table th,
+.message-content table td {
+    border: 1px solid #d0d7de;
+    padding: 8px 12px;
+    text-align: left;
+}
+
+.message-content table th {
+    background-color: var(--bg-secondary);
+    font-weight: 600;
+}
+
+@media (prefers-color-scheme: dark) {
+    .message-content table th,
+    .message-content table td {
+        border-color: #30363d;
+    }
+}
+
+/* Fix message header alignment */
+.message-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 8px;
+}
+
+.message-header .message-role {
+    margin-bottom: 0;
+}
+
+.message-header .message-timestamp {
+    margin-left: 0;
+}
+
+.message-header .message-anchor {
+    margin-left: auto;
 }
 """
     (static_dir / "style.css").write_text(css_content.strip(), encoding="utf-8")

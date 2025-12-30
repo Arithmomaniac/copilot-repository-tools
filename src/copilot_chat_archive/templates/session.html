@@ -32,7 +32,7 @@
                 <span>Path: {{ session.workspace_path | urldecode }}</span>
                 {% endif %}
                 {% if session.created_at %}
-                <span>Created: {{ session.created_at }}</span>
+                <span>Created: {{ session.created_at | format_timestamp }}</span>
                 {% endif %}
                 <span class="edition-badge {{ session.vscode_edition }}">{{ session.vscode_edition }}</span>
             </div>
@@ -46,6 +46,9 @@
             <div class="message {{ message.role }}" id="msg-{{ loop.index }}">
                 <div class="message-header">
                     <div class="message-role">{{ message.role }}</div>
+                    {% if message.timestamp %}
+                    <span class="message-timestamp">{{ message.timestamp | format_timestamp }}</span>
+                    {% endif %}
                     <a href="#msg-{{ loop.index }}" class="message-anchor" title="Link to this message">#{{ loop.index }}</a>
                 </div>
                 <div class="message-content">
@@ -162,10 +165,6 @@
                         {% endfor %}
                     </div>
                 </details>
-                {% endif %}
-
-                {% if message.timestamp %}
-                <div class="message-timestamp">{{ message.timestamp }}</div>
                 {% endif %}
             </div>
             {% endfor %}
