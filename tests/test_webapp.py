@@ -151,7 +151,7 @@ class TestEmptyDatabase:
     def test_index_empty_db(self, tmp_path):
         """Test index with empty database."""
         db_path = tmp_path / "empty.db"
-        db = Database(db_path)  # noqa: F841
+        _ = Database(db_path)  # Create empty database
         
         app = create_app(str(db_path))
         app.config["TESTING"] = True

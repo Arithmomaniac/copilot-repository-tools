@@ -1,8 +1,9 @@
 """Flask web application for viewing Copilot chat archive."""
 
-from flask import Flask, render_template, request
+from datetime import datetime
 from urllib.parse import unquote
 
+from flask import Flask, render_template, request
 import markdown
 
 from .database import Database
@@ -51,7 +52,6 @@ def _format_timestamp(value: str) -> str:
     if not value:
         return ""
     try:
-        from datetime import datetime
         # Handle both string and numeric values
         epoch_ms = float(value)
         # Convert milliseconds to seconds
