@@ -1,6 +1,5 @@
 """Flask web application for viewing Copilot chat archive."""
 
-import re
 from datetime import datetime
 from urllib.parse import unquote
 
@@ -33,16 +32,11 @@ def _markdown_to_html(text: str) -> str:
     if not text:
         return ""
     
-    # Pre-process: Add newlines before inline numbered list items (e.g., " 1. ", " 2. ")
-    # This helps display inline numbered lists that weren't properly formatted
-    # Pattern matches: letter/punctuation + space + digit(s) + dot + space
-    processed = re.sub(r'(?<=[a-zA-Z.!?:]) (\d+)\. ', r'\n\1. ', text)
-    
     # Reset the markdown converter state for each conversion
     _md_converter.reset()
     
     # Convert markdown to HTML
-    result = _md_converter.convert(processed)
+    result = _md_converter.convert(text)
     
     return result
 
@@ -99,6 +93,7 @@ def create_app(db_path: str, title: str = "Copilot Chat Archive") -> Flask:
         if not content:
             return ""
         # Normalize whitespace (replace newlines and multiple spaces with single space)
+        import re
         normalized = re.sub(r'\s+', ' ', content).strip()
         if len(normalized) > max_length:
             return normalized[:max_length] + "..."
@@ -106,9 +101,10 @@ def create_app(db_path: str, title: str = "Copilot Chat Archive") -> Flask:
     
     @app.route("/")
     def index():
-        """List sessions, with optional search filtering."""
+        """List sessions, with optional search and workspace filtering."""
         db = Database(app.config["DB_PATH"])
         query = request.args.get("q", "").strip()
+        selected_workspaces = request.args.getlist("workspace")
         
         search_snippets = {}  # session_id -> list of snippets with message links
         
@@ -140,6 +136,10 @@ def create_app(db_path: str, title: str = "Copilot Chat Archive") -> Flask:
         else:
             sessions = db.list_sessions()
         
+        # Apply workspace filter if selected
+        if selected_workspaces:
+            sessions = [s for s in sessions if s.get("workspace_name") in selected_workspaces]
+        
         workspaces = db.get_workspaces()
         stats = db.get_stats()
         
@@ -151,6 +151,7 @@ def create_app(db_path: str, title: str = "Copilot Chat Archive") -> Flask:
             stats=stats,
             query=query,
             search_snippets=search_snippets,
+            selected_workspaces=selected_workspaces,
         )
     
     @app.route("/session/<session_id>")

@@ -110,10 +110,14 @@ header .stats {
     display: flex;
     flex-wrap: wrap;
     gap: 10px;
-    margin-bottom: 20px;
+    margin-bottom: 10px;
+    align-items: center;
 }
 
-.workspace-tag {
+.workspace-filter {
+    display: flex;
+    align-items: center;
+    gap: 6px;
     background-color: var(--bg-tertiary);
     padding: 4px 12px;
     border-radius: 20px;
@@ -123,13 +127,52 @@ header .stats {
     transition: background-color 0.2s;
 }
 
-.workspace-tag:hover {
+.workspace-filter:hover {
     background-color: var(--border-color);
 }
 
-.workspace-tag.active {
+.workspace-filter input[type="checkbox"] {
+    margin: 0;
+    cursor: pointer;
+}
+
+.workspace-filter.checked {
     background-color: var(--link-color);
     color: white;
+}
+
+.filter-actions {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.filter-actions button {
+    padding: 6px 16px;
+    font-size: 0.85em;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.filter-actions .apply-btn {
+    background-color: var(--link-color);
+    color: white;
+    border-color: var(--link-color);
+}
+
+.filter-actions .apply-btn:hover {
+    background-color: #0860c4;
+}
+
+.filter-actions .clear-btn {
+    background-color: var(--bg-secondary);
+    color: var(--text-primary);
+}
+
+.filter-actions .clear-btn:hover {
+    background-color: var(--bg-tertiary);
 }
 
 .session-list {
@@ -296,8 +339,11 @@ footer a {
     </header>
 
     <main class="container">
-        <form method="GET" action="/" class="search-box">
+        <form method="GET" action="/" class="search-box" id="search-form">
             <input type="text" name="q" placeholder="Search sessions..." autocomplete="off" value="{{ query or '' }}">
+            {% for ws_name in selected_workspaces or [] %}
+            <input type="hidden" name="workspace" value="{{ ws_name }}">
+            {% endfor %}
             <button type="submit">Search</button>
         </form>
 
@@ -309,12 +355,18 @@ footer a {
         {% endif %}
 
         {% if workspaces %}
-        <div class="workspaces">
+        <div class="workspaces" id="workspace-filters">
             {% for ws in workspaces %}
-            <span class="workspace-tag" data-workspace="{{ ws.workspace_name }}">
+            <label class="workspace-filter{% if ws.workspace_name in (selected_workspaces or []) %} checked{% endif %}">
+                <input type="checkbox" name="workspace" value="{{ ws.workspace_name }}"
+                    {% if ws.workspace_name in (selected_workspaces or []) %}checked{% endif %}>
                 {{ ws.workspace_name }} ({{ ws.session_count }})
-            </span>
+            </label>
             {% endfor %}
+        </div>
+        <div class="filter-actions">
+            <button type="button" class="apply-btn" id="apply-filter">Apply Filter</button>
+            <button type="button" class="clear-btn" id="clear-filter">Clear</button>
         </div>
         {% endif %}
 
@@ -366,5 +418,54 @@ footer a {
             Powered by <a href="https://github.com/Arithmomaniac/copilot-repository-tools">Copilot Chat Archive</a>
         </div>
     </footer>
+
+    <script>
+        // Workspace filter functionality
+        document.addEventListener('DOMContentLoaded', function() {
+            const applyBtn = document.getElementById('apply-filter');
+            const clearBtn = document.getElementById('clear-filter');
+            const searchForm = document.getElementById('search-form');
+            const workspaceFilters = document.getElementById('workspace-filters');
+
+            if (workspaceFilters) {
+                // Toggle checked class on label when checkbox changes
+                workspaceFilters.querySelectorAll('input[type="checkbox"]').forEach(function(checkbox) {
+                    checkbox.addEventListener('change', function() {
+                        this.parentElement.classList.toggle('checked', this.checked);
+                    });
+                });
+            }
+
+            if (applyBtn) {
+                applyBtn.addEventListener('click', function() {
+                    // Get selected workspaces
+                    const checkboxes = workspaceFilters.querySelectorAll('input[type="checkbox"]:checked');
+                    const selectedWorkspaces = Array.from(checkboxes).map(cb => cb.value);
+                    
+                    // Build URL with workspace params
+                    const url = new URL(window.location.href);
+                    url.searchParams.delete('workspace');
+                    selectedWorkspaces.forEach(ws => url.searchParams.append('workspace', ws));
+                    
+                    window.location.href = url.toString();
+                });
+            }
+
+            if (clearBtn) {
+                clearBtn.addEventListener('click', function() {
+                    // Clear all checkboxes
+                    workspaceFilters.querySelectorAll('input[type="checkbox"]').forEach(function(checkbox) {
+                        checkbox.checked = false;
+                        checkbox.parentElement.classList.remove('checked');
+                    });
+                    
+                    // Redirect without workspace params
+                    const url = new URL(window.location.href);
+                    url.searchParams.delete('workspace');
+                    window.location.href = url.toString();
+                });
+            }
+        });
+    </script>
 </body>
 </html>
