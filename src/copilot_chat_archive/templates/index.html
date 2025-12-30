@@ -229,6 +229,52 @@ footer a {
     color: var(--link-color);
     text-decoration: none;
 }
+
+.session-workspace {
+    color: var(--text-secondary);
+    font-size: 0.85em;
+    margin-top: 4px;
+}
+
+.search-snippets {
+    margin-top: 10px;
+    padding: 8px 12px;
+    background-color: var(--bg-tertiary);
+    border-radius: 4px;
+    border-left: 3px solid var(--link-color);
+}
+
+.search-snippet {
+    font-size: 0.9em;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+    line-height: 1.4;
+}
+
+.search-snippet:last-child {
+    margin-bottom: 0;
+}
+
+.search-snippet a {
+    color: var(--text-primary);
+    text-decoration: none;
+}
+
+.search-snippet a:hover {
+    text-decoration: underline;
+}
+
+.search-snippet mark {
+    background-color: var(--mark-bg);
+    padding: 1px 3px;
+    border-radius: 2px;
+}
+
+.snippet-link {
+    color: var(--link-color);
+    font-size: 0.8em;
+    margin-left: 4px;
+}
     </style>
 </head>
 <body>
@@ -276,12 +322,19 @@ footer a {
             {% for session in sessions %}
             <li class="session-item" data-workspace="{{ session.workspace_name or '' }}">
                 <a href="/session/{{ session.session_id }}">
-                    {% if session.workspace_name %}
+                    {% if session.custom_title %}
+                        {{ session.custom_title }}
+                    {% elif session.workspace_name %}
                         {{ session.workspace_name }}
                     {% else %}
                         Session {{ session.session_id[:8] }}...
                     {% endif %}
                 </a>
+                {% if session.workspace_name and session.custom_title %}
+                <div class="session-workspace">
+                    📁 {{ session.workspace_name }}
+                </div>
+                {% endif %}
                 <div class="session-meta">
                     <span>{{ session.message_count }} messages</span>
                     {% if session.created_at %}
@@ -289,6 +342,18 @@ footer a {
                     {% endif %}
                     <span class="edition-badge {{ session.vscode_edition }}">{{ session.vscode_edition }}</span>
                 </div>
+                {% if query and search_snippets and session.session_id in search_snippets %}
+                <div class="search-snippets">
+                    {% for snippet in search_snippets[session.session_id] %}
+                    <div class="search-snippet">
+                        <a href="/session/{{ session.session_id }}#msg-{{ snippet.message_anchor }}">
+                            {{ snippet.text | safe }}
+                            <span class="snippet-link">#{{ snippet.message_anchor }}</span>
+                        </a>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endif %}
             </li>
             {% else %}
             <li class="no-results">No sessions found. Import some chat history first!</li>

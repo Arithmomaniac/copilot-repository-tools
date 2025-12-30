@@ -16,6 +16,7 @@ _md_converter = markdown.Markdown(
         'fenced_code',      # Support ```code blocks```
         'sane_lists',       # Better list handling
         'smarty',           # Smart quotes and dashes
+        'nl2br',            # Convert newlines to <br> tags
     ],
     extension_configs={
         'smarty': {
@@ -87,17 +88,47 @@ def create_app(db_path: str, title: str = "Copilot Chat Archive") -> Flask:
     app.config["DB_PATH"] = db_path
     app.config["ARCHIVE_TITLE"] = title
     
+    def _create_snippet(content: str, max_length: int = 150) -> str:
+        """Create a snippet from content, normalizing whitespace."""
+        if not content:
+            return ""
+        # Normalize whitespace (replace newlines and multiple spaces with single space)
+        import re
+        normalized = re.sub(r'\s+', ' ', content).strip()
+        if len(normalized) > max_length:
+            return normalized[:max_length] + "..."
+        return normalized
+    
     @app.route("/")
     def index():
         """List sessions, with optional search filtering."""
         db = Database(app.config["DB_PATH"])
         query = request.args.get("q", "").strip()
         
+        search_snippets = {}  # session_id -> list of snippets with message links
+        
         if query:
             # Use FTS search
             search_results = db.search(query, limit=100)
-            # Group by session and get unique session IDs
-            session_ids = list(dict.fromkeys(r["session_id"] for r in search_results))
+            
+            # Group results by session and collect snippets
+            session_ids = []
+            for r in search_results:
+                sid = r["session_id"]
+                if sid not in search_snippets:
+                    search_snippets[sid] = []
+                    session_ids.append(sid)
+                
+                # Add snippet (up to 5 per session, each from different message)
+                if len(search_snippets[sid]) < 5:
+                    # message_index is 0-based, but anchor is 1-based
+                    msg_index = r.get("message_index", 0)
+                    snippet = {
+                        "text": _create_snippet(r.get("highlighted", r.get("content", ""))),
+                        "message_anchor": msg_index + 1,  # 1-based for #msg-N
+                    }
+                    search_snippets[sid].append(snippet)
+            
             # Get full session info for matching sessions
             all_sessions = db.list_sessions()
             sessions = [s for s in all_sessions if s["session_id"] in session_ids]
@@ -114,6 +145,7 @@ def create_app(db_path: str, title: str = "Copilot Chat Archive") -> Flask:
             workspaces=workspaces,
             stats=stats,
             query=query,
+            search_snippets=search_snippets,
         )
     
     @app.route("/session/<session_id>")
