@@ -1,0 +1,57 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "copilot-chat-archive"
+version = "0.1.0"
+description = "Create a searchable archive of VS Code GitHub Copilot chat history"
+readme = "README.md"
+requires-python = ">=3.9"
+license = "MIT"
+authors = [
+    { name = "copilot-chat-archive contributors" }
+]
+keywords = ["copilot", "vscode", "chat", "archive", "sqlite"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "click>=8.0.0",
+    "jinja2>=3.0.0",
+    "markdown>=3.4.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+]
+
+[project.scripts]
+copilot-chat-archive = "copilot_chat_archive.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/Arithmomaniac/copilot-repository-tools"
+Repository = "https://github.com/Arithmomaniac/copilot-repository-tools"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/copilot_chat_archive"]
+artifacts = ["src/copilot_chat_archive/templates/*"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/copilot_chat_archive/**/*.py",
+    "src/copilot_chat_archive/templates/*.html",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
