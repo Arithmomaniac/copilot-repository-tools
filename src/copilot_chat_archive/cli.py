@@ -1,6 +1,7 @@
 """Command-line interface for Copilot Chat Archive."""
 
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import click
@@ -9,6 +10,22 @@ from . import __version__
 from .database import Database
 from .scanner import get_vscode_storage_paths, scan_chat_sessions
 from .viewer import generate_html
+
+
+def format_timestamp(ts: str | int | None) -> str:
+    """Convert a timestamp to a human-readable date string."""
+    if ts is None:
+        return "Unknown"
+    try:
+        # Try parsing as milliseconds (JS timestamp)
+        if isinstance(ts, str):
+            ts = int(ts)
+        if ts > 1e12:  # Milliseconds
+            ts = ts / 1000
+        return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+    except (ValueError, OSError):
+        # Return as-is if parsing fails
+        return str(ts)
 
 
 @click.group()
@@ -198,6 +215,12 @@ def generate(db: str, output: str, title: str):
     is_flag=True,
     help="Only search in file changes.",
 )
+@click.option(
+    "--full",
+    "-F",
+    is_flag=True,
+    help="Show full content instead of truncated snippets.",
+)
 def search(
     db: str,
     query: str,
@@ -208,6 +231,7 @@ def search(
     no_files: bool,
     tools_only: bool,
     files_only: bool,
+    full: bool,
 ):
     """Search chat messages in the database.
     
@@ -216,9 +240,10 @@ def search(
     Use --title to filter by session/workspace name.
     Use --no-tools or --no-files to exclude specific content types.
     Use --tools-only or --files-only to search only specific content types.
+    Use --full to show complete content instead of truncated snippets.
     """
     if not Path(db).exists():
-        click.echo(f"Error: Database file '{db}' not found.", err=True)
+        click.echo(click.style(f"Error: Database file '{db}' not found.", fg="red"), err=True)
         sys.exit(1)
 
     # Handle search mode options
@@ -249,26 +274,44 @@ def search(
     )
 
     if not results:
-        click.echo(f"No results found for '{query}'")
+        click.echo(click.style(f"No results found for '{query}'", fg="yellow"))
         return
 
-    click.echo(f"Found {len(results)} result(s) for '{query}':\n")
+    click.echo(click.style(f"Found {len(results)} result(s) for '{query}':\n", fg="green", bold=True))
 
-    for result in results:
-        click.echo(f"Session: {result['session_id'][:8]}...")
+    for i, result in enumerate(results, 1):
+        # Header with result number
+        click.echo(click.style(f"━━━ Result {i} ━━━", fg="cyan", bold=True))
+        
+        # Session ID (full)
+        click.echo(click.style("Session ID: ", fg="bright_blue", bold=True) + click.style(result['session_id'], fg="white"))
+        
+        # Workspace name
         if result.get("workspace_name"):
-            click.echo(f"  Workspace: {result['workspace_name']}")
+            click.echo(click.style("Workspace:  ", fg="bright_blue", bold=True) + click.style(result['workspace_name'], fg="yellow"))
+        
+        # Custom title
         if result.get("custom_title"):
-            click.echo(f"  Title: {result['custom_title']}")
-        click.echo(f"  Role: {result['role']}")
+            click.echo(click.style("Title:      ", fg="bright_blue", bold=True) + result['custom_title'])
+        
+        # Date
+        if result.get("created_at"):
+            formatted_date = format_timestamp(result['created_at'])
+            click.echo(click.style("Date:       ", fg="bright_blue", bold=True) + click.style(formatted_date, fg="bright_black"))
+        
+        # Role with color coding
+        role_color = "green" if result['role'] == "user" else "magenta"
+        click.echo(click.style("Role:       ", fg="bright_blue", bold=True) + click.style(result['role'], fg=role_color))
+        
+        # Match type if not a regular message
         if result.get("match_type") and result["match_type"] != "message":
-            click.echo(f"  Match type: {result['match_type']}")
+            click.echo(click.style("Match Type: ", fg="bright_blue", bold=True) + click.style(result['match_type'], fg="cyan"))
 
-        # Show a snippet of the content
+        # Content
         content = result["content"]
-        if len(content) > 200:
-            content = content[:200] + "..."
-        click.echo(f"  Content: {content}")
+        if not full and len(content) > 200:
+            content = content[:200] + click.style("... (use --full to see more)", fg="bright_black")
+        click.echo(click.style("Content:    ", fg="bright_blue", bold=True) + content)
         click.echo()
 
 

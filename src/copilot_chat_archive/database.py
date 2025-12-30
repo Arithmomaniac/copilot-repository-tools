@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-from .scanner import ChatMessage, ChatSession, ToolInvocation, FileChange, CommandRun
+from .scanner import ChatMessage, ChatSession, ToolInvocation, FileChange, CommandRun, ContentBlock
 
 
 class Database:
@@ -84,6 +84,16 @@ class Database:
         FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
     );
 
+    -- Content blocks table for structured message content with kind (thinking, text, etc.)
+    CREATE TABLE IF NOT EXISTS content_blocks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        message_id INTEGER NOT NULL,
+        block_index INTEGER NOT NULL,
+        kind TEXT NOT NULL DEFAULT 'text',
+        content TEXT NOT NULL,
+        FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
+    );
+
     CREATE INDEX IF NOT EXISTS idx_sessions_workspace ON sessions(workspace_name);
     CREATE INDEX IF NOT EXISTS idx_sessions_created ON sessions(created_at);
     CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
@@ -91,6 +101,7 @@ class Database:
     CREATE INDEX IF NOT EXISTS idx_tool_invocations_message ON tool_invocations(message_id);
     CREATE INDEX IF NOT EXISTS idx_file_changes_message ON file_changes(message_id);
     CREATE INDEX IF NOT EXISTS idx_command_runs_message ON command_runs(message_id);
+    CREATE INDEX IF NOT EXISTS idx_content_blocks_message ON content_blocks(message_id);
     
     -- Full-text search for messages (FTS5 inspired by tad-hq/universal-session-viewer)
     CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
@@ -260,6 +271,22 @@ class Database:
                         ),
                     )
 
+                # Insert content blocks (for thinking/text differentiation)
+                for block_idx, block in enumerate(msg.content_blocks):
+                    cursor.execute(
+                        """
+                        INSERT INTO content_blocks
+                        (message_id, block_index, kind, content)
+                        VALUES (?, ?, ?, ?)
+                        """,
+                        (
+                            message_id,
+                            block_idx,
+                            block.kind,
+                            block.content,
+                        ),
+                    )
+
             return True
 
     def update_session(self, session: ChatSession):
@@ -364,6 +391,19 @@ class Database:
                     for c in cursor.fetchall()
                 ]
 
+                # Get content blocks for this message (for thinking/text differentiation)
+                cursor.execute(
+                    "SELECT * FROM content_blocks WHERE message_id = ? ORDER BY block_index",
+                    (message_id,),
+                )
+                content_blocks = [
+                    ContentBlock(
+                        kind=b["kind"],
+                        content=b["content"],
+                    )
+                    for b in cursor.fetchall()
+                ]
+
                 messages.append(ChatMessage(
                     role=msg_row["role"],
                     content=msg_row["content"],
@@ -371,6 +411,7 @@ class Database:
                     tool_invocations=tool_invocations,
                     file_changes=file_changes,
                     command_runs=command_runs,
+                    content_blocks=content_blocks,
                 ))
 
             # Helper to safely get optional fields from sqlite3.Row

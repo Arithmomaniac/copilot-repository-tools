@@ -4,6 +4,8 @@ import html
 from pathlib import Path
 from typing import Any
 
+from urllib.parse import unquote
+
 from jinja2 import Environment, PackageLoader, select_autoescape
 
 from .database import Database
@@ -68,6 +70,13 @@ def _markdown_to_html(text: str) -> str:
     return "<br>\n".join(result)
 
 
+def _urldecode(text: str) -> str:
+    """Decode URL-encoded text (e.g., 'c%3A' -> 'c:')."""
+    if not text:
+        return ""
+    return unquote(text)
+
+
 def get_jinja_env() -> Environment:
     """Get a configured Jinja2 environment."""
     env = Environment(
@@ -75,6 +84,7 @@ def get_jinja_env() -> Environment:
         autoescape=select_autoescape(["html", "xml"]),
     )
     env.filters["markdown"] = _markdown_to_html
+    env.filters["urldecode"] = _urldecode
     return env
 
 
@@ -478,6 +488,76 @@ footer {
 .collapsible-content {
     padding: 12px 14px;
     border-top: 1px solid var(--border-color);
+}
+
+/* Thinking blocks for AI reasoning */
+.thinking-block {
+    margin: 12px 0;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background-color: var(--bg-tertiary);
+    border-left: 3px solid #9b59b6;
+}
+
+.thinking-block summary {
+    padding: 10px 14px;
+    cursor: pointer;
+    font-weight: 500;
+    font-size: 0.9em;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    user-select: none;
+}
+
+.thinking-block summary:hover {
+    background-color: var(--border-color);
+}
+
+.thinking-icon {
+    font-size: 1em;
+}
+
+.thinking-content {
+    padding: 12px 14px;
+    border-top: 1px solid var(--border-color);
+    font-size: 0.9em;
+    color: var(--text-secondary);
+    background-color: rgba(155, 89, 182, 0.05);
+}
+
+.thinking-content pre {
+    background-color: var(--bg-tertiary);
+}
+
+/* Content blocks */
+.content-block {
+    margin: 4px 0;
+}
+
+.content-block-text {
+    /* Normal text content */
+}
+
+/* Result blocks - main assistant response content (distinct from thinking) */
+.result-block {
+    padding: 8px 12px;
+    margin: 8px 0;
+    border-left: 3px solid #2ea043;
+    background-color: rgba(46, 160, 67, 0.05);
+}
+
+@media (prefers-color-scheme: dark) {
+    .result-block {
+        background-color: rgba(46, 160, 67, 0.1);
+    }
+}
+
+.content-block-tool,
+.content-block-promptFile,
+.content-block-toolInvocationSerialized {
+    /* Tool-related content typically has its own styling via other sections */
 }
 
 /* Tool invocations */

@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Iterator
+from urllib.parse import unquote
 
 
 @dataclass
@@ -60,6 +61,18 @@ class CommandRun:
 
 
 @dataclass
+class ContentBlock:
+    """Represents a content block in an assistant response.
+    
+    Each block has a kind (e.g., 'text', 'thinking', 'tool') and content.
+    This allows differentiation between thinking/reasoning and regular output.
+    """
+    
+    kind: str  # 'text', 'thinking', 'tool', 'promptFile', etc.
+    content: str
+
+
+@dataclass
 class ChatMessage:
     """Represents a single message in a chat session.
     
@@ -72,6 +85,7 @@ class ChatMessage:
     tool_invocations: list[ToolInvocation] = field(default_factory=list)
     file_changes: list[FileChange] = field(default_factory=list)
     command_runs: list[CommandRun] = field(default_factory=list)
+    content_blocks: list[ContentBlock] = field(default_factory=list)  # Structured content with kind
 
 
 @dataclass
@@ -207,6 +221,8 @@ def _parse_workspace_json(workspace_dir: Path) -> tuple[str | None, str | None]:
                     if platform.system() == "Windows" and folder.startswith("/"):
                         # Windows paths like /C:/path
                         folder = folder[1:]
+                # URL decode the path (e.g., %3A -> :, %20 -> space)
+                folder = unquote(folder) if folder else ""
                 workspace_name = Path(folder).name if folder else None
                 return workspace_name, folder if folder else None
         except (json.JSONDecodeError, OSError):
@@ -319,15 +335,19 @@ def _parse_chat_session_file(
                 response_items = msg.get("response", [])
                 if response_items:
                     response_content = []
+                    content_blocks = []
                     tool_invocations = []
                     file_changes = []
                     command_runs = []
                     
                     for item in response_items:
                         if isinstance(item, dict):
-                            # Extract text content
+                            # Extract text content with kind info
                             if item.get("value"):
-                                response_content.append(str(item["value"]))
+                                value = str(item["value"])
+                                kind = item.get("kind", "text")
+                                response_content.append(value)
+                                content_blocks.append(ContentBlock(kind=kind, content=value))
                             
                             # Extract tool invocations
                             if item.get("toolInvocations"):
@@ -359,6 +379,7 @@ def _parse_chat_session_file(
                             tool_invocations=tool_invocations,
                             file_changes=file_changes,
                             command_runs=command_runs,
+                            content_blocks=content_blocks,
                         ))
             else:
                 # Standard message format
@@ -496,6 +517,7 @@ def _extract_session_from_dict(
                 response_items = msg.get("response", [])
                 if response_items:
                     response_content = []
+                    content_blocks = []
                     tool_invocations = []
                     file_changes = []
                     command_runs = []
@@ -503,7 +525,10 @@ def _extract_session_from_dict(
                     for item in response_items:
                         if isinstance(item, dict):
                             if item.get("value"):
-                                response_content.append(str(item["value"]))
+                                value = str(item["value"])
+                                kind = item.get("kind", "text")
+                                response_content.append(value)
+                                content_blocks.append(ContentBlock(kind=kind, content=value))
                             if item.get("toolInvocations"):
                                 tool_invocations.extend(_parse_tool_invocations(item["toolInvocations"]))
                             for key in ("fileChanges", "fileEdits", "files"):
@@ -519,6 +544,7 @@ def _extract_session_from_dict(
                             tool_invocations=tool_invocations,
                             file_changes=file_changes,
                             command_runs=command_runs,
+                            content_blocks=content_blocks,
                         ))
             else:
                 # Standard format
