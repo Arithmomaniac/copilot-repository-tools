@@ -4,7 +4,232 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ title }}</title>
-    <link rel="stylesheet" href="static/style.css">
+    <style>
+:root {
+    --bg-primary: #ffffff;
+    --bg-secondary: #f6f8fa;
+    --bg-tertiary: #f0f0f0;
+    --text-primary: #24292f;
+    --text-secondary: #57606a;
+    --border-color: #d0d7de;
+    --link-color: #0969da;
+    --user-bg: #ddf4ff;
+    --assistant-bg: #ffffff;
+    --code-bg: #f6f8fa;
+    --mark-bg: #fff8c5;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg-primary: #0d1117;
+        --bg-secondary: #161b22;
+        --bg-tertiary: #21262d;
+        --text-primary: #c9d1d9;
+        --text-secondary: #8b949e;
+        --border-color: #30363d;
+        --link-color: #58a6ff;
+        --user-bg: #1f3d5c;
+        --assistant-bg: #161b22;
+        --code-bg: #161b22;
+        --mark-bg: #3d3d00;
+    }
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+    line-height: 1.6;
+    color: var(--text-primary);
+    background-color: var(--bg-primary);
+    margin: 0;
+    padding: 0;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+header {
+    background-color: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+    padding: 20px 0;
+    margin-bottom: 20px;
+}
+
+header h1 {
+    margin: 0;
+}
+
+header .stats {
+    color: var(--text-secondary);
+    font-size: 0.9em;
+    margin-top: 10px;
+}
+
+.search-box {
+    margin: 20px 0;
+}
+
+.search-box input[type="text"] {
+    width: calc(100% - 100px);
+    padding: 12px 16px;
+    font-size: 16px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px 0 0 6px;
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+}
+
+.search-box input[type="text"]:focus {
+    outline: none;
+    border-color: var(--link-color);
+    box-shadow: 0 0 0 3px rgba(9, 105, 218, 0.3);
+}
+
+.search-box button {
+    width: 100px;
+    padding: 12px 16px;
+    font-size: 16px;
+    border: 1px solid var(--link-color);
+    border-radius: 0 6px 6px 0;
+    background-color: var(--link-color);
+    color: white;
+    cursor: pointer;
+}
+
+.search-box button:hover {
+    background-color: #0860c4;
+}
+
+.workspaces {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.workspace-tag {
+    background-color: var(--bg-tertiary);
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 0.85em;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.workspace-tag:hover {
+    background-color: var(--border-color);
+}
+
+.workspace-tag.active {
+    background-color: var(--link-color);
+    color: white;
+}
+
+.session-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.session-item {
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    margin-bottom: 10px;
+    padding: 16px;
+    background-color: var(--bg-secondary);
+    transition: box-shadow 0.2s;
+}
+
+.session-item:hover {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.session-item a {
+    color: var(--link-color);
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.session-item a:hover {
+    text-decoration: underline;
+}
+
+.session-meta {
+    color: var(--text-secondary);
+    font-size: 0.85em;
+    margin-top: 8px;
+}
+
+.session-meta span {
+    margin-right: 16px;
+}
+
+.edition-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 0.75em;
+    font-weight: 500;
+}
+
+.edition-badge.stable {
+    background-color: #dafbe1;
+    color: #1a7f37;
+}
+
+.edition-badge.insider {
+    background-color: #ddf4ff;
+    color: #0969da;
+}
+
+@media (prefers-color-scheme: dark) {
+    .edition-badge.stable {
+        background-color: #238636;
+        color: #dafbe1;
+    }
+    .edition-badge.insider {
+        background-color: #1f6feb;
+        color: #ddf4ff;
+    }
+}
+
+.no-results {
+    text-align: center;
+    color: var(--text-secondary);
+    padding: 40px;
+}
+
+footer {
+    margin-top: 40px;
+    padding: 20px 0;
+    border-top: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    font-size: 0.85em;
+    text-align: center;
+}
+
+footer a {
+    color: var(--link-color);
+    text-decoration: none;
+}
+
+.search-info {
+    color: var(--text-secondary);
+    margin-bottom: 20px;
+}
+
+.search-info a {
+    color: var(--link-color);
+    text-decoration: none;
+}
+    </style>
 </head>
 <body>
     <header>
@@ -25,9 +250,17 @@
     </header>
 
     <main class="container">
-        <div class="search-box">
-            <input type="text" id="search-input" placeholder="Search sessions..." autocomplete="off">
+        <form method="GET" action="/" class="search-box">
+            <input type="text" name="q" placeholder="Search sessions..." autocomplete="off" value="{{ query or '' }}">
+            <button type="submit">Search</button>
+        </form>
+
+        {% if query %}
+        <div class="search-info">
+            Showing results for: <strong>{{ query }}</strong>
+            (<a href="/">clear search</a>)
         </div>
+        {% endif %}
 
         {% if workspaces %}
         <div class="workspaces">
@@ -42,7 +275,7 @@
         <ul class="session-list" id="session-list">
             {% for session in sessions %}
             <li class="session-item" data-workspace="{{ session.workspace_name or '' }}">
-                <a href="sessions/{{ session.session_id }}.html">
+                <a href="/session/{{ session.session_id }}">
                     {% if session.workspace_name %}
                         {{ session.workspace_name }}
                     {% else %}
@@ -65,10 +298,8 @@
 
     <footer>
         <div class="container">
-            Generated by <a href="https://github.com/Arithmomaniac/copilot-repository-tools">Copilot Chat Archive</a>
+            Powered by <a href="https://github.com/Arithmomaniac/copilot-repository-tools">Copilot Chat Archive</a>
         </div>
     </footer>
-
-    <script src="static/script.js"></script>
 </body>
 </html>

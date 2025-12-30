@@ -19,7 +19,7 @@ from .scanner import (
     scan_chat_sessions,
 )
 from .database import Database
-from .viewer import generate_html
+from .webapp import create_app, run_server
 
 __all__ = [
     "__version__",
@@ -31,5 +31,6 @@ __all__ = [
     "find_copilot_chat_dirs",
     "scan_chat_sessions",
     "Database",
-    "generate_html",
+    "create_app",
+    "run_server",
 ]

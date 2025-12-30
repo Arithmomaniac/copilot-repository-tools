@@ -9,7 +9,6 @@ import click
 from . import __version__
 from .database import Database
 from .scanner import get_vscode_storage_paths, scan_chat_sessions
-from .viewer import generate_html
 
 
 def format_timestamp(ts: str | int | None) -> str:
@@ -135,11 +134,17 @@ def scan(db: str, storage_path: tuple, edition: str, verbose: bool, force: bool)
     type=click.Path(exists=True, dir_okay=False),
 )
 @click.option(
-    "--output",
-    "-o",
-    default="./archive",
-    help="Output directory for HTML files.",
-    type=click.Path(file_okay=False),
+    "--host",
+    "-h",
+    default="127.0.0.1",
+    help="Host to bind to.",
+)
+@click.option(
+    "--port",
+    "-p",
+    default=5000,
+    help="Port to bind to.",
+    type=int,
 )
 @click.option(
     "--title",
@@ -147,12 +152,19 @@ def scan(db: str, storage_path: tuple, edition: str, verbose: bool, force: bool)
     default="Copilot Chat Archive",
     help="Title for the archive.",
 )
-def generate(db: str, output: str, title: str):
-    """Generate static HTML files from the database."""
+@click.option(
+    "--debug",
+    is_flag=True,
+    help="Enable debug mode.",
+)
+def serve(db: str, host: str, port: int, title: str, debug: bool):
+    """Start the web server to browse chat sessions."""
     if not Path(db).exists():
         click.echo(f"Error: Database file '{db}' not found.", err=True)
         click.echo("Run 'copilot-chat-archive scan' first to import chat sessions.", err=True)
         sys.exit(1)
+
+    from .webapp import run_server
 
     database = Database(db)
     stats = database.get_stats()
@@ -160,13 +172,14 @@ def generate(db: str, output: str, title: str):
     if stats["session_count"] == 0:
         click.echo("Warning: Database is empty. Run 'copilot-chat-archive scan' first.", err=True)
 
-    click.echo(f"Generating HTML archive...")
-    index_path = generate_html(database, output, title)
+    click.echo(f"Starting web server...")
+    click.echo(f"  Database: {db}")
+    click.echo(f"  Sessions: {stats['session_count']}")
+    click.echo(f"  Messages: {stats['message_count']}")
+    click.echo(f"\nOpen http://{host}:{port}/ in a browser to view your archive.")
+    click.echo("Press Ctrl+C to stop the server.\n")
 
-    click.echo(f"\nArchive generated successfully!")
-    click.echo(f"  Output directory: {output}")
-    click.echo(f"  Index file: {index_path}")
-    click.echo(f"\nOpen {index_path} in a browser to view your archive.")
+    run_server(host=host, port=port, db_path=db, title=title, debug=debug)
 
 
 @main.command()

@@ -87,22 +87,6 @@ class TestCLI:
         assert result.exit_code == 0
         assert "No results" in result.output
 
-    def test_generate_command(self, runner, temp_db_with_data, tmp_path):
-        """Test generate command."""
-        output_dir = tmp_path / "output"
-        result = runner.invoke(
-            main,
-            [
-                "generate",
-                "--db", str(temp_db_with_data),
-                "--output", str(output_dir),
-                "--title", "Test Archive",
-            ],
-        )
-        assert result.exit_code == 0
-        assert "Archive generated" in result.output
-        assert (output_dir / "index.html").exists()
-
     def test_export_command(self, runner, temp_db_with_data):
         """Test export command."""
         result = runner.invoke(main, ["export", "--db", str(temp_db_with_data)])
@@ -174,3 +158,10 @@ class TestCLI:
         result = runner.invoke(main, ["scan", "--db", str(db_path), "--force"])
         assert result.exit_code == 0
         assert "Force mode" in result.output or "Updated:" in result.output
+
+    def test_serve_missing_db(self, runner, tmp_path):
+        """Test serve command with missing database."""
+        result = runner.invoke(main, ["serve", "--db", str(tmp_path / "missing.db")])
+        # Click returns exit code 2 for parameter validation errors (exists=True)
+        assert result.exit_code != 0
+        assert "does not exist" in result.output or "not found" in result.output or "Invalid value" in result.output
