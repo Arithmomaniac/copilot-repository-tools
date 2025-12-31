@@ -102,6 +102,13 @@ def parse_search_query(query: str) -> ParsedQuery:
     )
 
 
+# Allowed sort options with their SQL ORDER BY clauses (whitelist for security)
+_SORT_ORDER_CLAUSES = {
+    "relevance": "ORDER BY rank",
+    "date": "ORDER BY s.created_at DESC",
+}
+
+
 class Database:
     """SQLite database for storing Copilot chat sessions.
     
@@ -619,6 +626,9 @@ class Database:
         
         # Check if we have any filters to apply (even without FTS query)
         has_filters = effective_role or effective_title or effective_workspace
+        
+        # Get the safe order clause from whitelist (defaults to relevance)
+        order_clause = _SORT_ORDER_CLAUSES.get(sort_by, _SORT_ORDER_CLAUSES["relevance"])
 
         with self._get_connection() as conn:
             cursor = conn.cursor()
@@ -627,12 +637,6 @@ class Database:
             if include_messages:
                 if fts_query:
                     # FTS search with optional filters
-                    # Determine sort order
-                    if sort_by == "date":
-                        order_clause = "ORDER BY s.created_at DESC"
-                    else:
-                        order_clause = "ORDER BY rank"
-                    
                     message_query = f"""
                         SELECT 
                             m.id,
