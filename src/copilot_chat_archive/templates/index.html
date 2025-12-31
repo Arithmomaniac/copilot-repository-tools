@@ -73,10 +73,20 @@ header .stats {
 
 .search-box {
     margin: 20px 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+}
+
+.search-box .search-input-group {
+    display: flex;
+    flex: 1;
+    min-width: 250px;
 }
 
 .search-box input[type="text"] {
-    width: calc(100% - 100px);
+    flex: 1;
     padding: 12px 16px;
     font-size: 16px;
     border: 1px solid var(--border-color);
@@ -104,6 +114,42 @@ header .stats {
 
 .search-box button:hover {
     background-color: #0860c4;
+}
+
+.search-box .sort-selector {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 14px;
+    color: var(--text-secondary);
+}
+
+.search-box .sort-selector select {
+    padding: 8px 12px;
+    font-size: 14px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.search-box .sort-selector select:focus {
+    outline: none;
+    border-color: var(--link-color);
+}
+
+.search-help {
+    font-size: 0.85em;
+    color: var(--text-secondary);
+    margin-top: 8px;
+}
+
+.search-help code {
+    background-color: var(--bg-tertiary);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 0.9em;
 }
 
 .workspaces {
@@ -340,12 +386,24 @@ footer a {
 
     <main class="container">
         <form method="GET" action="/" class="search-box" id="search-form">
-            <input type="text" name="q" placeholder="Search sessions..." autocomplete="off" value="{{ query or '' }}">
+            <div class="search-input-group">
+                <input type="text" name="q" placeholder="Search sessions... (use &quot;quotes&quot; for exact match, role:user workspace:name)" autocomplete="off" value="{{ query or '' }}">
+                <button type="submit">Search</button>
+            </div>
+            <div class="sort-selector">
+                <label for="sort">Sort by:</label>
+                <select name="sort" id="sort">
+                    <option value="relevance"{% if (sort_by or 'relevance') == 'relevance' %} selected{% endif %}>Relevance</option>
+                    <option value="date"{% if sort_by == 'date' %} selected{% endif %}>Date</option>
+                </select>
+            </div>
             {% for ws_name in selected_workspaces or [] %}
             <input type="hidden" name="workspace" value="{{ ws_name }}">
             {% endfor %}
-            <button type="submit">Search</button>
         </form>
+        <div class="search-help">
+            💡 Tips: Use <code>"exact phrase"</code> for exact match, <code>role:user</code> or <code>role:assistant</code> to filter by role, <code>workspace:name</code> to filter by workspace
+        </div>
 
         {% if query %}
         <div class="search-info">

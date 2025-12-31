@@ -91,6 +91,32 @@ copilot-chat-archive search "authentication"
 copilot-chat-archive search "React hooks" --limit 50
 ```
 
+**Advanced Search Syntax:**
+
+The search supports powerful query syntax:
+
+- **Multiple words:** `python function` matches messages containing both words (AND logic)
+- **Exact phrases:** `"python function"` matches the exact phrase
+- **Field filters:** Filter by specific fields directly in the query:
+  - `role:user` - Filter to user messages only
+  - `role:assistant` - Filter to assistant messages only
+  - `workspace:my-project` - Filter to a specific workspace
+  - `title:session-name` - Filter by session title
+
+```bash
+# Search for "function" only in user messages
+copilot-chat-archive search "role:user function"
+
+# Search in a specific workspace
+copilot-chat-archive search "workspace:my-project python"
+
+# Combine filters
+copilot-chat-archive search "workspace:react role:assistant hooks"
+
+# Sort by date instead of relevance
+copilot-chat-archive search "python" --sort date
+```
+
 ### 4. View Statistics
 
 ```bash

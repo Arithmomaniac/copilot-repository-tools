@@ -234,6 +234,13 @@ def serve(db: str, host: str, port: int, title: str, debug: bool):
     is_flag=True,
     help="Show full content instead of truncated snippets.",
 )
+@click.option(
+    "--sort",
+    "-s",
+    type=click.Choice(["relevance", "date"]),
+    default="relevance",
+    help="Sort results by relevance (default) or date.",
+)
 def search(
     db: str,
     query: str,
@@ -245,15 +252,31 @@ def search(
     tools_only: bool,
     files_only: bool,
     full: bool,
+    sort: str,
 ):
     """Search chat messages in the database.
     
-    By default, searches message content, tool invocations, and file changes.
+    Supports advanced query syntax:
+    
+    \b
+    - Multiple words: "python function" matches both words (AND logic)
+    - Exact phrases: Use quotes like "python function" for exact match
+    - Field filters in query: role:user, role:assistant, workspace:name, title:name
+    
+    Examples:
+    
+    \b
+      copilot-chat-archive search "python function"
+      copilot-chat-archive search "role:user python"
+      copilot-chat-archive search "workspace:my-project"
+      copilot-chat-archive search '"exact phrase"'
+    
     Use --role to filter by user requests or assistant responses.
     Use --title to filter by session/workspace name.
     Use --no-tools or --no-files to exclude specific content types.
     Use --tools-only or --files-only to search only specific content types.
     Use --full to show complete content instead of truncated snippets.
+    Use --sort to sort by relevance (default) or date.
     """
     if not Path(db).exists():
         click.echo(click.style(f"Error: Database file '{db}' not found.", fg="red"), err=True)
@@ -284,6 +307,7 @@ def search(
         include_tool_calls=include_tool_calls,
         include_file_changes=include_file_changes,
         session_title=title,
+        sort_by=sort,
     )
 
     if not results:

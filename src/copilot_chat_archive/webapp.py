@@ -105,12 +105,13 @@ def create_app(db_path: str, title: str = "Copilot Chat Archive") -> Flask:
         db = Database(app.config["DB_PATH"])
         query = request.args.get("q", "").strip()
         selected_workspaces = request.args.getlist("workspace")
+        sort_by = request.args.get("sort", "relevance")  # 'relevance' or 'date'
         
         search_snippets = {}  # session_id -> list of snippets with message links
         
         if query:
-            # Use FTS search
-            search_results = db.search(query, limit=100)
+            # Use FTS search with sort option
+            search_results = db.search(query, limit=100, sort_by=sort_by)
             
             # Group results by session and collect snippets
             session_ids = []
@@ -132,7 +133,14 @@ def create_app(db_path: str, title: str = "Copilot Chat Archive") -> Flask:
             
             # Get full session info for matching sessions
             all_sessions = db.list_sessions()
-            sessions = [s for s in all_sessions if s["session_id"] in session_ids]
+            
+            # For relevance sorting, preserve the order from search results
+            if sort_by == "relevance":
+                session_map = {s["session_id"]: s for s in all_sessions}
+                sessions = [session_map[sid] for sid in session_ids if sid in session_map]
+            else:
+                # For date sorting, use the list_sessions order (already sorted by date)
+                sessions = [s for s in all_sessions if s["session_id"] in session_ids]
         else:
             sessions = db.list_sessions()
         
@@ -152,6 +160,7 @@ def create_app(db_path: str, title: str = "Copilot Chat Archive") -> Flask:
             query=query,
             search_snippets=search_snippets,
             selected_workspaces=selected_workspaces,
+            sort_by=sort_by,
         )
     
     @app.route("/session/<session_id>")

@@ -122,6 +122,25 @@ class TestWebappRoutes:
         assert response.status_code == 200
         assert b"test-workspace" in response.data
 
+    def test_search_with_sort_by_relevance(self, client):
+        """Test search with relevance sorting."""
+        response = client.get("/?q=Python&sort=relevance")
+        assert response.status_code == 200
+        # Should show the sort dropdown
+        assert b'select name="sort"' in response.data
+
+    def test_search_with_sort_by_date(self, client):
+        """Test search with date sorting."""
+        response = client.get("/?q=Python&sort=date")
+        assert response.status_code == 200
+        assert b'<option value="date"' in response.data
+
+    def test_search_help_tips_shown(self, client):
+        """Test that search help tips are shown."""
+        response = client.get("/")
+        assert response.status_code == 200
+        assert b"exact phrase" in response.data or b"role:user" in response.data
+
 
 class TestCreateApp:
     """Tests for the create_app function."""
