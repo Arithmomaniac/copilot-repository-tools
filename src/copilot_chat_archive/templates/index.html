@@ -4,7 +4,321 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ title }}</title>
-    <link rel="stylesheet" href="static/style.css">
+    <style>
+:root {
+    --bg-primary: #ffffff;
+    --bg-secondary: #f6f8fa;
+    --bg-tertiary: #f0f0f0;
+    --text-primary: #24292f;
+    --text-secondary: #57606a;
+    --border-color: #d0d7de;
+    --link-color: #0969da;
+    --user-bg: #ddf4ff;
+    --assistant-bg: #ffffff;
+    --code-bg: #f6f8fa;
+    --mark-bg: #fff8c5;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg-primary: #0d1117;
+        --bg-secondary: #161b22;
+        --bg-tertiary: #21262d;
+        --text-primary: #c9d1d9;
+        --text-secondary: #8b949e;
+        --border-color: #30363d;
+        --link-color: #58a6ff;
+        --user-bg: #1f3d5c;
+        --assistant-bg: #161b22;
+        --code-bg: #161b22;
+        --mark-bg: #3d3d00;
+    }
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+    line-height: 1.6;
+    color: var(--text-primary);
+    background-color: var(--bg-primary);
+    margin: 0;
+    padding: 0;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+header {
+    background-color: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+    padding: 20px 0;
+    margin-bottom: 20px;
+}
+
+header h1 {
+    margin: 0;
+}
+
+header .stats {
+    color: var(--text-secondary);
+    font-size: 0.9em;
+    margin-top: 10px;
+}
+
+.search-box {
+    margin: 20px 0;
+}
+
+.search-box input[type="text"] {
+    width: calc(100% - 100px);
+    padding: 12px 16px;
+    font-size: 16px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px 0 0 6px;
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+}
+
+.search-box input[type="text"]:focus {
+    outline: none;
+    border-color: var(--link-color);
+    box-shadow: 0 0 0 3px rgba(9, 105, 218, 0.3);
+}
+
+.search-box button {
+    width: 100px;
+    padding: 12px 16px;
+    font-size: 16px;
+    border: 1px solid var(--link-color);
+    border-radius: 0 6px 6px 0;
+    background-color: var(--link-color);
+    color: white;
+    cursor: pointer;
+}
+
+.search-box button:hover {
+    background-color: #0860c4;
+}
+
+.workspaces {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 10px;
+    align-items: center;
+}
+
+.workspace-filter {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background-color: var(--bg-tertiary);
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 0.85em;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.workspace-filter:hover {
+    background-color: var(--border-color);
+}
+
+.workspace-filter input[type="checkbox"] {
+    margin: 0;
+    cursor: pointer;
+}
+
+.workspace-filter.checked {
+    background-color: var(--link-color);
+    color: white;
+}
+
+.filter-actions {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.filter-actions button {
+    padding: 6px 16px;
+    font-size: 0.85em;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.filter-actions .apply-btn {
+    background-color: var(--link-color);
+    color: white;
+    border-color: var(--link-color);
+}
+
+.filter-actions .apply-btn:hover {
+    background-color: #0860c4;
+}
+
+.filter-actions .clear-btn {
+    background-color: var(--bg-secondary);
+    color: var(--text-primary);
+}
+
+.filter-actions .clear-btn:hover {
+    background-color: var(--bg-tertiary);
+}
+
+.session-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.session-item {
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    margin-bottom: 10px;
+    padding: 16px;
+    background-color: var(--bg-secondary);
+    transition: box-shadow 0.2s;
+}
+
+.session-item:hover {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.session-item a {
+    color: var(--link-color);
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.session-item a:hover {
+    text-decoration: underline;
+}
+
+.session-meta {
+    color: var(--text-secondary);
+    font-size: 0.85em;
+    margin-top: 8px;
+}
+
+.session-meta span {
+    margin-right: 16px;
+}
+
+.edition-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 0.75em;
+    font-weight: 500;
+}
+
+.edition-badge.stable {
+    background-color: #dafbe1;
+    color: #1a7f37;
+}
+
+.edition-badge.insider {
+    background-color: #ddf4ff;
+    color: #0969da;
+}
+
+@media (prefers-color-scheme: dark) {
+    .edition-badge.stable {
+        background-color: #238636;
+        color: #dafbe1;
+    }
+    .edition-badge.insider {
+        background-color: #1f6feb;
+        color: #ddf4ff;
+    }
+}
+
+.no-results {
+    text-align: center;
+    color: var(--text-secondary);
+    padding: 40px;
+}
+
+footer {
+    margin-top: 40px;
+    padding: 20px 0;
+    border-top: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    font-size: 0.85em;
+    text-align: center;
+}
+
+footer a {
+    color: var(--link-color);
+    text-decoration: none;
+}
+
+.search-info {
+    color: var(--text-secondary);
+    margin-bottom: 20px;
+}
+
+.search-info a {
+    color: var(--link-color);
+    text-decoration: none;
+}
+
+.session-workspace {
+    color: var(--text-secondary);
+    font-size: 0.85em;
+    margin-top: 4px;
+}
+
+.search-snippets {
+    margin-top: 10px;
+    padding: 8px 12px;
+    background-color: var(--bg-tertiary);
+    border-radius: 4px;
+    border-left: 3px solid var(--link-color);
+}
+
+.search-snippet {
+    font-size: 0.9em;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+    line-height: 1.4;
+}
+
+.search-snippet:last-child {
+    margin-bottom: 0;
+}
+
+.search-snippet a {
+    color: var(--text-primary);
+    text-decoration: none;
+}
+
+.search-snippet a:hover {
+    text-decoration: underline;
+}
+
+.search-snippet mark {
+    background-color: var(--mark-bg);
+    padding: 1px 3px;
+    border-radius: 2px;
+}
+
+.snippet-link {
+    color: var(--link-color);
+    font-size: 0.8em;
+    margin-left: 4px;
+}
+    </style>
 </head>
 <body>
     <header>
@@ -25,30 +339,54 @@
     </header>
 
     <main class="container">
-        <div class="search-box">
-            <input type="text" id="search-input" placeholder="Search sessions..." autocomplete="off">
+        <form method="GET" action="/" class="search-box" id="search-form">
+            <input type="text" name="q" placeholder="Search sessions..." autocomplete="off" value="{{ query or '' }}">
+            {% for ws_name in selected_workspaces or [] %}
+            <input type="hidden" name="workspace" value="{{ ws_name }}">
+            {% endfor %}
+            <button type="submit">Search</button>
+        </form>
+
+        {% if query %}
+        <div class="search-info">
+            Showing results for: <strong>{{ query }}</strong>
+            (<a href="/">clear search</a>)
         </div>
+        {% endif %}
 
         {% if workspaces %}
-        <div class="workspaces">
+        <div class="workspaces" id="workspace-filters">
             {% for ws in workspaces %}
-            <span class="workspace-tag" data-workspace="{{ ws.workspace_name }}">
+            <label class="workspace-filter{% if ws.workspace_name in (selected_workspaces or []) %} checked{% endif %}">
+                <input type="checkbox" name="workspace" value="{{ ws.workspace_name }}"
+                    {% if ws.workspace_name in (selected_workspaces or []) %}checked{% endif %}>
                 {{ ws.workspace_name }} ({{ ws.session_count }})
-            </span>
+            </label>
             {% endfor %}
+        </div>
+        <div class="filter-actions">
+            <button type="button" class="apply-btn" id="apply-filter">Apply Filter</button>
+            <button type="button" class="clear-btn" id="clear-filter">Clear</button>
         </div>
         {% endif %}
 
         <ul class="session-list" id="session-list">
             {% for session in sessions %}
             <li class="session-item" data-workspace="{{ session.workspace_name or '' }}">
-                <a href="sessions/{{ session.session_id }}.html">
-                    {% if session.workspace_name %}
+                <a href="/session/{{ session.session_id }}">
+                    {% if session.custom_title %}
+                        {{ session.custom_title }}
+                    {% elif session.workspace_name %}
                         {{ session.workspace_name }}
                     {% else %}
                         Session {{ session.session_id[:8] }}...
                     {% endif %}
                 </a>
+                {% if session.workspace_name and session.custom_title %}
+                <div class="session-workspace">
+                    📁 {{ session.workspace_name }}
+                </div>
+                {% endif %}
                 <div class="session-meta">
                     <span>{{ session.message_count }} messages</span>
                     {% if session.created_at %}
@@ -56,6 +394,18 @@
                     {% endif %}
                     <span class="edition-badge {{ session.vscode_edition }}">{{ session.vscode_edition }}</span>
                 </div>
+                {% if query and search_snippets and session.session_id in search_snippets %}
+                <div class="search-snippets">
+                    {% for snippet in search_snippets[session.session_id] %}
+                    <div class="search-snippet">
+                        <a href="/session/{{ session.session_id }}#msg-{{ snippet.message_anchor }}">
+                            {{ snippet.text | safe }}
+                            <span class="snippet-link">#{{ snippet.message_anchor }}</span>
+                        </a>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endif %}
             </li>
             {% else %}
             <li class="no-results">No sessions found. Import some chat history first!</li>
@@ -65,10 +415,57 @@
 
     <footer>
         <div class="container">
-            Generated by <a href="https://github.com/Arithmomaniac/copilot-repository-tools">Copilot Chat Archive</a>
+            Powered by <a href="https://github.com/Arithmomaniac/copilot-repository-tools">Copilot Chat Archive</a>
         </div>
     </footer>
 
-    <script src="static/script.js"></script>
+    <script>
+        // Workspace filter functionality
+        document.addEventListener('DOMContentLoaded', function() {
+            const applyBtn = document.getElementById('apply-filter');
+            const clearBtn = document.getElementById('clear-filter');
+            const searchForm = document.getElementById('search-form');
+            const workspaceFilters = document.getElementById('workspace-filters');
+
+            if (workspaceFilters) {
+                // Toggle checked class on label when checkbox changes
+                workspaceFilters.querySelectorAll('input[type="checkbox"]').forEach(function(checkbox) {
+                    checkbox.addEventListener('change', function() {
+                        this.parentElement.classList.toggle('checked', this.checked);
+                    });
+                });
+            }
+
+            if (applyBtn) {
+                applyBtn.addEventListener('click', function() {
+                    // Get selected workspaces
+                    const checkboxes = workspaceFilters.querySelectorAll('input[type="checkbox"]:checked');
+                    const selectedWorkspaces = Array.from(checkboxes).map(cb => cb.value);
+                    
+                    // Build URL with workspace params
+                    const url = new URL(window.location.href);
+                    url.searchParams.delete('workspace');
+                    selectedWorkspaces.forEach(ws => url.searchParams.append('workspace', ws));
+                    
+                    window.location.href = url.toString();
+                });
+            }
+
+            if (clearBtn) {
+                clearBtn.addEventListener('click', function() {
+                    // Clear all checkboxes
+                    workspaceFilters.querySelectorAll('input[type="checkbox"]').forEach(function(checkbox) {
+                        checkbox.checked = false;
+                        checkbox.parentElement.classList.remove('checked');
+                    });
+                    
+                    // Redirect without workspace params
+                    const url = new URL(window.location.href);
+                    url.searchParams.delete('workspace');
+                    window.location.href = url.toString();
+                });
+            }
+        });
+    </script>
 </body>
 </html>

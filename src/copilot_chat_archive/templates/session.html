@@ -4,7 +4,507 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ session.workspace_name or session.session_id }} - {{ title }}</title>
-    <link rel="stylesheet" href="../static/style.css">
+    <style>
+:root {
+    --bg-primary: #ffffff;
+    --bg-secondary: #f6f8fa;
+    --bg-tertiary: #f0f0f0;
+    --text-primary: #24292f;
+    --text-secondary: #57606a;
+    --border-color: #d0d7de;
+    --link-color: #0969da;
+    --user-bg: #ddf4ff;
+    --assistant-bg: #ffffff;
+    --code-bg: #f6f8fa;
+    --mark-bg: #fff8c5;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg-primary: #0d1117;
+        --bg-secondary: #161b22;
+        --bg-tertiary: #21262d;
+        --text-primary: #c9d1d9;
+        --text-secondary: #8b949e;
+        --border-color: #30363d;
+        --link-color: #58a6ff;
+        --user-bg: #1f3d5c;
+        --assistant-bg: #161b22;
+        --code-bg: #161b22;
+        --mark-bg: #3d3d00;
+    }
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+    line-height: 1.6;
+    color: var(--text-primary);
+    background-color: var(--bg-primary);
+    margin: 0;
+    padding: 0;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+header {
+    background-color: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+    padding: 20px 0;
+    margin-bottom: 20px;
+}
+
+header h1 {
+    margin: 0;
+}
+
+.back-link {
+    display: inline-block;
+    margin-bottom: 20px;
+    color: var(--link-color);
+    text-decoration: none;
+}
+
+.back-link:hover {
+    text-decoration: underline;
+}
+
+.session-meta {
+    color: var(--text-secondary);
+    font-size: 0.85em;
+    margin-top: 8px;
+}
+
+.session-meta span {
+    margin-right: 16px;
+}
+
+.edition-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 0.75em;
+    font-weight: 500;
+}
+
+.edition-badge.stable {
+    background-color: #dafbe1;
+    color: #1a7f37;
+}
+
+.edition-badge.insider {
+    background-color: #ddf4ff;
+    color: #0969da;
+}
+
+@media (prefers-color-scheme: dark) {
+    .edition-badge.stable {
+        background-color: #238636;
+        color: #dafbe1;
+    }
+    .edition-badge.insider {
+        background-color: #1f6feb;
+        color: #ddf4ff;
+    }
+}
+
+.session-id {
+    margin-top: 10px;
+    color: var(--text-secondary);
+}
+
+.session-id code {
+    font-size: 0.85em;
+    background-color: var(--code-bg);
+    padding: 2px 6px;
+    border-radius: 3px;
+}
+
+.message {
+    padding: 16px;
+    margin-bottom: 16px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+}
+
+.message.user {
+    background-color: var(--user-bg);
+}
+
+.message.assistant {
+    background-color: var(--assistant-bg);
+}
+
+.message-role {
+    font-weight: 600;
+    font-size: 0.85em;
+    text-transform: uppercase;
+    margin-bottom: 8px;
+    color: var(--text-secondary);
+}
+
+.message-content {
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+}
+
+.message-content pre {
+    background-color: var(--code-bg);
+    padding: 16px;
+    border-radius: 6px;
+    overflow-x: auto;
+    border: 1px solid var(--border-color);
+}
+
+.message-content code {
+    font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+    font-size: 0.9em;
+    background-color: var(--code-bg);
+    padding: 2px 6px;
+    border-radius: 3px;
+}
+
+.message-content pre code {
+    background-color: transparent;
+    padding: 0;
+}
+
+.message-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 8px;
+}
+
+.message-header .message-role {
+    margin-bottom: 0;
+}
+
+.message-anchor {
+    color: var(--text-secondary);
+    text-decoration: none;
+    font-size: 0.8em;
+    opacity: 0.5;
+    transition: opacity 0.2s;
+    margin-left: auto;
+}
+
+.message-anchor:hover {
+    opacity: 1;
+    color: var(--link-color);
+}
+
+.message-timestamp {
+    color: var(--text-secondary);
+    font-size: 0.8em;
+}
+
+.message.highlighted {
+    animation: highlight-pulse 2s ease-out;
+}
+
+@keyframes highlight-pulse {
+    0% { box-shadow: 0 0 0 4px var(--link-color); }
+    100% { box-shadow: none; }
+}
+
+/* Collapsible sections */
+.collapsible {
+    margin-top: 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background-color: var(--bg-tertiary);
+}
+
+.collapsible summary {
+    padding: 10px 14px;
+    cursor: pointer;
+    font-weight: 500;
+    font-size: 0.9em;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    user-select: none;
+}
+
+.collapsible summary:hover {
+    background-color: var(--border-color);
+}
+
+.collapsible-icon {
+    font-size: 0.7em;
+    transition: transform 0.2s;
+}
+
+.collapsible-content {
+    padding: 12px 14px;
+    border-top: 1px solid var(--border-color);
+}
+
+/* Thinking blocks */
+.thinking-block {
+    margin: 12px 0;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background-color: var(--bg-tertiary);
+    border-left: 3px solid #9b59b6;
+}
+
+.thinking-block summary {
+    padding: 10px 14px;
+    cursor: pointer;
+    font-weight: 500;
+    font-size: 0.9em;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    user-select: none;
+}
+
+.thinking-block summary:hover {
+    background-color: var(--border-color);
+}
+
+.thinking-icon {
+    font-size: 1em;
+}
+
+.thinking-content {
+    padding: 12px 14px;
+    border-top: 1px solid var(--border-color);
+    font-size: 0.9em;
+    color: var(--text-secondary);
+    background-color: rgba(155, 89, 182, 0.05);
+}
+
+.thinking-content pre {
+    background-color: var(--bg-tertiary);
+}
+
+/* Content blocks */
+.content-block {
+    margin: 4px 0;
+}
+
+.result-block {
+    padding: 8px 12px;
+    margin: 8px 0;
+    border-left: 3px solid #2ea043;
+    background-color: rgba(46, 160, 67, 0.05);
+}
+
+@media (prefers-color-scheme: dark) {
+    .result-block {
+        background-color: rgba(46, 160, 67, 0.1);
+    }
+}
+
+/* Tool invocations */
+.tool-invocation {
+    margin-bottom: 16px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.tool-invocation:last-child {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: none;
+}
+
+.tool-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.tool-section {
+    margin-top: 8px;
+}
+
+.tool-label {
+    display: block;
+    font-size: 0.8em;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+}
+
+.tool-section pre {
+    margin: 0;
+    padding: 10px;
+    font-size: 0.85em;
+    max-height: 200px;
+    overflow: auto;
+}
+
+/* Status badges */
+.status-badge {
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 0.75em;
+    font-weight: 500;
+}
+
+.status-badge.success {
+    background-color: #dafbe1;
+    color: #1a7f37;
+}
+
+.status-badge.error, .status-badge.failed {
+    background-color: #ffebe9;
+    color: #cf222e;
+}
+
+.status-badge.pending, .status-badge.running {
+    background-color: #fff8c5;
+    color: #9a6700;
+}
+
+@media (prefers-color-scheme: dark) {
+    .status-badge.success {
+        background-color: #238636;
+        color: #dafbe1;
+    }
+    .status-badge.error, .status-badge.failed {
+        background-color: #da3633;
+        color: #ffebe9;
+    }
+    .status-badge.pending, .status-badge.running {
+        background-color: #9e6a03;
+        color: #fff8c5;
+    }
+}
+
+/* File changes */
+.file-change {
+    margin-bottom: 16px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.file-change:last-child {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: none;
+}
+
+.file-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.language-badge {
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 0.75em;
+    background-color: var(--bg-secondary);
+    color: var(--text-secondary);
+}
+
+.file-explanation {
+    color: var(--text-secondary);
+    font-size: 0.9em;
+    margin-bottom: 8px;
+}
+
+pre.diff {
+    margin: 0;
+    padding: 10px;
+    font-size: 0.85em;
+    max-height: 300px;
+    overflow: auto;
+}
+
+/* Command runs */
+.command-run {
+    margin-bottom: 16px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.command-run:last-child {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: none;
+}
+
+.command-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+}
+
+.command-text {
+    font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+    background-color: var(--code-bg);
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 0.9em;
+}
+
+pre.command-output {
+    margin: 0;
+    padding: 10px;
+    font-size: 0.85em;
+    max-height: 200px;
+    overflow: auto;
+}
+
+/* Tables */
+.message-content table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 12px 0;
+    font-size: 0.9em;
+}
+
+.message-content table th,
+.message-content table td {
+    border: 1px solid #d0d7de;
+    padding: 8px 12px;
+    text-align: left;
+}
+
+.message-content table th {
+    background-color: var(--bg-secondary);
+    font-weight: 600;
+}
+
+@media (prefers-color-scheme: dark) {
+    .message-content table th,
+    .message-content table td {
+        border-color: #30363d;
+    }
+}
+
+footer {
+    margin-top: 40px;
+    padding: 20px 0;
+    border-top: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    font-size: 0.85em;
+    text-align: center;
+}
+
+footer a {
+    color: var(--link-color);
+    text-decoration: none;
+}
+    </style>
 </head>
 <body>
     <header>
@@ -14,7 +514,7 @@
     </header>
 
     <main class="container">
-        <a href="../index.html" class="back-link">&larr; Back to all sessions</a>
+        <a href="/" class="back-link">&larr; Back to all sessions</a>
 
         <div class="session-header">
             <h2 id="session-title">
@@ -173,7 +673,7 @@
 
     <footer>
         <div class="container">
-            Generated by <a href="https://github.com/Arithmomaniac/copilot-repository-tools">Copilot Chat Archive</a>
+            Powered by <a href="https://github.com/Arithmomaniac/copilot-repository-tools">Copilot Chat Archive</a>
         </div>
     </footer>
 

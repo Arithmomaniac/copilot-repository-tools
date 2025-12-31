@@ -462,6 +462,7 @@ class Database:
                     s.created_at,
                     s.updated_at,
                     s.vscode_edition,
+                    s.custom_title,
                     COUNT(m.id) as message_count
                 FROM sessions s
                 LEFT JOIN messages m ON s.session_id = m.session_id
@@ -516,6 +517,7 @@ class Database:
                     SELECT 
                         m.id,
                         m.session_id,
+                        m.message_index,
                         m.role,
                         m.content,
                         s.workspace_name,

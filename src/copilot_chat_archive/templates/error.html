@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ error }} - {{ title }}</title>
+    <style>
+        :root {
+            --bg-primary: #ffffff;
+            --text-primary: #24292f;
+            --text-secondary: #57606a;
+            --link-color: #0969da;
+        }
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg-primary: #0d1117;
+                --text-primary: #c9d1d9;
+                --text-secondary: #8b949e;
+                --link-color: #58a6ff;
+            }
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+        }
+        .error-container {
+            text-align: center;
+            padding: 40px;
+        }
+        h1 {
+            font-size: 4em;
+            margin: 0;
+            color: var(--text-secondary);
+        }
+        p {
+            color: var(--text-secondary);
+            margin: 20px 0;
+        }
+        a {
+            color: var(--link-color);
+            text-decoration: none;
+        }
+        a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="error-container">
+        <h1>{{ error }}</h1>
+        <p>{{ message }}</p>
+        <a href="/">&larr; Back to all sessions</a>
+    </div>
+</body>
+</html>
