@@ -106,6 +106,8 @@ class ChatSession:
     custom_title: str | None = None
     requester_username: str | None = None
     responder_username: str | None = None
+    source_file_mtime: float | None = None  # File modification time for incremental refresh
+    source_file_size: int | None = None  # File size in bytes for incremental refresh
 
 
 def get_vscode_storage_paths() -> list[tuple[str, str]]:
@@ -438,6 +440,22 @@ def _parse_command_runs(raw_commands: list) -> list[CommandRun]:
     return commands
 
 
+def _get_file_metadata(file_path: str | Path) -> tuple[float | None, int | None]:
+    """Get file modification time and size for incremental refresh.
+    
+    Args:
+        file_path: Path to the file.
+        
+    Returns:
+        Tuple of (mtime, size) or (None, None) if file cannot be accessed.
+    """
+    try:
+        stat_result = os.stat(file_path)
+        return stat_result.st_mtime, stat_result.st_size
+    except OSError:
+        return None, None
+
+
 def _parse_chat_session_file(
     file_path: Path, workspace_name: str | None, workspace_path: str | None, edition: str
 ) -> ChatSession | None:
@@ -594,6 +612,9 @@ def _parse_chat_session_file(
     created_at = data.get("createdAt", data.get("created", data.get("creationDate")))
     updated_at = data.get("updatedAt", data.get("lastModified", data.get("lastMessageDate")))
 
+    # Capture file metadata for incremental refresh
+    source_file_mtime, source_file_size = _get_file_metadata(file_path)
+
     return ChatSession(
         session_id=str(session_id),
         workspace_name=workspace_name,
@@ -606,6 +627,8 @@ def _parse_chat_session_file(
         custom_title=data.get("customTitle"),
         requester_username=data.get("requesterUsername"),
         responder_username=data.get("responderUsername"),
+        source_file_mtime=source_file_mtime,
+        source_file_size=source_file_size,
     )
 
 
@@ -781,6 +804,9 @@ def _extract_session_from_dict(
     created_at = data.get("createdAt", data.get("created", data.get("creationDate")))
     updated_at = data.get("updatedAt", data.get("lastModified", data.get("lastMessageDate")))
     
+    # Capture file metadata for incremental refresh
+    source_file_mtime, source_file_size = _get_file_metadata(source_file)
+
     return ChatSession(
         session_id=str(session_id),
         workspace_name=workspace_name,
@@ -793,6 +819,8 @@ def _extract_session_from_dict(
         custom_title=data.get("customTitle"),
         requester_username=data.get("requesterUsername"),
         responder_username=data.get("responderUsername"),
+        source_file_mtime=source_file_mtime,
+        source_file_size=source_file_size,
     )
 
 

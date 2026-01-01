@@ -33,7 +33,9 @@ class Database:
         custom_title TEXT,
         requester_username TEXT,
         responder_username TEXT,
-        imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        source_file_mtime REAL,
+        source_file_size INTEGER
     );
 
     CREATE TABLE IF NOT EXISTS messages (
@@ -152,9 +154,23 @@ class Database:
             conn.close()
 
     def _ensure_schema(self):
-        """Ensure the database schema exists."""
+        """Ensure the database schema exists and migrate if necessary."""
         with self._get_connection() as conn:
             conn.executescript(self.SCHEMA)
+            # Migrate existing databases: add new columns if they don't exist
+            self._migrate_schema(conn)
+
+    def _migrate_schema(self, conn):
+        """Add new columns to existing databases for incremental refresh support."""
+        cursor = conn.cursor()
+        # Check if the source_file_mtime column exists
+        cursor.execute("PRAGMA table_info(sessions)")
+        columns = {row[1] for row in cursor.fetchall()}
+        
+        if "source_file_mtime" not in columns:
+            cursor.execute("ALTER TABLE sessions ADD COLUMN source_file_mtime REAL")
+        if "source_file_size" not in columns:
+            cursor.execute("ALTER TABLE sessions ADD COLUMN source_file_size INTEGER")
 
     def add_session(self, session: ChatSession) -> bool:
         """Add a chat session to the database.
@@ -180,8 +196,9 @@ class Database:
                 """
                 INSERT INTO sessions 
                 (session_id, workspace_name, workspace_path, created_at, updated_at, 
-                 source_file, vscode_edition, custom_title, requester_username, responder_username)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 source_file, vscode_edition, custom_title, requester_username, responder_username,
+                 source_file_mtime, source_file_size)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session.session_id,
@@ -194,6 +211,8 @@ class Database:
                     session.custom_title,
                     session.requester_username,
                     session.responder_username,
+                    session.source_file_mtime,
+                    session.source_file_size,
                 ),
             )
 
@@ -305,6 +324,47 @@ class Database:
 
         # Add the session
         self.add_session(session)
+
+    def needs_update(self, session_id: str, file_mtime: float | None, file_size: int | None) -> bool:
+        """Check if a session needs to be updated based on file metadata.
+
+        Returns True if:
+        - Session doesn't exist, OR
+        - Stored mtime/size is NULL (migration case), OR
+        - Stored mtime/size differs from provided values
+
+        Args:
+            session_id: The session ID to check.
+            file_mtime: The current file modification time.
+            file_size: The current file size in bytes.
+
+        Returns:
+            True if the session needs to be updated, False otherwise.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT source_file_mtime, source_file_size FROM sessions WHERE session_id = ?",
+                (session_id,),
+            )
+            row = cursor.fetchone()
+
+            if row is None:
+                # Session doesn't exist
+                return True
+
+            stored_mtime = row[0]
+            stored_size = row[1]
+
+            # If stored values are NULL (migration case), session needs update
+            if stored_mtime is None or stored_size is None:
+                return True
+
+            # Compare with provided values
+            if stored_mtime != file_mtime or stored_size != file_size:
+                return True
+
+            return False
 
     def get_session(self, session_id: str) -> ChatSession | None:
         """Get a session by its ID.
@@ -433,6 +493,8 @@ class Database:
                 custom_title=safe_get("custom_title"),
                 requester_username=safe_get("requester_username"),
                 responder_username=safe_get("responder_username"),
+                source_file_mtime=safe_get("source_file_mtime"),
+                source_file_size=safe_get("source_file_size"),
             )
 
     def list_sessions(
