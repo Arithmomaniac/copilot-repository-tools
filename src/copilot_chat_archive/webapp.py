@@ -3,10 +3,11 @@
 from datetime import datetime
 from urllib.parse import unquote
 
-from flask import Flask, render_template, request
+from flask import Flask, render_template, request, redirect, url_for
 import markdown
 
 from .database import Database
+from .scanner import get_vscode_storage_paths, scan_chat_sessions
 
 
 # Create a reusable markdown converter with extensions
@@ -106,6 +107,16 @@ def create_app(db_path: str, title: str = "Copilot Chat Archive") -> Flask:
         query = request.args.get("q", "").strip()
         selected_workspaces = request.args.getlist("workspace")
         
+        # Get refresh results from query params (set after a refresh operation)
+        refresh_result = None
+        if request.args.get("refresh_added") is not None:
+            refresh_result = {
+                "added": int(request.args.get("refresh_added", 0)),
+                "updated": int(request.args.get("refresh_updated", 0)),
+                "skipped": int(request.args.get("refresh_skipped", 0)),
+                "mode": request.args.get("refresh_mode", "incremental"),
+            }
+        
         search_snippets = {}  # session_id -> list of snippets with message links
         
         if query:
@@ -152,6 +163,7 @@ def create_app(db_path: str, title: str = "Copilot Chat Archive") -> Flask:
             query=query,
             search_snippets=search_snippets,
             selected_workspaces=selected_workspaces,
+            refresh_result=refresh_result,
         )
     
     @app.route("/session/<session_id>")
@@ -174,6 +186,52 @@ def create_app(db_path: str, title: str = "Copilot Chat Archive") -> Flask:
             session=session,
             message_count=len(session.messages),
         )
+    
+    @app.route("/refresh", methods=["POST"])
+    def refresh_database():
+        """Refresh the database by scanning for new or updated sessions.
+        
+        Supports two modes:
+        - full=false (default): Incremental refresh, only updates changed sessions
+        - full=true: Full rebuild, re-imports all sessions
+        """
+        db = Database(app.config["DB_PATH"])
+        full_refresh = request.form.get("full", "false").lower() == "true"
+        
+        # Get storage paths - use default VS Code paths
+        storage_paths = get_vscode_storage_paths()
+        
+        added = 0
+        updated = 0
+        skipped = 0
+        
+        for session in scan_chat_sessions(storage_paths):
+            if full_refresh:
+                # In full mode, update all sessions
+                # Try to add first - if it fails (returns False), session exists and we update
+                if db.add_session(session):
+                    added += 1
+                else:
+                    db.update_session(session)
+                    updated += 1
+            else:
+                # Incremental mode: use needs_update() to determine if session should be updated
+                if db.needs_update(session.session_id, session.source_file_mtime, session.source_file_size):
+                    # Try to add first - if it fails (returns False), session exists and we update
+                    if db.add_session(session):
+                        added += 1
+                    else:
+                        db.update_session(session)
+                        updated += 1
+                else:
+                    skipped += 1
+        
+        # Redirect back to index with a success message via query params
+        return redirect(url_for("index", 
+                                refresh_added=added, 
+                                refresh_updated=updated, 
+                                refresh_skipped=skipped,
+                                refresh_mode="full" if full_refresh else "incremental"))
     
     return app
 

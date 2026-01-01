@@ -318,6 +318,76 @@ footer a {
     font-size: 0.8em;
     margin-left: 4px;
 }
+
+.refresh-actions {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.refresh-actions form {
+    display: inline;
+}
+
+.refresh-actions button {
+    padding: 8px 16px;
+    font-size: 0.9em;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.refresh-actions .refresh-btn {
+    background-color: var(--bg-secondary);
+    color: var(--text-primary);
+}
+
+.refresh-actions .refresh-btn:hover {
+    background-color: var(--bg-tertiary);
+}
+
+.refresh-actions .rebuild-btn {
+    background-color: #f6c177;
+    color: #24292f;
+    border-color: #f6c177;
+}
+
+.refresh-actions .rebuild-btn:hover {
+    background-color: #e6a050;
+}
+
+@media (prefers-color-scheme: dark) {
+    .refresh-actions .rebuild-btn {
+        background-color: #996633;
+        color: #ffffff;
+        border-color: #996633;
+    }
+    .refresh-actions .rebuild-btn:hover {
+        background-color: #7a5229;
+    }
+}
+
+.refresh-notification {
+    padding: 12px 16px;
+    margin-bottom: 20px;
+    border-radius: 6px;
+    background-color: #dafbe1;
+    border: 1px solid #4ac26b;
+    color: #1a7f37;
+}
+
+@media (prefers-color-scheme: dark) {
+    .refresh-notification {
+        background-color: #238636;
+        border-color: #238636;
+        color: #dafbe1;
+    }
+}
+
+.refresh-notification strong {
+    font-weight: 600;
+}
     </style>
 </head>
 <body>
@@ -346,6 +416,26 @@ footer a {
             {% endfor %}
             <button type="submit">Search</button>
         </form>
+
+        {% if refresh_result %}
+        <div class="refresh-notification">
+            <strong>{{ refresh_result.mode | capitalize }} refresh complete:</strong>
+            Added {{ refresh_result.added }} sessions,
+            updated {{ refresh_result.updated }} sessions,
+            skipped {{ refresh_result.skipped }} unchanged sessions.
+        </div>
+        {% endif %}
+
+        <div class="refresh-actions">
+            <form method="POST" action="/refresh">
+                <input type="hidden" name="full" value="false">
+                <button type="submit" class="refresh-btn" title="Scan for new or changed sessions">🔄 Refresh</button>
+            </form>
+            <form method="POST" action="/refresh">
+                <input type="hidden" name="full" value="true">
+                <button type="submit" class="rebuild-btn" title="Re-import all sessions from scratch">🔨 Rebuild All</button>
+            </form>
+        </div>
 
         {% if query %}
         <div class="search-info">

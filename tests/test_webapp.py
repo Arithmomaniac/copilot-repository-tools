@@ -160,3 +160,51 @@ class TestEmptyDatabase:
         response = client.get("/")
         assert response.status_code == 200
         assert b"No sessions found" in response.data
+
+
+class TestRefreshRoute:
+    """Tests for the refresh database route."""
+
+    def test_refresh_route_exists(self, client):
+        """Test that the refresh route exists and accepts POST."""
+        response = client.post("/refresh")
+        # Should redirect to index after refresh
+        assert response.status_code == 302
+        assert "/" in response.headers.get("Location", "")
+
+    def test_refresh_incremental_mode(self, client):
+        """Test refresh in incremental mode (default)."""
+        response = client.post("/refresh", data={"full": "false"})
+        assert response.status_code == 302
+        # Check redirect contains incremental mode parameter
+        location = response.headers.get("Location", "")
+        assert "refresh_mode=incremental" in location
+
+    def test_refresh_full_mode(self, client):
+        """Test refresh in full rebuild mode."""
+        response = client.post("/refresh", data={"full": "true"})
+        assert response.status_code == 302
+        # Check redirect contains full mode parameter
+        location = response.headers.get("Location", "")
+        assert "refresh_mode=full" in location
+
+    def test_refresh_result_display(self, client):
+        """Test that refresh result is displayed after redirect."""
+        # First do a refresh
+        response = client.post("/refresh", data={"full": "false"}, follow_redirects=True)
+        assert response.status_code == 200
+        # Should contain refresh notification with results
+        assert b"refresh complete" in response.data.lower()
+
+    def test_index_shows_refresh_buttons(self, client):
+        """Test that the index page shows refresh buttons."""
+        response = client.get("/")
+        assert response.status_code == 200
+        # Check for refresh buttons in the HTML
+        assert b"Refresh" in response.data
+        assert b"Rebuild All" in response.data
+
+    def test_refresh_get_method_not_allowed(self, client):
+        """Test that GET method is not allowed for refresh route."""
+        response = client.get("/refresh")
+        assert response.status_code == 405  # Method Not Allowed
