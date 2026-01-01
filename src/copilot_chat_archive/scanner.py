@@ -106,6 +106,8 @@ class ChatSession:
     custom_title: str | None = None
     requester_username: str | None = None
     responder_username: str | None = None
+    source_file_mtime: float | None = None  # File modification time for incremental refresh
+    source_file_size: int | None = None  # File size in bytes for incremental refresh
 
 
 def get_vscode_storage_paths() -> list[tuple[str, str]]:
@@ -594,6 +596,15 @@ def _parse_chat_session_file(
     created_at = data.get("createdAt", data.get("created", data.get("creationDate")))
     updated_at = data.get("updatedAt", data.get("lastModified", data.get("lastMessageDate")))
 
+    # Capture file metadata for incremental refresh
+    try:
+        stat_result = os.stat(file_path)
+        source_file_mtime = stat_result.st_mtime
+        source_file_size = stat_result.st_size
+    except OSError:
+        source_file_mtime = None
+        source_file_size = None
+
     return ChatSession(
         session_id=str(session_id),
         workspace_name=workspace_name,
@@ -606,6 +617,8 @@ def _parse_chat_session_file(
         custom_title=data.get("customTitle"),
         requester_username=data.get("requesterUsername"),
         responder_username=data.get("responderUsername"),
+        source_file_mtime=source_file_mtime,
+        source_file_size=source_file_size,
     )
 
 
@@ -781,6 +794,15 @@ def _extract_session_from_dict(
     created_at = data.get("createdAt", data.get("created", data.get("creationDate")))
     updated_at = data.get("updatedAt", data.get("lastModified", data.get("lastMessageDate")))
     
+    # Capture file metadata for incremental refresh
+    try:
+        stat_result = os.stat(source_file)
+        source_file_mtime = stat_result.st_mtime
+        source_file_size = stat_result.st_size
+    except OSError:
+        source_file_mtime = None
+        source_file_size = None
+
     return ChatSession(
         session_id=str(session_id),
         workspace_name=workspace_name,
@@ -793,6 +815,8 @@ def _extract_session_from_dict(
         custom_title=data.get("customTitle"),
         requester_username=data.get("requesterUsername"),
         responder_username=data.get("responderUsername"),
+        source_file_mtime=source_file_mtime,
+        source_file_size=source_file_size,
     )
 
 

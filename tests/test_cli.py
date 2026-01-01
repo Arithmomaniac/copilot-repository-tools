@@ -136,16 +136,16 @@ class TestCLI:
         stats = db.get_stats()
         assert stats["session_count"] == 1
 
-    def test_scan_force_flag(self, runner, tmp_path):
-        """Test scan command with --force flag."""
-        db_path = tmp_path / "force_test.db"
+    def test_scan_full_flag(self, runner, tmp_path):
+        """Test scan command with --full flag."""
+        db_path = tmp_path / "full_test.db"
         
         # First, create a database with an existing session
         db = Database(db_path)
         session = ChatSession(
-            session_id="force-test-session",
-            workspace_name="force-workspace",
-            workspace_path="/home/user/force-test",
+            session_id="full-test-session",
+            workspace_name="full-workspace",
+            workspace_path="/home/user/full-test",
             messages=[
                 ChatMessage(role="user", content="Original message"),
             ],
@@ -154,10 +154,19 @@ class TestCLI:
         )
         db.add_session(session)
         
-        # Test that --force flag is recognized
-        result = runner.invoke(main, ["scan", "--db", str(db_path), "--force"])
+        # Test that --full flag is recognized
+        result = runner.invoke(main, ["scan", "--db", str(db_path), "--full"])
         assert result.exit_code == 0
-        assert "Force mode" in result.output or "Updated:" in result.output
+        assert "Full mode" in result.output or "Updated:" in result.output
+
+    def test_scan_incremental_default(self, runner, tmp_path):
+        """Test that scan command uses incremental mode by default."""
+        db_path = tmp_path / "incremental_test.db"
+        
+        # Create a database (it will be empty)
+        result = runner.invoke(main, ["scan", "--db", str(db_path)])
+        assert result.exit_code == 0
+        assert "Incremental mode" in result.output
 
     def test_serve_missing_db(self, runner, tmp_path):
         """Test serve command with missing database."""

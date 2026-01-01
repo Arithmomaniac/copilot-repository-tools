@@ -189,3 +189,96 @@ class TestDatabase:
         retrieved = temp_db.get_session(sample_session.session_id)
         assert len(retrieved.messages) == 1
         assert retrieved.messages[0].content == "Updated message"
+
+
+class TestNeedsUpdate:
+    """Tests for the needs_update method."""
+
+    def test_needs_update_new_session(self, temp_db):
+        """Test that needs_update returns True for a new session."""
+        result = temp_db.needs_update("nonexistent-session", 1234567890.0, 1024)
+        assert result is True
+
+    def test_needs_update_unchanged_session(self, temp_db):
+        """Test that needs_update returns False for an unchanged session."""
+        session = ChatSession(
+            session_id="unchanged-session",
+            workspace_name="test-workspace",
+            workspace_path="/test/path",
+            messages=[ChatMessage(role="user", content="Hello")],
+            source_file="/test/session.json",
+            source_file_mtime=1234567890.0,
+            source_file_size=1024,
+        )
+        temp_db.add_session(session)
+
+        result = temp_db.needs_update("unchanged-session", 1234567890.0, 1024)
+        assert result is False
+
+    def test_needs_update_modified_mtime(self, temp_db):
+        """Test that needs_update returns True when mtime differs."""
+        session = ChatSession(
+            session_id="mtime-changed-session",
+            workspace_name="test-workspace",
+            workspace_path="/test/path",
+            messages=[ChatMessage(role="user", content="Hello")],
+            source_file="/test/session.json",
+            source_file_mtime=1234567890.0,
+            source_file_size=1024,
+        )
+        temp_db.add_session(session)
+
+        # mtime changed
+        result = temp_db.needs_update("mtime-changed-session", 1234567999.0, 1024)
+        assert result is True
+
+    def test_needs_update_modified_size(self, temp_db):
+        """Test that needs_update returns True when size differs."""
+        session = ChatSession(
+            session_id="size-changed-session",
+            workspace_name="test-workspace",
+            workspace_path="/test/path",
+            messages=[ChatMessage(role="user", content="Hello")],
+            source_file="/test/session.json",
+            source_file_mtime=1234567890.0,
+            source_file_size=1024,
+        )
+        temp_db.add_session(session)
+
+        # size changed
+        result = temp_db.needs_update("size-changed-session", 1234567890.0, 2048)
+        assert result is True
+
+    def test_needs_update_null_stored_values(self, temp_db):
+        """Test that needs_update returns True when stored values are NULL (migration case)."""
+        session = ChatSession(
+            session_id="null-values-session",
+            workspace_name="test-workspace",
+            workspace_path="/test/path",
+            messages=[ChatMessage(role="user", content="Hello")],
+            source_file="/test/session.json",
+            # No mtime/size set (simulating migration case)
+            source_file_mtime=None,
+            source_file_size=None,
+        )
+        temp_db.add_session(session)
+
+        result = temp_db.needs_update("null-values-session", 1234567890.0, 1024)
+        assert result is True
+
+    def test_session_stores_file_metadata(self, temp_db):
+        """Test that file metadata is stored and retrieved correctly."""
+        session = ChatSession(
+            session_id="metadata-session",
+            workspace_name="test-workspace",
+            workspace_path="/test/path",
+            messages=[ChatMessage(role="user", content="Hello")],
+            source_file="/test/session.json",
+            source_file_mtime=1234567890.123,
+            source_file_size=2048,
+        )
+        temp_db.add_session(session)
+
+        retrieved = temp_db.get_session("metadata-session")
+        assert retrieved.source_file_mtime == 1234567890.123
+        assert retrieved.source_file_size == 2048
