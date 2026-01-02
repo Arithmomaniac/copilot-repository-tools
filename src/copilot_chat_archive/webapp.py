@@ -3,7 +3,7 @@
 from datetime import datetime
 from urllib.parse import unquote
 
-from flask import Flask, render_template, request, redirect, url_for
+from flask import Flask, render_template, request, redirect, url_for, session
 import markdown
 
 from .database import Database
@@ -80,6 +80,12 @@ def create_app(db_path: str, title: str = "Copilot Chat Archive") -> Flask:
         template_folder="templates",
     )
     
+    # Set a secret key for session support (used for transient flash messages)
+    # A random key is fine here since sessions only contain ephemeral refresh notifications.
+    # Set FLASK_SECRET_KEY environment variable for persistent sessions across restarts.
+    import os
+    app.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(24))
+    
     # Register Jinja2 filters
     app.jinja_env.filters["markdown"] = _markdown_to_html
     app.jinja_env.filters["urldecode"] = _urldecode
@@ -107,15 +113,9 @@ def create_app(db_path: str, title: str = "Copilot Chat Archive") -> Flask:
         query = request.args.get("q", "").strip()
         selected_workspaces = request.args.getlist("workspace")
         
-        # Get refresh results from query params (set after a refresh operation)
-        refresh_result = None
-        if request.args.get("refresh_added") is not None:
-            refresh_result = {
-                "added": int(request.args.get("refresh_added", 0)),
-                "updated": int(request.args.get("refresh_updated", 0)),
-                "skipped": int(request.args.get("refresh_skipped", 0)),
-                "mode": request.args.get("refresh_mode", "incremental"),
-            }
+        # Get refresh results from session (set after a refresh operation)
+        # Pop to ensure it's only shown once
+        refresh_result = session.pop("refresh_result", None)
         
         search_snippets = {}  # session_id -> list of snippets with message links
         
@@ -205,33 +205,36 @@ def create_app(db_path: str, title: str = "Copilot Chat Archive") -> Flask:
         updated = 0
         skipped = 0
         
-        for session in scan_chat_sessions(storage_paths):
+        for chat_session in scan_chat_sessions(storage_paths):
             if full_refresh:
                 # In full mode, update all sessions
                 # Try to add first - if it fails (returns False), session exists and we update
-                if db.add_session(session):
+                if db.add_session(chat_session):
                     added += 1
                 else:
-                    db.update_session(session)
+                    db.update_session(chat_session)
                     updated += 1
             else:
                 # Incremental mode: use needs_update() to determine if session should be updated
-                if db.needs_update(session.session_id, session.source_file_mtime, session.source_file_size):
+                if db.needs_update(chat_session.session_id, chat_session.source_file_mtime, chat_session.source_file_size):
                     # Try to add first - if it fails (returns False), session exists and we update
-                    if db.add_session(session):
+                    if db.add_session(chat_session):
                         added += 1
                     else:
-                        db.update_session(session)
+                        db.update_session(chat_session)
                         updated += 1
                 else:
                     skipped += 1
         
-        # Redirect back to index with a success message via query params
-        return redirect(url_for("index", 
-                                refresh_added=added, 
-                                refresh_updated=updated, 
-                                refresh_skipped=skipped,
-                                refresh_mode="full" if full_refresh else "incremental"))
+        # Store refresh result in Flask session for display after redirect
+        session["refresh_result"] = {
+            "added": added,
+            "updated": updated,
+            "skipped": skipped,
+            "mode": "full" if full_refresh else "incremental",
+        }
+        
+        return redirect(url_for("index"))
     
     return app
 

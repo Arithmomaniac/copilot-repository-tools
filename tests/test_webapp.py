@@ -174,19 +174,17 @@ class TestRefreshRoute:
 
     def test_refresh_incremental_mode(self, client):
         """Test refresh in incremental mode (default)."""
-        response = client.post("/refresh", data={"full": "false"})
-        assert response.status_code == 302
-        # Check redirect contains incremental mode parameter
-        location = response.headers.get("Location", "")
-        assert "refresh_mode=incremental" in location
+        response = client.post("/refresh", data={"full": "false"}, follow_redirects=True)
+        assert response.status_code == 200
+        # Check that the notification shows incremental mode
+        assert b"Incremental refresh complete" in response.data
 
     def test_refresh_full_mode(self, client):
         """Test refresh in full rebuild mode."""
-        response = client.post("/refresh", data={"full": "true"})
-        assert response.status_code == 302
-        # Check redirect contains full mode parameter
-        location = response.headers.get("Location", "")
-        assert "refresh_mode=full" in location
+        response = client.post("/refresh", data={"full": "true"}, follow_redirects=True)
+        assert response.status_code == 200
+        # Check that the notification shows full mode
+        assert b"Full refresh complete" in response.data
 
     def test_refresh_result_display(self, client):
         """Test that refresh result is displayed after redirect."""
@@ -195,6 +193,18 @@ class TestRefreshRoute:
         assert response.status_code == 200
         # Should contain refresh notification with results
         assert b"refresh complete" in response.data.lower()
+
+    def test_refresh_result_shown_only_once(self, client):
+        """Test that refresh result is only shown once (session flash behavior)."""
+        # First do a refresh and follow redirects
+        response = client.post("/refresh", data={"full": "false"}, follow_redirects=True)
+        assert response.status_code == 200
+        assert b"refresh complete" in response.data.lower()
+        
+        # Navigate to index again - notification should NOT appear
+        response = client.get("/")
+        assert response.status_code == 200
+        assert b"refresh complete" not in response.data.lower()
 
     def test_index_shows_refresh_buttons(self, client):
         """Test that the index page shows refresh buttons."""
@@ -208,3 +218,200 @@ class TestRefreshRoute:
         """Test that GET method is not allowed for refresh route."""
         response = client.get("/refresh")
         assert response.status_code == 405  # Method Not Allowed
+
+
+class TestRefreshWithTestData:
+    """Tests for refresh functionality with actual test data files."""
+
+    def test_refresh_adds_new_session_from_file(self, tmp_path):
+        """Test that refresh correctly adds a new session from a test file."""
+        import json
+        
+        # Create a temporary database
+        db_path = tmp_path / "test.db"
+        db = Database(str(db_path))
+        
+        # Create a mock chat sessions directory structure
+        workspace_dir = tmp_path / "workspaceStorage" / "abc123"
+        chat_dir = workspace_dir / "chatSessions"
+        chat_dir.mkdir(parents=True)
+        
+        # Create workspace.json
+        (workspace_dir / "workspace.json").write_text(json.dumps({
+            "folder": f"file://{tmp_path}/myproject"
+        }))
+        
+        # Create a chat session file
+        session_file = chat_dir / "session1.json"
+        session_file.write_text(json.dumps({
+            "sessionId": "test-session-1",
+            "createdAt": "1704110400000",
+            "requests": [
+                {
+                    "message": {"text": "Hello, assistant!"},
+                    "timestamp": 1704110400000,
+                    "response": [{"value": "Hello! How can I help you?"}]
+                }
+            ]
+        }))
+        
+        # Create a Flask app with custom storage paths
+        app = create_app(str(db_path), title="Test Archive")
+        app.config["TESTING"] = True
+        
+        # Verify database is initially empty
+        stats = db.get_stats()
+        assert stats["session_count"] == 0
+        
+        # Manually import the session using the scanner
+        from copilot_chat_archive.scanner import scan_chat_sessions
+        storage_paths = [(str(tmp_path / "workspaceStorage"), "stable")]
+        sessions = list(scan_chat_sessions(storage_paths))
+        
+        # Verify we found the session
+        assert len(sessions) == 1
+        assert sessions[0].session_id == "test-session-1"
+        
+        # Add it to the database
+        db.add_session(sessions[0])
+        
+        # Verify it was added
+        stats = db.get_stats()
+        assert stats["session_count"] == 1
+
+    def test_refresh_updates_modified_session(self, tmp_path):
+        """Test that refresh correctly updates a session when the file changes."""
+        import json
+        import time
+        
+        # Create a temporary database
+        db_path = tmp_path / "test.db"
+        db = Database(str(db_path))
+        
+        # Create a mock chat sessions directory structure
+        workspace_dir = tmp_path / "workspaceStorage" / "abc123"
+        chat_dir = workspace_dir / "chatSessions"
+        chat_dir.mkdir(parents=True)
+        
+        # Create workspace.json
+        (workspace_dir / "workspace.json").write_text(json.dumps({
+            "folder": f"file://{tmp_path}/myproject"
+        }))
+        
+        # Create a chat session file
+        session_file = chat_dir / "session1.json"
+        session_file.write_text(json.dumps({
+            "sessionId": "update-test-session",
+            "createdAt": "1704110400000",
+            "requests": [
+                {
+                    "message": {"text": "First message"},
+                    "timestamp": 1704110400000,
+                    "response": [{"value": "First response"}]
+                }
+            ]
+        }))
+        
+        # Import initial session
+        from copilot_chat_archive.scanner import scan_chat_sessions
+        storage_paths = [(str(tmp_path / "workspaceStorage"), "stable")]
+        sessions = list(scan_chat_sessions(storage_paths))
+        assert len(sessions) == 1
+        db.add_session(sessions[0])
+        
+        # Get initial session
+        initial_session = db.get_session("update-test-session")
+        assert initial_session is not None
+        assert len(initial_session.messages) == 2  # user + assistant
+        
+        # Modify the session file with an additional message
+        time.sleep(0.1)  # Ensure mtime changes
+        session_file.write_text(json.dumps({
+            "sessionId": "update-test-session",
+            "createdAt": "1704110400000",
+            "requests": [
+                {
+                    "message": {"text": "First message"},
+                    "timestamp": 1704110400000,
+                    "response": [{"value": "First response"}]
+                },
+                {
+                    "message": {"text": "Second message"},
+                    "timestamp": 1704110500000,
+                    "response": [{"value": "Second response"}]
+                }
+            ]
+        }))
+        
+        # Re-scan and check that needs_update detects the change
+        sessions = list(scan_chat_sessions(storage_paths))
+        assert len(sessions) == 1
+        updated_session = sessions[0]
+        
+        # Check that needs_update returns True for the modified file
+        needs_update = db.needs_update(
+            updated_session.session_id,
+            updated_session.source_file_mtime,
+            updated_session.source_file_size
+        )
+        assert needs_update, "needs_update should return True for modified file"
+        
+        # Update the session
+        db.update_session(updated_session)
+        
+        # Verify the update
+        updated = db.get_session("update-test-session")
+        assert updated is not None
+        assert len(updated.messages) == 4  # 2 user + 2 assistant messages
+
+    def test_refresh_skips_unchanged_session(self, tmp_path):
+        """Test that refresh correctly skips unchanged sessions."""
+        import json
+        
+        # Create a temporary database
+        db_path = tmp_path / "test.db"
+        db = Database(str(db_path))
+        
+        # Create a mock chat sessions directory structure
+        workspace_dir = tmp_path / "workspaceStorage" / "abc123"
+        chat_dir = workspace_dir / "chatSessions"
+        chat_dir.mkdir(parents=True)
+        
+        # Create workspace.json
+        (workspace_dir / "workspace.json").write_text(json.dumps({
+            "folder": f"file://{tmp_path}/myproject"
+        }))
+        
+        # Create a chat session file
+        session_file = chat_dir / "session1.json"
+        session_file.write_text(json.dumps({
+            "sessionId": "skip-test-session",
+            "createdAt": "1704110400000",
+            "requests": [
+                {
+                    "message": {"text": "Test message"},
+                    "timestamp": 1704110400000,
+                    "response": [{"value": "Test response"}]
+                }
+            ]
+        }))
+        
+        # Import session
+        from copilot_chat_archive.scanner import scan_chat_sessions
+        storage_paths = [(str(tmp_path / "workspaceStorage"), "stable")]
+        sessions = list(scan_chat_sessions(storage_paths))
+        assert len(sessions) == 1
+        db.add_session(sessions[0])
+        
+        # Re-scan WITHOUT modifying the file
+        sessions = list(scan_chat_sessions(storage_paths))
+        assert len(sessions) == 1
+        same_session = sessions[0]
+        
+        # Check that needs_update returns False for unchanged file
+        needs_update = db.needs_update(
+            same_session.session_id,
+            same_session.source_file_mtime,
+            same_session.source_file_size
+        )
+        assert not needs_update, "needs_update should return False for unchanged file"
