@@ -65,12 +65,14 @@ def _format_timestamp(value: str) -> str:
         return str(value)
 
 
-def create_app(db_path: str, title: str = "Copilot Chat Archive") -> Flask:
+def create_app(db_path: str, title: str = "Copilot Chat Archive", storage_paths: list | None = None) -> Flask:
     """Create and configure the Flask application.
 
     Args:
         db_path: Path to the SQLite database file.
         title: Title for the archive.
+        storage_paths: Optional list of (path, edition) tuples for scanning.
+                       If None, uses default VS Code storage paths.
 
     Returns:
         Configured Flask application.
@@ -91,9 +93,10 @@ def create_app(db_path: str, title: str = "Copilot Chat Archive") -> Flask:
     app.jinja_env.filters["urldecode"] = _urldecode
     app.jinja_env.filters["format_timestamp"] = _format_timestamp
     
-    # Store database path and title in app config
+    # Store database path, title, and storage paths in app config
     app.config["DB_PATH"] = db_path
     app.config["ARCHIVE_TITLE"] = title
+    app.config["STORAGE_PATHS"] = storage_paths  # None means use default VS Code paths
     
     def _create_snippet(content: str, max_length: int = 150) -> str:
         """Create a snippet from content, normalizing whitespace."""
@@ -198,8 +201,8 @@ def create_app(db_path: str, title: str = "Copilot Chat Archive") -> Flask:
         db = Database(app.config["DB_PATH"])
         full_refresh = request.form.get("full", "false").lower() == "true"
         
-        # Get storage paths - use default VS Code paths
-        storage_paths = get_vscode_storage_paths()
+        # Get storage paths - use configured paths or default VS Code paths
+        storage_paths = app.config.get("STORAGE_PATHS") or get_vscode_storage_paths()
         
         added = 0
         updated = 0
