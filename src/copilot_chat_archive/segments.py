@@ -2,7 +2,7 @@
 
 Segments are portions of chat sessions that can be used for analysis,
 golden samples, and coding style extraction. Each segment:
-- Is keyed by session ID and first message content
+- Is keyed by session ID and segment index
 - Contains markdown-only content (no thinking blocks)
 - Starts with either the first message or a summarization/compaction point
 - Has metadata about the first and last messages
@@ -11,35 +11,7 @@ golden samples, and coding style extraction. Each segment:
 from dataclasses import dataclass, field
 from typing import Iterator
 
-import markdown
-
 from .scanner import ChatSession, ChatMessage, ContentBlock
-
-
-# Create a reusable markdown converter (same config as webapp.py)
-_md_converter = markdown.Markdown(
-    extensions=[
-        'tables',
-        'fenced_code',
-        'sane_lists',
-        'smarty',
-        'nl2br',
-    ],
-    extension_configs={
-        'smarty': {
-            'smart_dashes': True,
-            'smart_quotes': True,
-        },
-    },
-)
-
-
-def _markdown_to_html(text: str) -> str:
-    """Convert markdown text to HTML using the markdown library."""
-    if not text:
-        return ""
-    _md_converter.reset()
-    return _md_converter.convert(text)
 
 
 @dataclass

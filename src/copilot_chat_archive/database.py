@@ -823,8 +823,29 @@ class Database:
                 (segment.session_id, segment.segment_index),
             )
 
-        # Add the segment
-        self.add_segment(segment)
+            # Insert new segment within the same transaction
+            cursor.execute(
+                """
+                INSERT INTO chat_segments 
+                (session_id, segment_index, first_message_content, first_message_index,
+                 last_message_content, last_message_index, markdown_content, message_count,
+                 workspace_name, workspace_path, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    segment.session_id,
+                    segment.segment_index,
+                    segment.first_message_content,
+                    segment.first_message_index,
+                    segment.last_message_content,
+                    segment.last_message_index,
+                    segment.markdown_content,
+                    segment.message_count,
+                    segment.workspace_name,
+                    segment.workspace_path,
+                    segment.created_at,
+                ),
+            )
 
     def delete_session_segments(self, session_id: str):
         """Delete all segments for a session.
@@ -925,7 +946,7 @@ class Database:
         """Check if segments for a session need to be updated.
 
         Compares the last message index in the stored segments with
-        the actual message count in the session. If they differ,
+        the actual last message index in the session. If they differ,
         the segments need to be regenerated.
 
         Args:
@@ -937,16 +958,18 @@ class Database:
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
-            # Get the session's message count
+            # Get the actual maximum message_index for this session
             cursor.execute(
-                "SELECT COUNT(*) FROM messages WHERE session_id = ?",
+                "SELECT MAX(message_index) FROM messages WHERE session_id = ?",
                 (session_id,),
             )
-            message_count = cursor.fetchone()[0]
+            result = cursor.fetchone()[0]
 
-            if message_count == 0:
+            if result is None:
                 # Session has no messages, no segments needed
                 return False
+            
+            actual_last_index = result
 
             # Get the last segment's last_message_index
             cursor.execute(
@@ -966,9 +989,9 @@ class Database:
 
             last_stored_index = row[0]
 
-            # If the last stored message index doesn't match (message_count - 1),
+            # If the last stored message index doesn't match actual last index,
             # segments need update
-            if last_stored_index != message_count - 1:
+            if last_stored_index != actual_last_index:
                 return True
 
             return False
