@@ -12,6 +12,7 @@ from copilot_chat_archive.markdown_exporter import (
     _format_timestamp,
     _format_tool_summary,
     _had_thinking_content,
+    _sanitize_filename,
 )
 from copilot_chat_archive.scanner import (
     ChatMessage,
@@ -332,3 +333,43 @@ class TestFormatToolSummary:
         assert "*Used tools:" in result
         assert "tool1" in result
         assert "tool2" in result
+
+
+class TestSanitizeFilename:
+    """Tests for _sanitize_filename helper."""
+
+    def test_safe_characters_unchanged(self):
+        """Test that safe characters are unchanged."""
+        result = _sanitize_filename("my-project_v1.0")
+        assert result == "my-project_v1.0"
+
+    def test_unsafe_characters_replaced(self):
+        """Test that unsafe characters are replaced with underscores."""
+        result = _sanitize_filename("path/to:project name")
+        assert "/" not in result
+        assert ":" not in result
+        assert " " not in result
+        assert "_" in result
+
+    def test_max_length_enforced(self):
+        """Test that max length is enforced."""
+        long_name = "a" * 100
+        result = _sanitize_filename(long_name, max_length=50)
+        assert len(result) == 50
+
+    def test_custom_max_length(self):
+        """Test custom max length."""
+        result = _sanitize_filename("test-project", max_length=5)
+        assert len(result) == 5
+        assert result == "test-"
+
+    def test_empty_string(self):
+        """Test empty string input."""
+        result = _sanitize_filename("")
+        assert result == ""
+
+    def test_all_unsafe_characters(self):
+        """Test string with all unsafe characters."""
+        result = _sanitize_filename("!@#$%^&*()")
+        # All characters should be replaced with underscores
+        assert all(c == "_" for c in result)

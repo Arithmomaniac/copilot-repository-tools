@@ -14,6 +14,11 @@ from urllib.parse import unquote
 
 from .scanner import ChatSession, ChatMessage
 
+# Threshold to distinguish between seconds and milliseconds timestamps.
+# Timestamps above this value (approximately year 2001 in milliseconds) are
+# treated as milliseconds and divided by 1000 to convert to seconds.
+_MILLISECONDS_THRESHOLD = 1e12
+
 
 def _format_timestamp(value: str | int | None) -> str:
     """Format an epoch timestamp (milliseconds) to a human-readable date string."""
@@ -25,7 +30,7 @@ def _format_timestamp(value: str | int | None) -> str:
             value = float(value)
         epoch_ms = float(value)
         # Check if milliseconds (common for JS timestamps)
-        if epoch_ms > 1e12:
+        if epoch_ms > _MILLISECONDS_THRESHOLD:
             epoch_ms = epoch_ms / 1000
         dt = datetime.fromtimestamp(epoch_ms)
         return dt.strftime("%Y-%m-%d %H:%M:%S")
@@ -226,6 +231,23 @@ def export_session_to_file(session: ChatSession, output_path: Path | str) -> Non
     Path(output_path).write_text(markdown, encoding="utf-8")
 
 
+def _sanitize_filename(name: str, max_length: int = 50) -> str:
+    """Sanitize a string to be safe for use as a filename.
+    
+    Replaces any characters that are not alphanumeric, hyphen, underscore,
+    or period with underscores. Also limits the length.
+    
+    Args:
+        name: The string to sanitize.
+        max_length: Maximum length of the resulting string.
+        
+    Returns:
+        A filesystem-safe string.
+    """
+    safe_name = "".join(c if c.isalnum() or c in ("-", "_", ".") else "_" for c in name)
+    return safe_name[:max_length]
+
+
 def generate_session_filename(session: ChatSession) -> str:
     """Generate a filename for a session's markdown export.
     
@@ -250,16 +272,14 @@ def generate_session_filename(session: ChatSession) -> str:
             ts = session.created_at
             if isinstance(ts, str):
                 ts = float(ts)
-            if ts > 1e12:
+            if ts > _MILLISECONDS_THRESHOLD:
                 ts = ts / 1000
             date_str = datetime.fromtimestamp(ts).strftime("%Y%m%d")
         except (ValueError, TypeError, OSError):
             pass
     
     # Create safe filename
-    # Replace unsafe characters
-    safe_name = "".join(c if c.isalnum() or c in ("-", "_", ".") else "_" for c in name)
-    safe_name = safe_name[:50]  # Limit length
+    safe_name = _sanitize_filename(name)
     
     if date_str:
         filename = f"{date_str}_{safe_name}_{session.session_id[:8]}.md"

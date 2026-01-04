@@ -442,10 +442,6 @@ def export_markdown(db: str, output_dir: str, session_id: str | None, verbose: b
     - Tool call summaries in italics
     - Thinking block notices in italics (content omitted)
     """
-    if not Path(db).exists():
-        click.echo(f"Error: Database file '{db}' not found.", err=True)
-        sys.exit(1)
-
     from .markdown_exporter import (
         session_to_markdown,
         export_session_to_file,
