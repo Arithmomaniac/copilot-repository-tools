@@ -96,6 +96,25 @@ class Database:
         FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
     );
 
+    -- Chat segments table for markdown-only content analysis
+    CREATE TABLE IF NOT EXISTS chat_segments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL,
+        segment_index INTEGER NOT NULL,
+        first_message_content TEXT NOT NULL,
+        first_message_index INTEGER NOT NULL,
+        last_message_content TEXT NOT NULL,
+        last_message_index INTEGER NOT NULL,
+        markdown_content TEXT NOT NULL,
+        message_count INTEGER NOT NULL,
+        workspace_name TEXT,
+        workspace_path TEXT,
+        created_at TEXT,
+        generated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE,
+        UNIQUE(session_id, segment_index)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_sessions_workspace ON sessions(workspace_name);
     CREATE INDEX IF NOT EXISTS idx_sessions_created ON sessions(created_at);
     CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
@@ -104,6 +123,7 @@ class Database:
     CREATE INDEX IF NOT EXISTS idx_file_changes_message ON file_changes(message_id);
     CREATE INDEX IF NOT EXISTS idx_command_runs_message ON command_runs(message_id);
     CREATE INDEX IF NOT EXISTS idx_content_blocks_message ON content_blocks(message_id);
+    CREATE INDEX IF NOT EXISTS idx_chat_segments_session ON chat_segments(session_id);
     
     -- Full-text search for messages (FTS5 inspired by tad-hq/universal-session-viewer)
     CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
@@ -743,3 +763,233 @@ class Database:
                     ],
                 })
         return json.dumps(sessions, indent=2)
+
+    def add_segment(self, segment) -> bool:
+        """Add a chat segment to the database.
+
+        Args:
+            segment: The ChatSegment to add.
+
+        Returns:
+            True if the segment was added, False if it already exists.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Check if segment already exists
+            cursor.execute(
+                "SELECT id FROM chat_segments WHERE session_id = ? AND segment_index = ?",
+                (segment.session_id, segment.segment_index),
+            )
+            if cursor.fetchone():
+                return False
+
+            cursor.execute(
+                """
+                INSERT INTO chat_segments 
+                (session_id, segment_index, first_message_content, first_message_index,
+                 last_message_content, last_message_index, markdown_content, message_count,
+                 workspace_name, workspace_path, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    segment.session_id,
+                    segment.segment_index,
+                    segment.first_message_content,
+                    segment.first_message_index,
+                    segment.last_message_content,
+                    segment.last_message_index,
+                    segment.markdown_content,
+                    segment.message_count,
+                    segment.workspace_name,
+                    segment.workspace_path,
+                    segment.created_at,
+                ),
+            )
+            return True
+
+    def update_segment(self, segment):
+        """Update an existing segment or add it if it doesn't exist.
+
+        Args:
+            segment: The ChatSegment to update.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Delete existing segment
+            cursor.execute(
+                "DELETE FROM chat_segments WHERE session_id = ? AND segment_index = ?",
+                (segment.session_id, segment.segment_index),
+            )
+
+        # Add the segment
+        self.add_segment(segment)
+
+    def delete_session_segments(self, session_id: str):
+        """Delete all segments for a session.
+
+        Args:
+            session_id: The session ID to delete segments for.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "DELETE FROM chat_segments WHERE session_id = ?",
+                (session_id,),
+            )
+
+    def get_session_segments(self, session_id: str) -> list[dict]:
+        """Get all segments for a session.
+
+        Args:
+            session_id: The session ID to get segments for.
+
+        Returns:
+            List of segment dictionaries.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT * FROM chat_segments 
+                WHERE session_id = ? 
+                ORDER BY segment_index
+                """,
+                (session_id,),
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def list_segments(
+        self,
+        workspace_name: str | None = None,
+        limit: int | None = None,
+        offset: int = 0,
+    ) -> list[dict]:
+        """List segments with optional filtering.
+
+        Args:
+            workspace_name: Optional workspace name filter.
+            limit: Maximum number of segments to return.
+            offset: Number of segments to skip.
+
+        Returns:
+            List of segment info dictionaries.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            query = """
+                SELECT * FROM chat_segments
+            """
+            params = []
+
+            if workspace_name:
+                query += " WHERE workspace_name = ?"
+                params.append(workspace_name)
+
+            query += " ORDER BY generated_at DESC"
+
+            if limit:
+                query += " LIMIT ? OFFSET ?"
+                params.extend([limit, offset])
+
+            cursor.execute(query, params)
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_segment_stats(self) -> dict:
+        """Get segment-related statistics.
+
+        Returns:
+            Dictionary with segment stats.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute("SELECT COUNT(*) FROM chat_segments")
+            segment_count = cursor.fetchone()[0]
+
+            cursor.execute("SELECT COUNT(DISTINCT session_id) FROM chat_segments")
+            sessions_with_segments = cursor.fetchone()[0]
+
+            cursor.execute("SELECT SUM(message_count) FROM chat_segments")
+            total_messages_in_segments = cursor.fetchone()[0] or 0
+
+            return {
+                "segment_count": segment_count,
+                "sessions_with_segments": sessions_with_segments,
+                "total_messages_in_segments": total_messages_in_segments,
+            }
+
+    def segment_needs_update(self, session_id: str) -> bool:
+        """Check if segments for a session need to be updated.
+
+        Compares the last message index in the stored segments with
+        the actual message count in the session. If they differ,
+        the segments need to be regenerated.
+
+        Args:
+            session_id: The session ID to check.
+
+        Returns:
+            True if segments need to be updated, False otherwise.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Get the session's message count
+            cursor.execute(
+                "SELECT COUNT(*) FROM messages WHERE session_id = ?",
+                (session_id,),
+            )
+            message_count = cursor.fetchone()[0]
+
+            if message_count == 0:
+                # Session has no messages, no segments needed
+                return False
+
+            # Get the last segment's last_message_index
+            cursor.execute(
+                """
+                SELECT last_message_index FROM chat_segments 
+                WHERE session_id = ? 
+                ORDER BY segment_index DESC 
+                LIMIT 1
+                """,
+                (session_id,),
+            )
+            row = cursor.fetchone()
+
+            if row is None:
+                # No segments exist, need to generate
+                return True
+
+            last_stored_index = row[0]
+
+            # If the last stored message index doesn't match (message_count - 1),
+            # segments need update
+            if last_stored_index != message_count - 1:
+                return True
+
+            return False
+
+    def get_sessions_needing_segment_update(self) -> list[str]:
+        """Get a list of session IDs that need their segments updated.
+
+        Returns:
+            List of session IDs that need segment regeneration.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Get all session IDs
+            cursor.execute("SELECT session_id FROM sessions")
+            all_sessions = [row[0] for row in cursor.fetchall()]
+
+        # Check each session
+        needs_update = []
+        for session_id in all_sessions:
+            if self.segment_needs_update(session_id):
+                needs_update.append(session_id)
+
+        return needs_update

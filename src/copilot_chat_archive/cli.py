@@ -472,5 +472,135 @@ def import_json(db: str, json_file: str):
     click.echo(f"  Skipped: {skipped} sessions")
 
 
+@main.command(name="generate-segments")
+@click.option(
+    "--db",
+    "-d",
+    default="copilot_chats.db",
+    help="Path to SQLite database file.",
+    type=click.Path(exists=True, dir_okay=False),
+)
+@click.option("--verbose", "-v", is_flag=True, help="Show verbose output.")
+@click.option("--full", "-f", is_flag=True, help="Regenerate all segments regardless of changes.")
+@click.option(
+    "--session",
+    "-s",
+    help="Generate segments for a specific session ID only.",
+)
+def generate_segments(db: str, verbose: bool, full: bool, session: str | None):
+    """Generate markdown chat segments from sessions.
+    
+    Segments are portions of chat sessions useful for analysis, golden samples,
+    and coding style extraction. Each segment:
+    - Contains markdown-only content (no thinking blocks)
+    - Starts with the first message or a summarization point
+    - Is stored in the database for later use
+    
+    By default, only sessions with new messages are processed (incremental).
+    Use --full to regenerate all segments.
+    """
+    from .segments import generate_segments as gen_segments
+
+    if not Path(db).exists():
+        click.echo(f"Error: Database file '{db}' not found.", err=True)
+        sys.exit(1)
+
+    database = Database(db)
+    
+    click.echo("Generating markdown chat segments...")
+    if full:
+        click.echo("  (Full mode: regenerating all segments)")
+    else:
+        click.echo("  (Incremental mode: only processing changed sessions)")
+
+    generated = 0
+    updated = 0
+    skipped = 0
+
+    # Determine which sessions to process
+    if session:
+        # Specific session
+        session_ids = [session]
+        click.echo(f"  Processing session: {session}")
+    elif full:
+        # All sessions
+        all_sessions = database.list_sessions()
+        session_ids = [s["session_id"] for s in all_sessions]
+    else:
+        # Only sessions needing update
+        session_ids = database.get_sessions_needing_segment_update()
+        if verbose and session_ids:
+            click.echo(f"  Found {len(session_ids)} sessions needing segment updates")
+
+    for session_id in session_ids:
+        session_obj = database.get_session(session_id)
+        if not session_obj:
+            if verbose:
+                click.echo(f"  Session not found: {session_id}")
+            continue
+
+        # Delete existing segments for this session if updating
+        database.delete_session_segments(session_id)
+
+        # Generate new segments
+        segment_count = 0
+        for segment in gen_segments(session_obj):
+            database.add_segment(segment)
+            segment_count += 1
+
+        if segment_count > 0:
+            if verbose:
+                workspace = session_obj.workspace_name or "Unknown"
+                click.echo(f"  Generated {segment_count} segment(s) for: {workspace}")
+            generated += segment_count
+            updated += 1
+        else:
+            skipped += 1
+
+    click.echo(f"\nSegment generation complete:")
+    click.echo(f"  Sessions processed: {updated}")
+    click.echo(f"  Segments generated: {generated}")
+    click.echo(f"  Sessions skipped (empty): {skipped}")
+
+    segment_stats = database.get_segment_stats()
+    click.echo(f"\nDatabase now contains:")
+    click.echo(f"  {segment_stats['segment_count']} segments")
+    click.echo(f"  {segment_stats['sessions_with_segments']} sessions with segments")
+
+
+@main.command(name="segment-stats")
+@click.option(
+    "--db",
+    "-d",
+    default="copilot_chats.db",
+    help="Path to SQLite database file.",
+    type=click.Path(exists=True, dir_okay=False),
+)
+def segment_stats(db: str):
+    """Show statistics about chat segments."""
+    if not Path(db).exists():
+        click.echo(f"Error: Database file '{db}' not found.", err=True)
+        sys.exit(1)
+
+    database = Database(db)
+    stats = database.get_segment_stats()
+    session_stats = database.get_stats()
+
+    click.echo("Segment Statistics:")
+    click.echo(f"  Total segments: {stats['segment_count']}")
+    click.echo(f"  Sessions with segments: {stats['sessions_with_segments']}")
+    click.echo(f"  Total sessions: {session_stats['session_count']}")
+    
+    # Show sessions needing updates
+    needs_update = database.get_sessions_needing_segment_update()
+    click.echo(f"\n  Sessions needing segment updates: {len(needs_update)}")
+    if needs_update and len(needs_update) <= 10:
+        for sid in needs_update:
+            session = database.get_session(sid)
+            if session:
+                workspace = session.workspace_name or sid[:16]
+                click.echo(f"    - {workspace}")
+
+
 if __name__ == "__main__":
     main()

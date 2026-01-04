@@ -174,3 +174,46 @@ class TestCLI:
         # Click returns exit code 2 for parameter validation errors (exists=True)
         assert result.exit_code != 0
         assert "does not exist" in result.output or "not found" in result.output or "Invalid value" in result.output
+
+    def test_generate_segments_command(self, runner, temp_db_with_data):
+        """Test generate-segments command."""
+        result = runner.invoke(main, ["generate-segments", "--db", str(temp_db_with_data)])
+        assert result.exit_code == 0
+        assert "Generating markdown chat segments" in result.output
+        assert "Segments generated:" in result.output
+
+    def test_generate_segments_verbose(self, runner, temp_db_with_data):
+        """Test generate-segments command with verbose output."""
+        result = runner.invoke(main, ["generate-segments", "--db", str(temp_db_with_data), "--verbose"])
+        assert result.exit_code == 0
+        assert "Generated" in result.output or "Segments generated:" in result.output
+
+    def test_generate_segments_full_mode(self, runner, temp_db_with_data):
+        """Test generate-segments command with --full flag."""
+        result = runner.invoke(main, ["generate-segments", "--db", str(temp_db_with_data), "--full"])
+        assert result.exit_code == 0
+        assert "Full mode" in result.output
+
+    def test_generate_segments_specific_session(self, runner, temp_db_with_data):
+        """Test generate-segments command for a specific session."""
+        result = runner.invoke(
+            main, ["generate-segments", "--db", str(temp_db_with_data), "--session", "cli-test-session"]
+        )
+        assert result.exit_code == 0
+        assert "cli-test-session" in result.output
+
+    def test_segment_stats_command(self, runner, temp_db_with_data):
+        """Test segment-stats command."""
+        # First generate some segments
+        runner.invoke(main, ["generate-segments", "--db", str(temp_db_with_data)])
+        
+        result = runner.invoke(main, ["segment-stats", "--db", str(temp_db_with_data)])
+        assert result.exit_code == 0
+        assert "Segment Statistics" in result.output
+        assert "Total segments:" in result.output
+
+    def test_segment_stats_missing_db(self, runner, tmp_path):
+        """Test segment-stats command with missing database."""
+        result = runner.invoke(main, ["segment-stats", "--db", str(tmp_path / "missing.db")])
+        assert result.exit_code != 0
+        assert "does not exist" in result.output or "not found" in result.output or "Invalid value" in result.output
