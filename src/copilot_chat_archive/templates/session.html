@@ -309,6 +309,12 @@ header h1 {
 }
 
 /* Tool invocations */
+.tool-summary {
+    margin: 8px 0;
+    color: var(--text-secondary);
+    font-size: 0.9em;
+}
+
 .tool-invocation {
     margin-bottom: 16px;
     padding-bottom: 16px;
@@ -581,6 +587,7 @@ footer a {
                 </div>
 
                 {% if message.tool_invocations %}
+                <p class="tool-summary"><em>Used {{ message.tool_invocations | length }} tool{{ 's' if message.tool_invocations | length > 1 else '' }}: {{ message.tool_invocations | map(attribute='name') | list | join(', ') | truncate(100) }}</em></p>
                 <details class="collapsible tool-invocations">
                     <summary aria-label="Toggle tool invocations section">
                         <span class="collapsible-icon" aria-hidden="true">▶</span>
@@ -614,6 +621,7 @@ footer a {
                 {% endif %}
 
                 {% if message.file_changes %}
+                <p class="tool-summary"><em>Changed {{ message.file_changes | length }} file{{ 's' if message.file_changes | length > 1 else '' }}: {{ message.file_changes | map(attribute='path') | list | join(', ') | truncate(100) }}</em></p>
                 <details class="collapsible file-changes">
                     <summary aria-label="Toggle file changes section">
                         <span class="collapsible-icon" aria-hidden="true">▶</span>
@@ -641,6 +649,7 @@ footer a {
                 {% endif %}
 
                 {% if message.command_runs %}
+                <p class="tool-summary"><em>Ran {{ message.command_runs | length }} command{{ 's' if message.command_runs | length > 1 else '' }}</em></p>
                 <details class="collapsible command-runs">
                     <summary aria-label="Toggle command runs section">
                         <span class="collapsible-icon" aria-hidden="true">▶</span>

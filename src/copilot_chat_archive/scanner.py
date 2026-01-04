@@ -368,6 +368,8 @@ def _merge_content_blocks(blocks: list[tuple[str, str]]) -> list[ContentBlock]:
         
         if effective_kind == current_kind:
             # Continue accumulating content of the same kind
+            # Add newline separator between blocks for proper markdown rendering
+            current_content.append("\n\n")
             current_content.append(content)
         else:
             # Kind changed - flush the accumulated content

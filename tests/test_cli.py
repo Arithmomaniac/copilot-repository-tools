@@ -174,3 +174,53 @@ class TestCLI:
         # Click returns exit code 2 for parameter validation errors (exists=True)
         assert result.exit_code != 0
         assert "does not exist" in result.output or "not found" in result.output or "Invalid value" in result.output
+
+    def test_export_markdown_command(self, runner, temp_db_with_data, tmp_path):
+        """Test export-markdown command exports sessions to markdown files."""
+        output_dir = tmp_path / "markdown_output"
+        
+        result = runner.invoke(
+            main,
+            ["export-markdown", "--db", str(temp_db_with_data), "--output-dir", str(output_dir), "-v"]
+        )
+        assert result.exit_code == 0
+        assert "Exported 1 sessions" in result.output
+        
+        # Check that a markdown file was created
+        md_files = list(output_dir.glob("*.md"))
+        assert len(md_files) == 1
+        
+        # Check content of the markdown file
+        content = md_files[0].read_text()
+        assert "# Chat Session" in content
+        assert "cli-workspace" in content
+        assert "cli-test-session" in content
+        assert "Message 1:" in content
+        assert "USER" in content
+        assert "ASSISTANT" in content
+
+    def test_export_markdown_single_session(self, runner, temp_db_with_data, tmp_path):
+        """Test export-markdown command with specific session ID."""
+        output_dir = tmp_path / "markdown_output"
+        
+        result = runner.invoke(
+            main,
+            ["export-markdown", "--db", str(temp_db_with_data), "--output-dir", str(output_dir), "--session-id", "cli-test-session"]
+        )
+        assert result.exit_code == 0
+        assert "Exported:" in result.output
+        
+        # Check that exactly one markdown file was created
+        md_files = list(output_dir.glob("*.md"))
+        assert len(md_files) == 1
+
+    def test_export_markdown_missing_session(self, runner, temp_db_with_data, tmp_path):
+        """Test export-markdown command with non-existent session ID."""
+        output_dir = tmp_path / "markdown_output"
+        
+        result = runner.invoke(
+            main,
+            ["export-markdown", "--db", str(temp_db_with_data), "--output-dir", str(output_dir), "--session-id", "nonexistent-session"]
+        )
+        assert result.exit_code == 1
+        assert "not found" in result.output
