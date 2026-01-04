@@ -5,6 +5,7 @@ Data structures are informed by:
 - microsoft/vscode-copilot-chat (https://github.com/microsoft/vscode-copilot-chat)
 """
 
+import difflib
 import json
 import os
 import platform
@@ -356,7 +357,7 @@ def _extract_uri_path(uri: dict) -> str:
     return path
 
 
-def _apply_edits_to_content(original_content: str, edits: list) -> tuple[str, str] | None:
+def _apply_edits_to_content(original_content: str, edits: list[list[dict]]) -> tuple[str, str] | None:
     """Apply edits to original content and return (original, modified) for diff generation.
     
     VS Code textEditGroup stores edits as:
@@ -404,16 +405,26 @@ def _apply_edits_to_content(original_content: str, edits: list) -> tuple[str, st
             if start_line < 0 or end_line >= len(modified_lines):
                 continue
             
+            # Validate column indices
+            if start_col < 0 or end_col < 0:
+                continue
+            
             # Apply the edit
             if start_line == end_line:
-                # Single line edit
+                # Single line edit - validate column bounds
                 line = modified_lines[start_line]
+                if start_col > len(line) or end_col > len(line):
+                    continue
                 modified_lines[start_line] = line[:start_col] + new_text + line[end_col:]
             else:
-                # Multi-line edit
-                first_line = modified_lines[start_line][:start_col]
-                last_line = modified_lines[end_line][end_col:] if end_line < len(modified_lines) else ""
-                new_lines = (first_line + new_text + last_line).split("\n")
+                # Multi-line edit - validate column bounds on each line
+                first_line = modified_lines[start_line]
+                last_line = modified_lines[end_line] if end_line < len(modified_lines) else ""
+                if start_col > len(first_line) or end_col > len(last_line):
+                    continue
+                first_part = first_line[:start_col]
+                last_part = last_line[end_col:]
+                new_lines = (first_part + new_text + last_part).split("\n")
                 modified_lines[start_line:end_line + 1] = new_lines
         
         return (original_content, "\n".join(modified_lines))
@@ -423,8 +434,6 @@ def _apply_edits_to_content(original_content: str, edits: list) -> tuple[str, st
 
 def _generate_unified_diff(original: str, modified: str, filename: str = "file") -> str:
     """Generate a unified diff between original and modified content."""
-    import difflib
-    
     original_lines = original.splitlines(keepends=True)
     modified_lines = modified.splitlines(keepends=True)
     
@@ -438,14 +447,24 @@ def _generate_unified_diff(original: str, modified: str, filename: str = "file")
     return "".join(diff)
 
 
-def _format_edits_as_diff(edits: list, original_content: str | None = None, filename: str = "file") -> str | None:
+def _format_edits_as_diff(
+    edits: list[list[dict]],
+    original_content: str | None = None,
+    filename: str = "file"
+) -> str | None:
     """Format textEditGroup edits as a diff-style representation.
     
     If original_content is provided (from a recent file read), generates a proper unified diff.
     Otherwise, generates a simplified diff showing only the insertions.
     
-    VS Code textEditGroup stores edits as:
-    edits: [[{range: {startLineNumber, startColumn, endLineNumber, endColumn}, text: "new content"}], ...]
+    Args:
+        edits: List of edit batches. Each batch is a list of dicts with
+               {range: {startLineNumber, startColumn, endLineNumber, endColumn}, text: "new content"}
+        original_content: Optional original file content from a recent read
+        filename: Filename to use in the diff header
+        
+    Returns:
+        Diff string or None if no edits
     """
     if not edits or not isinstance(edits, list):
         return None
@@ -524,15 +543,20 @@ def _parse_text_edit_group(item: dict, file_contents_cache: dict | None = None) 
     # Check if we have cached content for this file
     original_content = None
     if file_contents_cache:
-        # Try different path formats
+        # Try direct path match first
         original_content = file_contents_cache.get(path)
+        
         if not original_content:
-            # Try with just the filename
+            # Try with just the filename as key
             original_content = file_contents_cache.get(filename)
+        
         if not original_content:
-            # Try normalized path
+            # Try normalized path comparison using os.path for robust matching
+            path_basename = os.path.basename(path) if path else ""
             for cached_path, content in file_contents_cache.items():
-                if cached_path.endswith(filename) or path.endswith(cached_path.split("/")[-1]):
+                cached_basename = os.path.basename(cached_path) if cached_path else ""
+                # Match if basenames are the same (case-sensitive)
+                if path_basename and cached_basename and path_basename == cached_basename:
                     original_content = content
                     break
     
