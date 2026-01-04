@@ -111,9 +111,11 @@ def create_app(db_path: str, title: str = "Copilot Chat Archive") -> Flask:
         
         if query:
             # Use FTS search with sort option
+            # The db.search() returns results in the correct order based on sort_by
             search_results = db.search(query, limit=100, sort_by=sort_by)
             
             # Group results by session and collect snippets
+            # session_ids preserves the order from search results (for relevance sorting)
             session_ids = []
             for r in search_results:
                 sid = r["session_id"]
@@ -131,17 +133,13 @@ def create_app(db_path: str, title: str = "Copilot Chat Archive") -> Flask:
                     }
                     search_snippets[sid].append(snippet)
             
-            # Get full session info for matching sessions
+            # Get full session info for matching sessions, preserving search result order
             all_sessions = db.list_sessions()
-            
-            # For relevance sorting, preserve the order from search results
-            if sort_by == "relevance":
-                session_map = {s["session_id"]: s for s in all_sessions}
-                sessions = [session_map[sid] for sid in session_ids if sid in session_map]
-            else:
-                # For date sorting, use the list_sessions order (already sorted by date)
-                sessions = [s for s in all_sessions if s["session_id"] in session_ids]
+            session_map = {s["session_id"]: s for s in all_sessions}
+            sessions = [session_map[sid] for sid in session_ids if sid in session_map]
         else:
+            # No query: list_sessions() returns sessions sorted by date (newest first)
+            # Relevance sorting doesn't apply without a search query
             sessions = db.list_sessions()
         
         # Apply workspace filter if selected
