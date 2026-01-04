@@ -432,7 +432,24 @@ def export(db: str, output: str):
     help="Export only a specific session by ID.",
 )
 @click.option("--verbose", "-v", is_flag=True, help="Show verbose output.")
-def export_markdown(db: str, output_dir: str, session_id: str | None, verbose: bool):
+@click.option(
+    "--include-diffs/--no-diffs",
+    default=False,
+    help="Include file diffs as code blocks in the markdown output.",
+)
+@click.option(
+    "--include-tool-inputs/--no-tool-inputs",
+    default=False,
+    help="Include tool inputs as code blocks in the markdown output.",
+)
+def export_markdown(
+    db: str,
+    output_dir: str,
+    session_id: str | None,
+    verbose: bool,
+    include_diffs: bool,
+    include_tool_inputs: bool,
+):
     """Export sessions as markdown files.
     
     Each session is exported to a separate markdown file with:
@@ -441,6 +458,9 @@ def export_markdown(db: str, output_dir: str, session_id: str | None, verbose: b
     - Message numbers and roles as bold headers
     - Tool call summaries in italics
     - Thinking block notices in italics (content omitted)
+    
+    Use --include-diffs to add file change diffs as code blocks.
+    Use --include-tool-inputs to add tool inputs as code blocks.
     """
     from .markdown_exporter import (
         session_to_markdown,
@@ -463,7 +483,12 @@ def export_markdown(db: str, output_dir: str, session_id: str | None, verbose: b
         
         filename = generate_session_filename(session)
         file_path = output_path / filename
-        export_session_to_file(session, file_path)
+        export_session_to_file(
+            session,
+            file_path,
+            include_diffs=include_diffs,
+            include_tool_inputs=include_tool_inputs,
+        )
         click.echo(f"Exported: {file_path}")
     else:
         # Export all sessions
@@ -475,7 +500,12 @@ def export_markdown(db: str, output_dir: str, session_id: str | None, verbose: b
             if session:
                 filename = generate_session_filename(session)
                 file_path = output_path / filename
-                export_session_to_file(session, file_path)
+                export_session_to_file(
+                    session,
+                    file_path,
+                    include_diffs=include_diffs,
+                    include_tool_inputs=include_tool_inputs,
+                )
                 exported += 1
                 if verbose:
                     click.echo(f"  Exported: {file_path}")
