@@ -8,7 +8,12 @@ import click
 
 from . import __version__
 from .database import Database
-from .scanner import get_vscode_storage_paths, scan_chat_sessions
+from .scanner import (
+    get_vscode_storage_paths,
+    get_vscode_global_storage_paths,
+    scan_chat_sessions,
+    scan_cloud_sessions,
+)
 
 
 def format_timestamp(ts: str | int | None) -> str:
@@ -58,12 +63,17 @@ def main():
 )
 @click.option("--verbose", "-v", is_flag=True, help="Show verbose output.")
 @click.option("--full", "-f", is_flag=True, help="Full scan: update all sessions regardless of file changes.")
-def scan(db: str, storage_path: tuple, edition: str, verbose: bool, full: bool):
+@click.option("--include-cloud", "-c", is_flag=True, help="Include GitHub cloud sessions from global storage.")
+def scan(db: str, storage_path: tuple, edition: str, verbose: bool, full: bool, include_cloud: bool):
     """Scan for and import Copilot chat sessions into the database.
     
     By default, uses incremental refresh: only updates sessions whose source files
     have changed (based on file mtime and size). Use --full to force a complete
     re-import of all sessions.
+    
+    Use --include-cloud to also scan GitHub cloud sessions from VS Code's global
+    storage. Cloud sessions include sessions from GitHub Copilot coding agent and
+    other cloud-synced chat sessions.
     """
     database = Database(db)
 
@@ -80,6 +90,8 @@ def scan(db: str, storage_path: tuple, edition: str, verbose: bool, full: bool):
             paths = [(p, e) for p, e in all_paths if e == edition]
 
     click.echo(f"Scanning for Copilot chat sessions...")
+    if include_cloud:
+        click.echo("  (Including cloud sessions from global storage)")
     if full:
         click.echo("  (Full mode: will update all sessions)")
     else:
@@ -91,46 +103,89 @@ def scan(db: str, storage_path: tuple, edition: str, verbose: bool, full: bool):
     added = 0
     updated = 0
     skipped = 0
+    cloud_added = 0
+    cloud_updated = 0
 
-    def log_session_action(action: str, session):
+    def log_session_action(action: str, session, is_cloud: bool = False):
         """Log a session action if verbose mode is enabled."""
         if verbose:
             workspace = session.workspace_name or "Unknown workspace"
-            click.echo(f"  {action}: {workspace} ({len(session.messages)} messages)")
+            source = " [cloud]" if is_cloud else ""
+            click.echo(f"  {action}: {workspace} ({len(session.messages)} messages){source}")
 
-    for session in scan_chat_sessions(paths):
+    def process_session(session, is_cloud: bool = False):
+        """Process a single session, adding or updating as needed."""
+        nonlocal added, updated, skipped, cloud_added, cloud_updated
+        
         if full:
             # In full mode, update all sessions
             existing = database.get_session(session.session_id)
             if existing:
                 database.update_session(session)
-                updated += 1
-                log_session_action("Updated", session)
+                if is_cloud:
+                    cloud_updated += 1
+                else:
+                    updated += 1
+                log_session_action("Updated", session, is_cloud)
             else:
                 database.add_session(session)
-                added += 1
-                log_session_action("Added", session)
+                if is_cloud:
+                    cloud_added += 1
+                else:
+                    added += 1
+                log_session_action("Added", session, is_cloud)
         else:
             # Incremental mode: use needs_update() to determine if session should be updated
             if database.needs_update(session.session_id, session.source_file_mtime, session.source_file_size):
                 existing = database.get_session(session.session_id)
                 if existing:
                     database.update_session(session)
-                    updated += 1
-                    log_session_action("Updated", session)
+                    if is_cloud:
+                        cloud_updated += 1
+                    else:
+                        updated += 1
+                    log_session_action("Updated", session, is_cloud)
                 else:
                     database.add_session(session)
-                    added += 1
-                    log_session_action("Added", session)
+                    if is_cloud:
+                        cloud_added += 1
+                    else:
+                        added += 1
+                    log_session_action("Added", session, is_cloud)
             else:
                 skipped += 1
                 if verbose:
                     workspace = session.workspace_name or "Unknown workspace"
-                    click.echo(f"  Skipped (unchanged): {workspace}")
+                    source = " [cloud]" if is_cloud else ""
+                    click.echo(f"  Skipped (unchanged): {workspace}{source}")
+
+    # Scan local workspace sessions
+    for session in scan_chat_sessions(paths):
+        process_session(session, is_cloud=False)
+
+    # Scan cloud sessions if requested
+    if include_cloud:
+        # Get cloud storage paths based on edition
+        all_cloud_paths = get_vscode_global_storage_paths()
+        if edition == "both":
+            cloud_paths = all_cloud_paths
+        else:
+            cloud_paths = [(p, e) for p, e in all_cloud_paths if e == edition]
+        
+        if verbose:
+            click.echo("\n  Scanning cloud sessions:")
+            for path, ed in cloud_paths:
+                click.echo(f"    Checking: {path} ({ed})")
+        
+        for session in scan_cloud_sessions(cloud_paths):
+            process_session(session, is_cloud=True)
 
     click.echo(f"\nImport complete:")
     click.echo(f"  Added: {added} sessions")
     click.echo(f"  Updated: {updated} sessions")
+    if include_cloud:
+        click.echo(f"  Cloud added: {cloud_added} sessions")
+        click.echo(f"  Cloud updated: {cloud_updated} sessions")
     click.echo(f"  Skipped (unchanged): {skipped} sessions")
 
     stats = database.get_stats()

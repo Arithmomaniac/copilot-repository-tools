@@ -35,7 +35,8 @@ class Database:
         responder_username TEXT,
         imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         source_file_mtime REAL,
-        source_file_size INTEGER
+        source_file_size INTEGER,
+        session_source TEXT DEFAULT 'local'
     );
 
     CREATE TABLE IF NOT EXISTS messages (
@@ -171,6 +172,8 @@ class Database:
             cursor.execute("ALTER TABLE sessions ADD COLUMN source_file_mtime REAL")
         if "source_file_size" not in columns:
             cursor.execute("ALTER TABLE sessions ADD COLUMN source_file_size INTEGER")
+        if "session_source" not in columns:
+            cursor.execute("ALTER TABLE sessions ADD COLUMN session_source TEXT DEFAULT 'local'")
 
     def add_session(self, session: ChatSession) -> bool:
         """Add a chat session to the database.
@@ -197,8 +200,8 @@ class Database:
                 INSERT INTO sessions 
                 (session_id, workspace_name, workspace_path, created_at, updated_at, 
                  source_file, vscode_edition, custom_title, requester_username, responder_username,
-                 source_file_mtime, source_file_size)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 source_file_mtime, source_file_size, session_source)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session.session_id,
@@ -213,6 +216,7 @@ class Database:
                     session.responder_username,
                     session.source_file_mtime,
                     session.source_file_size,
+                    session.session_source,
                 ),
             )
 
@@ -495,6 +499,7 @@ class Database:
                 responder_username=safe_get("responder_username"),
                 source_file_mtime=safe_get("source_file_mtime"),
                 source_file_size=safe_get("source_file_size"),
+                session_source=safe_get("session_source") or "local",
             )
 
     def list_sessions(
@@ -525,6 +530,7 @@ class Database:
                     s.updated_at,
                     s.vscode_edition,
                     s.custom_title,
+                    s.session_source,
                     COUNT(m.id) as message_count
                 FROM sessions s
                 LEFT JOIN messages m ON s.session_id = m.session_id

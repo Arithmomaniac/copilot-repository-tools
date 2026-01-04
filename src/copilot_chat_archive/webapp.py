@@ -7,7 +7,12 @@ from flask import Flask, render_template, request, redirect, url_for, session
 import markdown
 
 from .database import Database
-from .scanner import get_vscode_storage_paths, scan_chat_sessions
+from .scanner import (
+    get_vscode_storage_paths,
+    get_vscode_global_storage_paths,
+    scan_chat_sessions,
+    scan_cloud_sessions,
+)
 
 
 # Create a reusable markdown converter with extensions

@@ -282,3 +282,83 @@ class TestNeedsUpdate:
         retrieved = temp_db.get_session("metadata-session")
         assert retrieved.source_file_mtime == 1234567890.123
         assert retrieved.source_file_size == 2048
+
+
+class TestSessionSource:
+    """Tests for the session_source field."""
+
+    def test_default_session_source(self, temp_db):
+        """Test that sessions default to 'local' source."""
+        session = ChatSession(
+            session_id="local-session",
+            workspace_name="test-workspace",
+            workspace_path="/test/path",
+            messages=[ChatMessage(role="user", content="Hello")],
+        )
+        temp_db.add_session(session)
+
+        retrieved = temp_db.get_session("local-session")
+        assert retrieved.session_source == "local"
+
+    def test_cloud_session_source(self, temp_db):
+        """Test that cloud sessions are stored with 'cloud' source."""
+        session = ChatSession(
+            session_id="cloud-session",
+            workspace_name=None,
+            workspace_path=None,
+            messages=[ChatMessage(role="user", content="Hello from cloud")],
+            session_source="cloud",
+        )
+        temp_db.add_session(session)
+
+        retrieved = temp_db.get_session("cloud-session")
+        assert retrieved.session_source == "cloud"
+        assert retrieved.workspace_name is None
+
+    def test_list_sessions_includes_source(self, temp_db):
+        """Test that list_sessions includes session_source field."""
+        session1 = ChatSession(
+            session_id="local-session-1",
+            workspace_name="test-workspace",
+            workspace_path="/test/path",
+            messages=[ChatMessage(role="user", content="Local")],
+            session_source="local",
+        )
+        session2 = ChatSession(
+            session_id="cloud-session-1",
+            workspace_name=None,
+            workspace_path=None,
+            messages=[ChatMessage(role="user", content="Cloud")],
+            session_source="cloud",
+        )
+        temp_db.add_session(session1)
+        temp_db.add_session(session2)
+
+        sessions = temp_db.list_sessions()
+        assert len(sessions) == 2
+        
+        # Find sessions by ID
+        local_session = next((s for s in sessions if s["session_id"] == "local-session-1"), None)
+        cloud_session = next((s for s in sessions if s["session_id"] == "cloud-session-1"), None)
+        
+        assert local_session is not None
+        assert local_session["session_source"] == "local"
+        
+        assert cloud_session is not None
+        assert cloud_session["session_source"] == "cloud"
+
+    def test_migration_adds_session_source_column(self, temp_db):
+        """Test that database migration adds session_source column."""
+        # The column should already exist after initialization
+        # This verifies the schema includes it
+        session = ChatSession(
+            session_id="migration-test",
+            workspace_name="test",
+            workspace_path="/test",
+            messages=[ChatMessage(role="user", content="Test")],
+            session_source="cloud",
+        )
+        # Should not raise an error
+        temp_db.add_session(session)
+        retrieved = temp_db.get_session("migration-test")
+        assert retrieved.session_source == "cloud"

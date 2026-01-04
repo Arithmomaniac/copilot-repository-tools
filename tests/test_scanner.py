@@ -208,3 +208,118 @@ class TestToolInvocationsAndFileChanges:
         assert session.custom_title == "My Important Chat"
         assert session.requester_username == "user"
         assert session.responder_username == "copilot"
+
+
+class TestCloudSessions:
+    """Tests for cloud session scanning functionality."""
+
+    def test_chat_session_source_default(self):
+        """Test that ChatSession defaults to local source."""
+        session = ChatSession(
+            session_id="test-local",
+            workspace_name="my-project",
+            workspace_path="/home/user/my-project",
+            messages=[],
+        )
+        assert session.session_source == "local"
+
+    def test_chat_session_cloud_source(self):
+        """Test creating a ChatSession with cloud source."""
+        session = ChatSession(
+            session_id="test-cloud",
+            workspace_name=None,
+            workspace_path=None,
+            messages=[ChatMessage(role="user", content="Hello from cloud")],
+            session_source="cloud",
+        )
+        assert session.session_source == "cloud"
+        assert session.workspace_name is None
+
+    def test_get_vscode_global_storage_paths(self):
+        """Test getting global storage paths."""
+        from copilot_chat_archive.scanner import get_vscode_global_storage_paths
+        
+        paths = get_vscode_global_storage_paths()
+        assert len(paths) >= 1
+        
+        # Each path should be a tuple of (path, edition)
+        for path, edition in paths:
+            assert isinstance(path, str)
+            assert edition in ("stable", "insider")
+            # Paths should include github.copilot-chat
+            assert "github.copilot-chat" in path
+
+    def test_scan_cloud_sessions_empty_path(self, tmp_path):
+        """Test scanning an empty cloud storage directory."""
+        from copilot_chat_archive.scanner import scan_cloud_sessions
+        
+        storage_paths = [(str(tmp_path), "stable")]
+        sessions = list(scan_cloud_sessions(storage_paths))
+        assert len(sessions) == 0
+
+    def test_scan_cloud_sessions_nonexistent_path(self, tmp_path):
+        """Test scanning a nonexistent cloud storage path."""
+        from copilot_chat_archive.scanner import scan_cloud_sessions
+        
+        storage_paths = [(str(tmp_path / "nonexistent"), "stable")]
+        sessions = list(scan_cloud_sessions(storage_paths))
+        assert len(sessions) == 0
+
+    def test_scan_cloud_sessions_with_json_files(self, tmp_path):
+        """Test scanning cloud sessions from JSON files."""
+        import json
+        from copilot_chat_archive.scanner import scan_cloud_sessions
+        
+        # Create a cloud session JSON file directly in the storage dir
+        session_data = {
+            "sessionId": "cloud-session-001",
+            "createdAt": "2025-01-15T10:00:00Z",
+            "messages": [
+                {"role": "user", "content": "Hello from cloud"},
+                {"role": "assistant", "content": "Cloud response here"},
+            ],
+        }
+        session_file = tmp_path / "cloud-session-001.json"
+        session_file.write_text(json.dumps(session_data))
+        
+        storage_paths = [(str(tmp_path), "stable")]
+        sessions = list(scan_cloud_sessions(storage_paths))
+        
+        assert len(sessions) >= 1
+        session = sessions[0]
+        assert session.session_id == "cloud-session-001"
+        assert session.session_source == "cloud"
+        assert session.workspace_name is None
+        assert len(session.messages) == 2
+
+    def test_scan_cloud_sessions_from_cloud_sessions_subdir(self, tmp_path):
+        """Test scanning cloud sessions from cloudSessions subdirectory."""
+        import json
+        from copilot_chat_archive.scanner import scan_cloud_sessions
+        
+        # Create cloudSessions subdirectory
+        cloud_sessions_dir = tmp_path / "cloudSessions"
+        cloud_sessions_dir.mkdir()
+        
+        session_data = {
+            "sessionId": "cloud-session-002",
+            "createdAt": "2025-01-16T11:00:00Z",
+            "requests": [
+                {
+                    "message": {"text": "Coding agent task"},
+                    "response": [{"value": "Working on your task..."}],
+                },
+            ],
+        }
+        session_file = cloud_sessions_dir / "session-002.json"
+        session_file.write_text(json.dumps(session_data))
+        
+        storage_paths = [(str(tmp_path), "insider")]
+        sessions = list(scan_cloud_sessions(storage_paths))
+        
+        assert len(sessions) >= 1
+        # Find the cloud session
+        cloud_session = next((s for s in sessions if s.session_id == "cloud-session-002"), None)
+        assert cloud_session is not None
+        assert cloud_session.session_source == "cloud"
+        assert cloud_session.vscode_edition == "insider"

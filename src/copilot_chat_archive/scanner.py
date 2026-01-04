@@ -108,6 +108,7 @@ class ChatSession:
     responder_username: str | None = None
     source_file_mtime: float | None = None  # File modification time for incremental refresh
     source_file_size: int | None = None  # File size in bytes for incremental refresh
+    session_source: str = "local"  # 'local' or 'cloud' - distinguishes workspace vs global storage sessions
 
 
 def get_vscode_storage_paths() -> list[tuple[str, str]]:
@@ -155,6 +156,61 @@ def get_vscode_storage_paths() -> list[tuple[str, str]]:
         # VS Code Insiders
         insider_path = (
             home / ".config" / "Code - Insiders" / "User" / "workspaceStorage"
+        )
+        paths.append((str(insider_path), "insider"))
+
+    return paths
+
+
+def get_vscode_global_storage_paths() -> list[tuple[str, str]]:
+    """Get the paths to VS Code global storage directories for cloud sessions.
+    
+    Cloud sessions are stored in globalStorage/github.copilot-chat/ within
+    the VS Code user data directory.
+
+    Returns a list of tuples: (path, edition) where edition is 'stable' or 'insider'.
+    """
+    system = platform.system()
+
+    paths = []
+
+    if system == "Windows":
+        appdata = os.environ.get("APPDATA", "")
+        if appdata:
+            # VS Code Stable
+            stable_path = Path(appdata) / "Code" / "User" / "globalStorage" / "github.copilot-chat"
+            paths.append((str(stable_path), "stable"))
+            # VS Code Insiders
+            insider_path = (
+                Path(appdata) / "Code - Insiders" / "User" / "globalStorage" / "github.copilot-chat"
+            )
+            paths.append((str(insider_path), "insider"))
+    elif system == "Darwin":  # macOS
+        home = Path.home()
+        # VS Code Stable
+        stable_path = (
+            home / "Library" / "Application Support" / "Code" / "User" / "globalStorage" / "github.copilot-chat"
+        )
+        paths.append((str(stable_path), "stable"))
+        # VS Code Insiders
+        insider_path = (
+            home
+            / "Library"
+            / "Application Support"
+            / "Code - Insiders"
+            / "User"
+            / "globalStorage"
+            / "github.copilot-chat"
+        )
+        paths.append((str(insider_path), "insider"))
+    else:  # Linux and others
+        home = Path.home()
+        # VS Code Stable
+        stable_path = home / ".config" / "Code" / "User" / "globalStorage" / "github.copilot-chat"
+        paths.append((str(stable_path), "stable"))
+        # VS Code Insiders
+        insider_path = (
+            home / ".config" / "Code - Insiders" / "User" / "globalStorage" / "github.copilot-chat"
         )
         paths.append((str(insider_path), "insider"))
 
@@ -457,7 +513,8 @@ def _get_file_metadata(file_path: str | Path) -> tuple[float | None, int | None]
 
 
 def _parse_chat_session_file(
-    file_path: Path, workspace_name: str | None, workspace_path: str | None, edition: str
+    file_path: Path, workspace_name: str | None, workspace_path: str | None, edition: str,
+    session_source: str = "local"
 ) -> ChatSession | None:
     """Parse a single chat session JSON file.
     
@@ -629,11 +686,13 @@ def _parse_chat_session_file(
         responder_username=data.get("responderUsername"),
         source_file_mtime=source_file_mtime,
         source_file_size=source_file_size,
+        session_source=session_source,
     )
 
 
 def _parse_vscdb_file(
-    file_path: Path, workspace_name: str | None, workspace_path: str | None, edition: str
+    file_path: Path, workspace_name: str | None, workspace_path: str | None, edition: str,
+    session_source: str = "local"
 ) -> list[ChatSession]:
     """Parse a VS Code SQLite database file for chat sessions.
     
@@ -655,7 +714,8 @@ def _parse_vscdb_file(
                     # Try to parse as session data
                     if isinstance(data, dict):
                         session = _extract_session_from_dict(
-                            data, workspace_name, workspace_path, edition, str(file_path)
+                            data, workspace_name, workspace_path, edition, str(file_path),
+                            session_source=session_source
                         )
                         if session:
                             sessions.append(session)
@@ -663,7 +723,8 @@ def _parse_vscdb_file(
                         for item in data:
                             if isinstance(item, dict):
                                 session = _extract_session_from_dict(
-                                    item, workspace_name, workspace_path, edition, str(file_path)
+                                    item, workspace_name, workspace_path, edition, str(file_path),
+                                    session_source=session_source
                                 )
                                 if session:
                                     sessions.append(session)
@@ -680,7 +741,7 @@ def _parse_vscdb_file(
 
 def _extract_session_from_dict(
     data: dict, workspace_name: str | None, workspace_path: str | None, 
-    edition: str, source_file: str
+    edition: str, source_file: str, session_source: str = "local"
 ) -> ChatSession | None:
     """Extract a chat session from a dictionary structure.
     
@@ -821,6 +882,7 @@ def _extract_session_from_dict(
         responder_username=data.get("responderUsername"),
         source_file_mtime=source_file_mtime,
         source_file_size=source_file_size,
+        session_source=session_source,
     )
 
 
@@ -864,3 +926,89 @@ def scan_chat_sessions(
             )
             for session in sessions:
                 yield session
+
+
+def scan_cloud_sessions(
+    global_storage_paths: list[tuple[str, str]] | None = None,
+) -> Iterator[ChatSession]:
+    """Scan for and parse GitHub cloud sessions from VS Code global storage.
+    
+    Cloud sessions are stored in globalStorage/github.copilot-chat/ and include:
+    - Sessions from GitHub Copilot coding agent (cloud-based autonomous development)
+    - Synced chat sessions that are stored globally rather than per-workspace
+    
+    These sessions may contain:
+    - cloudSessions/ directory with JSON session files
+    - Sessions in SQLite database files
+    - Other session data in the extension's global storage
+
+    Args:
+        global_storage_paths: Optional list of (path, edition) tuples to search.
+                              If None, uses default VS Code global storage paths.
+
+    Yields:
+        ChatSession objects for each found cloud session with session_source='cloud'.
+    """
+    if global_storage_paths is None:
+        global_storage_paths = get_vscode_global_storage_paths()
+    
+    for storage_path, edition in global_storage_paths:
+        storage_dir = Path(storage_path)
+        if not storage_dir.exists():
+            continue
+        
+        # Look for cloudSessions subdirectory (common pattern for cloud sessions)
+        cloud_sessions_dir = storage_dir / "cloudSessions"
+        if cloud_sessions_dir.exists() and cloud_sessions_dir.is_dir():
+            for item in cloud_sessions_dir.iterdir():
+                if item.is_file() and item.suffix == ".json":
+                    session = _parse_chat_session_file(
+                        item, 
+                        workspace_name=None,  # Cloud sessions are not workspace-specific
+                        workspace_path=None,
+                        edition=edition,
+                        session_source="cloud"
+                    )
+                    if session:
+                        yield session
+        
+        # Also scan JSON files directly in the global storage directory
+        for item in storage_dir.iterdir():
+            if item.is_file():
+                if item.suffix == ".json":
+                    # Parse JSON files that might contain session data
+                    session = _parse_chat_session_file(
+                        item,
+                        workspace_name=None,
+                        workspace_path=None,
+                        edition=edition,
+                        session_source="cloud"
+                    )
+                    if session:
+                        yield session
+                elif item.suffix == ".vscdb":
+                    # Parse SQLite database files
+                    sessions = _parse_vscdb_file(
+                        item,
+                        workspace_name=None,
+                        workspace_path=None,
+                        edition=edition,
+                        session_source="cloud"
+                    )
+                    for session in sessions:
+                        yield session
+        
+        # Check for sessions subdirectory
+        sessions_dir = storage_dir / "sessions"
+        if sessions_dir.exists() and sessions_dir.is_dir():
+            for item in sessions_dir.iterdir():
+                if item.is_file() and item.suffix == ".json":
+                    session = _parse_chat_session_file(
+                        item,
+                        workspace_name=None,
+                        workspace_path=None,
+                        edition=edition,
+                        session_source="cloud"
+                    )
+                    if session:
+                        yield session

@@ -61,9 +61,16 @@ copilot-chat-archive scan --verbose
 
 # Force re-import of existing sessions (updates changed sessions)
 copilot-chat-archive scan --force
+
+# Include cloud sessions from GitHub Copilot coding agent
+copilot-chat-archive scan --include-cloud
 ```
 
 **Incremental Updates**: By default, the `scan` command only adds new sessions and skips existing ones. Use `--force` to re-import and update sessions that may have new messages.
+
+**Cloud Sessions**: Use `--include-cloud` to also scan GitHub cloud sessions from VS Code's global storage. These include:
+- Sessions from GitHub Copilot coding agent (cloud-based autonomous development)
+- Synced chat sessions that are stored globally rather than per-workspace
 
 ### 2. Generate HTML Archive
 
@@ -122,6 +129,18 @@ VS Code stores Copilot chat history in workspace-specific storage:
 
 For VS Code Insiders, replace `Code` with `Code - Insiders`.
 
+### Cloud Sessions
+
+GitHub Copilot cloud sessions (including coding agent sessions) are stored in global storage:
+
+| OS | Path |
+|----|------|
+| Windows | `%APPDATA%\Code\User\globalStorage\github.copilot-chat\` |
+| macOS | `~/Library/Application Support/Code/User/globalStorage/github.copilot-chat/` |
+| Linux | `~/.config/Code/User/globalStorage/github.copilot-chat/` |
+
+Use `--include-cloud` with the `scan` command to import these sessions.
+
 ## Database Schema
 
 The SQLite database uses the following schema:
@@ -137,6 +156,7 @@ CREATE TABLE sessions (
     updated_at TEXT,
     source_file TEXT,
     vscode_edition TEXT,
+    session_source TEXT,  -- 'local' or 'cloud'
     imported_at TIMESTAMP
 );
 
