@@ -338,10 +338,14 @@ class TestAdvancedSearchIntegration:
             assert r["workspace_name"] == expected_workspace
 
     def test_duplicate_role_filter_last_wins(self, search_test_db):
-        """Test that duplicate field filters use the last value."""
+        """Test that duplicate field filters use the last value.
+        
+        Test data has assistant messages containing 'Python' (e.g., 
+        'Here's how to create a Python function with def keyword.').
+        """
         # Both role:user and role:assistant in query - last one wins
         results = search_test_db.search("role:user role:assistant Python")
-        assert len(results) > 0
+        assert len(results) > 0, "Expected assistant messages with 'Python' in test data"
         for r in results:
             if r.get("match_type") == "message":
                 assert r["role"] == "assistant"
