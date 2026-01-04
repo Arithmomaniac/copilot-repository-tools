@@ -582,7 +582,8 @@ def _parse_chat_session_file(
                 msg_type = msg.get("type", "")
                 
                 # Check for summarization/compaction event
-                is_summarization = msg_type == "summarization" or msg.get("source") == "system"
+                # Only explicit "summarization" type marks a compaction event
+                is_summarization = msg_type == "summarization"
                 rounds_compacted = None
                 if is_summarization:
                     role = "system"
