@@ -3,10 +3,11 @@
 from datetime import datetime
 from urllib.parse import unquote
 
-from flask import Flask, render_template, request
+from flask import Flask, render_template, request, redirect, url_for, session
 import markdown
 
 from .database import Database
+from .scanner import get_vscode_storage_paths, scan_chat_sessions
 
 
 # Create a reusable markdown converter with extensions
@@ -64,12 +65,14 @@ def _format_timestamp(value: str) -> str:
         return str(value)
 
 
-def create_app(db_path: str, title: str = "Copilot Chat Archive") -> Flask:
+def create_app(db_path: str, title: str = "Copilot Chat Archive", storage_paths: list | None = None) -> Flask:
     """Create and configure the Flask application.
 
     Args:
         db_path: Path to the SQLite database file.
         title: Title for the archive.
+        storage_paths: Optional list of (path, edition) tuples for scanning.
+                       If None, uses default VS Code storage paths.
 
     Returns:
         Configured Flask application.
@@ -79,14 +82,21 @@ def create_app(db_path: str, title: str = "Copilot Chat Archive") -> Flask:
         template_folder="templates",
     )
     
+    # Set a secret key for session support (used for transient flash messages)
+    # A random key is fine here since sessions only contain ephemeral refresh notifications.
+    # Set FLASK_SECRET_KEY environment variable for persistent sessions across restarts.
+    import os
+    app.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(24))
+    
     # Register Jinja2 filters
     app.jinja_env.filters["markdown"] = _markdown_to_html
     app.jinja_env.filters["urldecode"] = _urldecode
     app.jinja_env.filters["format_timestamp"] = _format_timestamp
     
-    # Store database path and title in app config
+    # Store database path, title, and storage paths in app config
     app.config["DB_PATH"] = db_path
     app.config["ARCHIVE_TITLE"] = title
+    app.config["STORAGE_PATHS"] = storage_paths  # None means use default VS Code paths
     
     def _create_snippet(content: str, max_length: int = 150) -> str:
         """Create a snippet from content, normalizing whitespace."""
@@ -105,6 +115,10 @@ def create_app(db_path: str, title: str = "Copilot Chat Archive") -> Flask:
         db = Database(app.config["DB_PATH"])
         query = request.args.get("q", "").strip()
         selected_workspaces = request.args.getlist("workspace")
+        
+        # Get refresh results from session (set after a refresh operation)
+        # Pop to ensure it's only shown once
+        refresh_result = session.pop("refresh_result", None)
         
         search_snippets = {}  # session_id -> list of snippets with message links
         
@@ -152,6 +166,7 @@ def create_app(db_path: str, title: str = "Copilot Chat Archive") -> Flask:
             query=query,
             search_snippets=search_snippets,
             selected_workspaces=selected_workspaces,
+            refresh_result=refresh_result,
         )
     
     @app.route("/session/<session_id>")
@@ -174,6 +189,55 @@ def create_app(db_path: str, title: str = "Copilot Chat Archive") -> Flask:
             session=session,
             message_count=len(session.messages),
         )
+    
+    @app.route("/refresh", methods=["POST"])
+    def refresh_database():
+        """Refresh the database by scanning for new or updated sessions.
+        
+        Supports two modes:
+        - full=false (default): Incremental refresh, only updates changed sessions
+        - full=true: Full rebuild, re-imports all sessions
+        """
+        db = Database(app.config["DB_PATH"])
+        full_refresh = request.form.get("full", "false").lower() == "true"
+        
+        # Get storage paths - use configured paths or default VS Code paths
+        storage_paths = app.config.get("STORAGE_PATHS") or get_vscode_storage_paths()
+        
+        added = 0
+        updated = 0
+        skipped = 0
+        
+        for chat_session in scan_chat_sessions(storage_paths):
+            if full_refresh:
+                # In full mode, update all sessions
+                # Try to add first - if it fails (returns False), session exists and we update
+                if db.add_session(chat_session):
+                    added += 1
+                else:
+                    db.update_session(chat_session)
+                    updated += 1
+            else:
+                # Incremental mode: use needs_update() to determine if session should be updated
+                if db.needs_update(chat_session.session_id, chat_session.source_file_mtime, chat_session.source_file_size):
+                    # Try to add first - if it fails (returns False), session exists and we update
+                    if db.add_session(chat_session):
+                        added += 1
+                    else:
+                        db.update_session(chat_session)
+                        updated += 1
+                else:
+                    skipped += 1
+        
+        # Store refresh result in Flask session for display after redirect
+        session["refresh_result"] = {
+            "added": added,
+            "updated": updated,
+            "skipped": skipped,
+            "mode": "full" if full_refresh else "incremental",
+        }
+        
+        return redirect(url_for("index"))
     
     return app
 
