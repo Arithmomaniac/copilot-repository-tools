@@ -41,7 +41,7 @@ def sample_session():
 
 @pytest.fixture
 def session_with_compaction():
-    """Create a session with a compaction boundary."""
+    """Create a session with a compaction boundary (text-based marker)."""
     return ChatSession(
         session_id="test-session-compaction",
         workspace_name="compaction-project",
@@ -59,6 +59,34 @@ def session_with_compaction():
             ChatMessage(role="assistant", content="Sure, let's continue from where we left off."),
         ],
         created_at="2025-01-15T11:00:00Z",
+        vscode_edition="stable",
+    )
+
+
+@pytest.fixture
+def session_with_explicit_summarization():
+    """Create a session with an explicit summarization event (from VS Code logs)."""
+    return ChatSession(
+        session_id="test-session-explicit-summarization",
+        workspace_name="summarization-project",
+        workspace_path="/home/user/projects/summarization",
+        messages=[
+            ChatMessage(role="user", content="First question about REST APIs"),
+            ChatMessage(role="assistant", content="Here's how to create a REST API."),
+            ChatMessage(role="user", content="Second question about Flask"),
+            ChatMessage(role="assistant", content="Flask is a web framework."),
+            # Explicit summarization event from VS Code Copilot
+            ChatMessage(
+                role="system",
+                content="In this session, the user asked about REST APIs and Flask.",
+                is_summarization=True,
+                rounds_compacted=4,
+            ),
+            # New segment starts after summarization
+            ChatMessage(role="user", content="Now let's add authentication."),
+            ChatMessage(role="assistant", content="Here's how to add auth."),
+        ],
+        created_at="2025-01-15T13:00:00Z",
         vscode_edition="stable",
     )
 
@@ -141,6 +169,34 @@ class TestCompactionBoundary:
         """Test that normal user messages are not compaction boundaries."""
         msg = ChatMessage(role="user", content="How do I write a function?")
         assert _is_compaction_boundary(msg, None) is False
+
+    def test_compaction_with_explicit_summarization_flag(self):
+        """Test that explicit is_summarization flag is detected."""
+        prev_msg = ChatMessage(
+            role="system",
+            content="Summary of the conversation so far...",
+            is_summarization=True,
+            rounds_compacted=4,
+        )
+        # The message AFTER a summarization event should start a new segment
+        current_msg = ChatMessage(role="user", content="Let's continue working.")
+        assert _is_compaction_boundary(current_msg, prev_msg) is True
+
+    def test_compaction_when_current_message_is_summarization(self):
+        """Test that current message being a summarization is detected."""
+        msg = ChatMessage(
+            role="system",
+            content="In this session, the user asked about Python...",
+            is_summarization=True,
+        )
+        assert _is_compaction_boundary(msg, None) is True
+
+    def test_no_compaction_without_summarization_flag(self):
+        """Test that normal system messages without is_summarization don't trigger."""
+        prev_msg = ChatMessage(role="system", content="Some system message")
+        current_msg = ChatMessage(role="user", content="Normal question")
+        # is_summarization defaults to False
+        assert _is_compaction_boundary(current_msg, prev_msg) is False
 
 
 class TestRenderMessage:
@@ -232,6 +288,24 @@ class TestGenerateSegments:
         )
         segments = list(generate_segments(empty_session))
         assert len(segments) == 0
+
+    def test_generate_segments_with_explicit_summarization(self, session_with_explicit_summarization):
+        """Test generating segments when explicit summarization events are present."""
+        segments = list(generate_segments(session_with_explicit_summarization))
+        
+        # Should create 3 segments:
+        # 1. First 4 messages before summarization
+        # 2. The summarization event itself 
+        # 3. Messages after summarization
+        assert len(segments) >= 2
+        
+        # First segment contains the initial conversation
+        assert segments[0].segment_index == 0
+        assert "REST APIs" in segments[0].first_message_content
+        
+        # Later segment(s) contain the post-summarization content
+        last_segment = segments[-1]
+        assert "authentication" in last_segment.first_message_content or "auth" in last_segment.markdown_content
 
 
 class TestDatabaseSegments:

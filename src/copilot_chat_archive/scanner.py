@@ -79,13 +79,15 @@ class ChatMessage:
     Enhanced based on ChatMessage/ChatResponseItem from Arbuzov/copilot-chat-history.
     """
 
-    role: str  # 'user' or 'assistant'
+    role: str  # 'user' or 'assistant' or 'system'
     content: str
     timestamp: str | None = None
     tool_invocations: list[ToolInvocation] = field(default_factory=list)
     file_changes: list[FileChange] = field(default_factory=list)
     command_runs: list[CommandRun] = field(default_factory=list)
     content_blocks: list[ContentBlock] = field(default_factory=list)  # Structured content with kind
+    is_summarization: bool = False  # True if this is a compaction/summarization event
+    rounds_compacted: int | None = None  # Number of rounds compacted (if summarization)
 
 
 @dataclass
@@ -577,7 +579,17 @@ def _parse_chat_session_file(
             else:
                 # Standard message format
                 role = msg.get("role", msg.get("type", "unknown"))
-                if role in ("human", "user"):
+                msg_type = msg.get("type", "")
+                
+                # Check for summarization/compaction event
+                is_summarization = msg_type == "summarization" or msg.get("source") == "system"
+                rounds_compacted = None
+                if is_summarization:
+                    role = "system"
+                    metadata = msg.get("metadata", {})
+                    if isinstance(metadata, dict):
+                        rounds_compacted = metadata.get("roundsCompacted")
+                elif role in ("human", "user"):
                     role = "user"
                 elif role in ("assistant", "copilot", "ai"):
                     role = "assistant"
@@ -603,6 +615,8 @@ def _parse_chat_session_file(
                     tool_invocations=tool_invocations,
                     file_changes=file_changes,
                     command_runs=command_runs,
+                    is_summarization=is_summarization,
+                    rounds_compacted=rounds_compacted,
                 ))
 
     if not messages:

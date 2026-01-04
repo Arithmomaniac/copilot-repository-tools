@@ -41,14 +41,12 @@ def _is_compaction_boundary(message: ChatMessage, prev_message: ChatMessage | No
     """Detect if a message represents a compaction/summarization boundary.
     
     A compaction boundary is detected when:
-    1. The message is from the user (compaction results in a new user prompt)
-    2. There's a sudden context shift (e.g., mentions summarization, fresh start)
-    3. The message contains summary-like markers
+    1. The previous message is an explicit summarization event (has is_summarization=True)
+    2. The message itself is a summarization event
+    3. As a fallback, the message contains text-based summary markers
     
-    Common patterns that indicate compaction:
-    - "Based on the previous conversation..." or similar phrasing
-    - Explicit summary markers
-    - References to prior context being condensed
+    The primary detection uses the explicit `is_summarization` flag which is
+    captured from VS Code Copilot chat logs when compaction events occur.
     
     Args:
         message: The current message to check
@@ -57,12 +55,24 @@ def _is_compaction_boundary(message: ChatMessage, prev_message: ChatMessage | No
     Returns:
         True if this message starts a new segment due to compaction
     """
+    # Primary detection: Check if the previous message was a summarization event
+    # The first message AFTER a summarization starts a new segment
+    if prev_message is not None and prev_message.is_summarization:
+        return True
+    
+    # Also check if the current message itself is a summarization event
+    # (though typically we'd start a new segment after it)
+    if message.is_summarization:
+        return True
+    
+    # Fallback: Text-based heuristics for older log formats
+    # that may not have explicit summarization events
     if message.role != "user":
         return False
     
     content_lower = message.content.lower()
     
-    # Detect summary/compaction markers
+    # Detect summary/compaction markers in text
     compaction_markers = [
         "summarizing the conversation",
         "summary of our discussion",
