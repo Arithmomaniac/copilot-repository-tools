@@ -417,6 +417,78 @@ def export(db: str, output: str):
     "-d",
     default="copilot_chats.db",
     help="Path to SQLite database file.",
+    type=click.Path(exists=True, dir_okay=False),
+)
+@click.option(
+    "--output-dir",
+    "-o",
+    default=".",
+    help="Output directory for markdown files.",
+    type=click.Path(file_okay=False),
+)
+@click.option(
+    "--session-id",
+    "-s",
+    help="Export only a specific session by ID.",
+)
+@click.option("--verbose", "-v", is_flag=True, help="Show verbose output.")
+def export_markdown(db: str, output_dir: str, session_id: str | None, verbose: bool):
+    """Export sessions as markdown files.
+    
+    Each session is exported to a separate markdown file with:
+    - Header block with metadata (session ID, workspace, dates)
+    - Messages separated by horizontal rules
+    - Message numbers and roles as bold headers
+    - Tool call summaries in italics
+    - Thinking block notices in italics (content omitted)
+    """
+    from .markdown_exporter import (
+        session_to_markdown,
+        export_session_to_file,
+        generate_session_filename,
+    )
+
+    database = Database(db)
+    
+    # Create output directory if it doesn't exist
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    
+    if session_id:
+        # Export a specific session
+        session = database.get_session(session_id)
+        if session is None:
+            click.echo(f"Error: Session '{session_id}' not found.", err=True)
+            sys.exit(1)
+        
+        filename = generate_session_filename(session)
+        file_path = output_path / filename
+        export_session_to_file(session, file_path)
+        click.echo(f"Exported: {file_path}")
+    else:
+        # Export all sessions
+        sessions = database.list_sessions()
+        exported = 0
+        
+        for session_info in sessions:
+            session = database.get_session(session_info["session_id"])
+            if session:
+                filename = generate_session_filename(session)
+                file_path = output_path / filename
+                export_session_to_file(session, file_path)
+                exported += 1
+                if verbose:
+                    click.echo(f"  Exported: {file_path}")
+        
+        click.echo(f"\nExported {exported} sessions to {output_path}/")
+
+
+@main.command()
+@click.option(
+    "--db",
+    "-d",
+    default="copilot_chats.db",
+    help="Path to SQLite database file.",
     type=click.Path(dir_okay=False),
 )
 @click.argument("json_file", type=click.Path(exists=True, dir_okay=False))
