@@ -112,12 +112,44 @@ def _format_message_content(message: ChatMessage) -> str:
         for block in message.content_blocks:
             if block.kind == "thinking":
                 continue  # Skip thinking blocks in markdown export
-            parts.append(block.content)
+            elif block.kind == "toolInvocation":
+                # Italicize tool invocation messages (only if non-empty)
+                if block.content.strip():
+                    parts.append(f"*{block.content.strip()}*")
+            else:
+                # Only add non-empty text blocks
+                if block.content.strip():
+                    parts.append(block.content)
     else:
         # Fall back to flat content
-        parts.append(message.content)
+        if message.content.strip():
+            parts.append(message.content)
     
     content = "\n\n".join(parts)
+    
+    # Post-process to normalize formatting patterns
+    import re
+    
+    # "*Creating [](file://...)*" -> "*Creating filename*" (extract leaf name, keep italics, remove link)
+    content = re.sub(
+        r'\*Creating \[\]\(file://[^)]+/([^/)]+)\)\*',
+        r'*Creating \1*',
+        content
+    )
+    
+    # "*Reading [](file://...)*" -> "*Reading filename*" (extract leaf name, keep italics, remove link)
+    content = re.sub(
+        r'\*Reading \[\]\(file://[^)]+/([^/)]+)\)\*',
+        r'*Reading \1*',
+        content
+    )
+    
+    # "*Edited `filename`*" -> "*Edited filename*" (remove backticks within italics)
+    content = re.sub(
+        r'\*Edited `([^`]+)`\*',
+        r'*Edited \1*',
+        content
+    )
     
     # Add thinking notice if there was thinking content
     if had_thinking:

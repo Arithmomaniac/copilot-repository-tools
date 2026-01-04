@@ -33,6 +33,39 @@ def _markdown_to_html(text: str) -> str:
     if not text:
         return ""
     
+    # Replace Windows line endings with Unix ones for consistent processing
+    text = text.replace('\r\n', '\n')
+    
+    # Replace common VS Code Copilot UI patterns with proper markdown
+    import re
+    
+    # "Using "Tool Name"" -> _Using "Tool Name"_
+    text = re.sub(r'^(Using ["""][^"""]+["""])$', r'_\1_', text, flags=re.MULTILINE)
+    
+    # "_Creating [](file://...)_" -> "_Creating filename_" (extract leaf name within italics)
+    text = re.sub(r'_Creating \[\]\(file://[^)]+/([^/)]+)\)_', r'_Creating \1_', text)
+    
+    # "_Reading [](file://...)_" -> "_Reading filename_" (extract leaf name within italics)
+    text = re.sub(r'_Reading \[\]\(file://[^)]+/([^/)]+)\)_', r'_Reading \1_', text)
+    
+    # "_Edited `filename`_" -> "_Edited filename_" (remove backticks within italics)
+    text = re.sub(r'_Edited `([^`]+)`_', r'_Edited \1_', text)
+    
+    # "Created [](file://...)" -> Better link text
+    text = re.sub(r'Created \[\]\((file://[^)]+)\)', r'Created file: [\1](\1)', text)
+    
+    # "Read [](file://...)" -> Better link text  
+    text = re.sub(r'Read \[\]\((file://[^)]+)\)', r'Read file: [\1](\1)', text)
+    
+    # "Ran terminal command:" -> _Ran terminal command:_
+    text = re.sub(r'^(Ran terminal command:.*)$', r'_\1_', text, flags=re.MULTILINE)
+    
+    # "Let me [action]:" or "Now let me [action]:" -> _Let me [action]:_
+    text = re.sub(r'^((?:Now )?[Ll]et me [^:]+:)$', r'_\1_', text, flags=re.MULTILINE)
+    
+    # "Made changes." at end -> _Made changes._
+    text = re.sub(r'^(Made changes\.)$', r'_\1_', text, flags=re.MULTILINE)
+    
     # Reset the markdown converter state for each conversion
     _md_converter.reset()
     
