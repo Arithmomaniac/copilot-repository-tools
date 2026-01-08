@@ -7,7 +7,7 @@ import pytest
 
 from copilot_chat_archive.database import Database
 from copilot_chat_archive.scanner import ChatMessage, ChatSession
-from copilot_chat_archive.webapp import create_app, _markdown_to_html
+from copilot_chat_archive.webapp import create_app, _markdown_to_html, _parse_diff_stats
 
 
 @pytest.fixture
@@ -74,6 +74,61 @@ class TestMarkdownToHtml:
         assert "<pre>" in result
         assert "<code" in result
         assert "print" in result
+
+
+class TestParseDiffStats:
+    """Tests for the diff statistics parser."""
+
+    def test_empty_diff(self):
+        """Test parsing empty diff returns zeros."""
+        result = _parse_diff_stats("")
+        assert result == {"additions": 0, "deletions": 0}
+
+    def test_none_diff(self):
+        """Test parsing None diff returns zeros."""
+        result = _parse_diff_stats(None)
+        assert result == {"additions": 0, "deletions": 0}
+
+    def test_additions_only(self):
+        """Test parsing diff with only additions."""
+        diff = """--- a/file.py
++++ b/file.py
+@@ -1,3 +1,5 @@
+ existing line
++new line 1
++new line 2
+ another existing"""
+        result = _parse_diff_stats(diff)
+        assert result["additions"] == 2
+        assert result["deletions"] == 0
+
+    def test_deletions_only(self):
+        """Test parsing diff with only deletions."""
+        diff = """--- a/file.py
++++ b/file.py
+@@ -1,5 +1,3 @@
+ existing line
+-removed line 1
+-removed line 2
+ another existing"""
+        result = _parse_diff_stats(diff)
+        assert result["additions"] == 0
+        assert result["deletions"] == 2
+
+    def test_mixed_changes(self):
+        """Test parsing diff with both additions and deletions."""
+        diff = """--- a/file.py
++++ b/file.py
+@@ -1,4 +1,4 @@
+ existing line
+-old code
++new code
++another new line
+-old line removed
+ final line"""
+        result = _parse_diff_stats(diff)
+        assert result["additions"] == 2
+        assert result["deletions"] == 2
 
 
 class TestWebappRoutes:
@@ -143,6 +198,7 @@ class TestCreateApp:
         assert "markdown" in app.jinja_env.filters
         assert "urldecode" in app.jinja_env.filters
         assert "format_timestamp" in app.jinja_env.filters
+        assert "parse_diff_stats" in app.jinja_env.filters
 
 
 class TestEmptyDatabase:

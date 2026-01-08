@@ -98,6 +98,33 @@ def _format_timestamp(value: str) -> str:
         return str(value)
 
 
+def _parse_diff_stats(diff: str) -> dict:
+    """Parse a diff string and return addition/deletion line counts.
+    
+    Args:
+        diff: The diff string in unified diff format.
+        
+    Returns:
+        Dictionary with 'additions' and 'deletions' counts.
+    """
+    if not diff:
+        return {"additions": 0, "deletions": 0}
+    
+    additions = 0
+    deletions = 0
+    
+    for line in diff.split('\n'):
+        # Skip diff headers
+        if line.startswith('+++') or line.startswith('---'):
+            continue
+        if line.startswith('+'):
+            additions += 1
+        elif line.startswith('-'):
+            deletions += 1
+    
+    return {"additions": additions, "deletions": deletions}
+
+
 def create_app(db_path: str, title: str = "Copilot Chat Archive", storage_paths: list | None = None) -> Flask:
     """Create and configure the Flask application.
 
@@ -125,6 +152,7 @@ def create_app(db_path: str, title: str = "Copilot Chat Archive", storage_paths:
     app.jinja_env.filters["markdown"] = _markdown_to_html
     app.jinja_env.filters["urldecode"] = _urldecode
     app.jinja_env.filters["format_timestamp"] = _format_timestamp
+    app.jinja_env.filters["parse_diff_stats"] = _parse_diff_stats
     
     # Store database path, title, and storage paths in app config
     app.config["DB_PATH"] = db_path

@@ -470,6 +470,160 @@ pre.command-output {
     overflow: auto;
 }
 
+/* Terminal-style command display */
+.terminal-command {
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    margin-bottom: 12px;
+    background-color: var(--bg-tertiary);
+    overflow: hidden;
+}
+
+.terminal-command:last-child {
+    margin-bottom: 0;
+}
+
+.terminal-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px;
+    background-color: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+}
+
+.terminal-icon {
+    font-size: 1.1em;
+}
+
+.terminal-icon.success {
+    color: #1a7f37;
+}
+
+.terminal-icon.error, .terminal-icon.failed {
+    color: #cf222e;
+}
+
+.terminal-icon.pending, .terminal-icon.running {
+    color: #9a6700;
+}
+
+@media (prefers-color-scheme: dark) {
+    .terminal-icon.success {
+        color: #3fb950;
+    }
+    .terminal-icon.error, .terminal-icon.failed {
+        color: #f85149;
+    }
+    .terminal-icon.pending, .terminal-icon.running {
+        color: #d29922;
+    }
+}
+
+.terminal-command-line {
+    flex: 1;
+    font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+    font-size: 0.9em;
+    word-break: break-all;
+}
+
+.terminal-output-toggle {
+    margin: 0;
+}
+
+.terminal-output-toggle summary {
+    padding: 8px 14px;
+    cursor: pointer;
+    font-size: 0.85em;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    user-select: none;
+}
+
+.terminal-output-toggle summary:hover {
+    background-color: var(--border-color);
+}
+
+.terminal-output-content {
+    padding: 12px 14px;
+    border-top: 1px solid var(--border-color);
+    background-color: var(--code-bg);
+    font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+    font-size: 0.85em;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 300px;
+    overflow: auto;
+}
+
+/* File change statistics */
+.file-stats {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+    font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+    font-size: 0.8em;
+}
+
+.file-stat-add {
+    color: #1a7f37;
+}
+
+.file-stat-del {
+    color: #cf222e;
+}
+
+@media (prefers-color-scheme: dark) {
+    .file-stat-add {
+        color: #3fb950;
+    }
+    .file-stat-del {
+        color: #f85149;
+    }
+}
+
+/* Collapsible code blocks */
+.code-collapse-wrapper {
+    position: relative;
+}
+
+.code-collapse-wrapper.collapsed pre {
+    max-height: 400px;
+    overflow: hidden;
+}
+
+.code-collapse-wrapper.collapsed::after {
+    content: '';
+    position: absolute;
+    bottom: 32px;
+    left: 0;
+    right: 0;
+    height: 60px;
+    background: linear-gradient(transparent, var(--code-bg));
+    pointer-events: none;
+}
+
+.code-toggle-btn {
+    display: block;
+    width: 100%;
+    padding: 8px;
+    border: none;
+    border-radius: 0 0 6px 6px;
+    background-color: var(--bg-tertiary);
+    color: var(--link-color);
+    font-size: 0.85em;
+    cursor: pointer;
+    text-align: center;
+    margin-top: -1px;
+}
+
+.code-toggle-btn:hover {
+    background-color: var(--border-color);
+}
+
 /* Tables */
 .message-content table {
     border-collapse: collapse;
@@ -631,9 +785,16 @@ footer a {
                         {% for change in message.file_changes %}
                         <div class="file-change">
                             <div class="file-header">
-                                <strong>{{ change.path }}</strong>
+                                <strong>{{ change.path.split('/')[-1] if '/' in change.path else change.path.split('\\')[-1] if '\\' in change.path else change.path }}</strong>
                                 {% if change.language_id %}
                                 <span class="language-badge">{{ change.language_id }}</span>
+                                {% endif %}
+                                {% if change.diff %}
+                                {% set stats = change.diff | parse_diff_stats %}
+                                <span class="file-stats">
+                                    {% if stats.additions > 0 %}<span class="file-stat-add">+{{ stats.additions }}</span>{% endif %}
+                                    {% if stats.deletions > 0 %}<span class="file-stat-del">-{{ stats.deletions }}</span>{% endif %}
+                                </span>
                                 {% endif %}
                             </div>
                             {% if change.explanation %}
@@ -650,25 +811,37 @@ footer a {
 
                 {% if message.command_runs %}
                 <p class="tool-summary"><em>Ran {{ message.command_runs | length }} command{{ 's' if message.command_runs | length > 1 else '' }}</em></p>
-                <details class="collapsible command-runs">
+                <details class="collapsible command-runs" open>
                     <summary aria-label="Toggle command runs section">
-                        <span class="collapsible-icon" aria-hidden="true">▶</span>
+                        <span class="collapsible-icon" aria-hidden="true">▼</span>
                         Command Runs ({{ message.command_runs | length }})
                     </summary>
                     <div class="collapsible-content">
                         {% for cmd in message.command_runs %}
-                        <div class="command-run">
-                            <div class="command-header">
-                                {% if cmd.title %}
-                                <strong>{{ cmd.title }}</strong>
-                                {% endif %}
-                                <code class="command-text">{{ cmd.command }}</code>
+                        <div class="terminal-command">
+                            <div class="terminal-header">
+                                <span class="terminal-icon {{ cmd.status or 'pending' }}" aria-hidden="true">
+                                    {%- if cmd.status == 'success' or cmd.status == 'completed' -%}
+                                        ✓
+                                    {%- elif cmd.status == 'error' or cmd.status == 'failed' -%}
+                                        ✗
+                                    {%- else -%}
+                                        ●
+                                    {%- endif -%}
+                                </span>
+                                <span class="terminal-command-line">{{ cmd.command }}</span>
                                 {% if cmd.status %}
                                 <span class="status-badge {{ cmd.status }}">{{ cmd.status }}</span>
                                 {% endif %}
                             </div>
                             {% if cmd.output %}
-                            <pre class="command-output"><code>{{ cmd.output }}</code></pre>
+                            <details class="terminal-output-toggle">
+                                <summary>
+                                    <span class="collapsible-icon" aria-hidden="true">▶</span>
+                                    Show output
+                                </summary>
+                                <div class="terminal-output-content">{{ cmd.output }}</div>
+                            </details>
                             {% endif %}
                         </div>
                         {% endfor %}
@@ -698,13 +871,43 @@ footer a {
             }
 
             // Toggle collapsible icon on details open/close
-            document.querySelectorAll('details.collapsible').forEach(details => {
+            document.querySelectorAll('details.collapsible, details.terminal-output-toggle').forEach(details => {
                 details.addEventListener('toggle', function() {
                     const icon = this.querySelector('.collapsible-icon');
                     if (icon) {
                         icon.textContent = this.open ? '▼' : '▶';
                     }
                 });
+            });
+
+            // Auto-collapse long code blocks (more than 20 lines)
+            const CODE_LINE_THRESHOLD = 20;
+            document.querySelectorAll('.message-content pre').forEach(function(pre) {
+                const code = pre.querySelector('code') || pre;
+                const text = code.textContent || '';
+                const lineCount = (text.match(/\n/g) || []).length + 1;
+
+                if (lineCount > CODE_LINE_THRESHOLD) {
+                    // Wrap the pre in a collapse wrapper
+                    const wrapper = document.createElement('div');
+                    wrapper.className = 'code-collapse-wrapper collapsed';
+                    pre.parentNode.insertBefore(wrapper, pre);
+                    wrapper.appendChild(pre);
+
+                    // Add toggle button
+                    const btn = document.createElement('button');
+                    btn.className = 'code-toggle-btn';
+                    btn.textContent = 'Show more (' + lineCount + ' lines)';
+                    btn.setAttribute('type', 'button');
+                    wrapper.appendChild(btn);
+
+                    btn.addEventListener('click', function() {
+                        const isCollapsed = wrapper.classList.toggle('collapsed');
+                        btn.textContent = isCollapsed 
+                            ? 'Show more (' + lineCount + ' lines)' 
+                            : 'Show less';
+                    });
+                }
             });
         });
     </script>
