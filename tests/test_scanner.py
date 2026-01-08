@@ -2,6 +2,7 @@
 
 import json
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -9,9 +10,17 @@ import pytest
 from copilot_chat_archive.scanner import (
     ChatMessage,
     ChatSession,
+    ContentBlock,
+    FileChange,
+    ToolInvocation,
     find_copilot_chat_dirs,
     scan_chat_sessions,
+    _extract_inline_reference_name,
+    _extract_edit_group_text,
+    _parse_tool_invocation_serialized,
+    _merge_content_blocks,
 )
+from conftest import requires_sample_files
 
 
 @pytest.fixture
@@ -208,3 +217,214 @@ class TestToolInvocationsAndFileChanges:
         assert session.custom_title == "My Important Chat"
         assert session.requester_username == "user"
         assert session.responder_username == "copilot"
+
+class TestResponseItemKinds:
+    """Tests for parsing different response item kinds from VS Code Copilot Chat."""
+
+    @pytest.mark.parametrize("kind,item,expected_type", [
+        # inlineReference with name
+        ("inlineReference", {"kind": "inlineReference", "name": "test.py"}, str),
+        # inlineReference with nested path
+        ("inlineReference", {"kind": "inlineReference", "inlineReference": {"path": "/src/test.py"}}, str),
+        # textEditGroup with dict URI
+        ("textEditGroup", {"kind": "textEditGroup", "uri": {"path": "/src/file.ts", "scheme": "file"}}, str),
+        # textEditGroup with string URI
+        ("textEditGroup", {"kind": "textEditGroup", "uri": "file:///src/file.ts"}, str),
+        # codeblockUri
+        ("codeblockUri", {"kind": "codeblockUri", "uri": {"fsPath": "c:\\src\\file.py"}}, str),
+        # toolInvocationSerialized
+        ("toolInvocationSerialized", {"kind": "toolInvocationSerialized", "toolId": "run_command", "isComplete": True}, ToolInvocation),
+    ])
+    def test_response_item_extraction(self, kind, item, expected_type):
+        """Test that different response item kinds are correctly parsed."""
+        if kind == "inlineReference":
+            result = _extract_inline_reference_name(item)
+            assert result is not None
+            assert isinstance(result, expected_type)
+            assert "`" in result  # Should be backtick-formatted
+        elif kind in ("textEditGroup", "codeblockUri", "notebookEditGroup"):
+            result = _extract_edit_group_text(item)
+            assert result is not None
+            assert isinstance(result, expected_type)
+            assert "`" in result  # Should contain backticked filename
+        elif kind == "toolInvocationSerialized":
+            result = _parse_tool_invocation_serialized(item)
+            assert result is not None
+            assert isinstance(result, expected_type)
+            assert result.name == "run_command"
+            assert result.status == "completed"
+
+    def test_nested_uri_object_handling(self):
+        """Test that nested URI objects (common in VS Code data) are correctly parsed."""
+        # URI as dict with $mid (VS Code internal format)
+        item = {
+            "kind": "textEditGroup",
+            "uri": {
+                "$mid": 1,
+                "path": "/c:/Users/test/project/src/main.py",
+                "scheme": "file",
+                "fsPath": "c:\\Users\\test\\project\\src\\main.py"
+            }
+        }
+        result = _extract_edit_group_text(item)
+        assert result is not None
+        assert "main.py" in result
+
+    def test_uri_string_handling(self):
+        """Test that URI strings are correctly parsed."""
+        item = {
+            "kind": "textEditGroup",
+            "uri": "file:///c:/Users/test/project/src/main.py"
+        }
+        result = _extract_edit_group_text(item)
+        assert result is not None
+        assert "main.py" in result
+
+    def test_merge_content_blocks_keeps_thinking_separate(self):
+        """Test that thinking blocks are not merged with text blocks."""
+        blocks = [
+            ("text", "Hello"),
+            ("thinking", "Let me think..."),
+            ("text", "World"),
+        ]
+        result = _merge_content_blocks(blocks)
+        assert len(result) == 3
+        assert result[0].kind == "text"
+        assert result[1].kind == "thinking"
+        assert result[2].kind == "text"
+
+    def test_merge_content_blocks_merges_consecutive_text(self):
+        """Test that consecutive text blocks are merged."""
+        blocks = [
+            ("text", "Hello"),
+            ("text", "World"),
+            ("text", "!"),
+        ]
+        result = _merge_content_blocks(blocks)
+        assert len(result) == 1
+        assert result[0].kind == "text"
+        assert "Hello" in result[0].content
+        assert "World" in result[0].content
+
+    def test_tool_invocation_blocks_stay_separate(self):
+        """Test that toolInvocation blocks are never merged."""
+        blocks = [
+            ("text", "Starting..."),
+            ("toolInvocation", "Running command"),
+            ("toolInvocation", "Reading file"),
+            ("text", "Done"),
+        ]
+        result = _merge_content_blocks(blocks)
+        assert len(result) == 4
+        assert result[1].kind == "toolInvocation"
+        assert result[2].kind == "toolInvocation"
+
+
+class TestSampleFilesParsing:
+    """Tests using real sample files to validate parsing logic."""
+
+    @requires_sample_files
+    def test_sample_session_parses_successfully(self, sample_session_data):
+        """Test that sample session JSON can be parsed without errors."""
+        assert sample_session_data is not None
+        assert isinstance(sample_session_data, dict)
+
+    @requires_sample_files
+    def test_sample_session_has_expected_structure(self, sample_session_data):
+        """Test that sample session has the expected top-level structure."""
+        # Should have version field
+        assert "version" in sample_session_data
+        # Should have requests array (VS Code Copilot Chat format)
+        assert "requests" in sample_session_data
+        assert isinstance(sample_session_data["requests"], list)
+        # Should have at least one request
+        assert len(sample_session_data["requests"]) > 0
+
+    @requires_sample_files
+    def test_sample_session_requests_have_messages(self, sample_session_data):
+        """Test that requests in sample session have message and response."""
+        for request in sample_session_data["requests"]:
+            # Each request should have a message with text
+            assert "message" in request
+            assert isinstance(request["message"], dict)
+            # Each request should have a response array
+            assert "response" in request
+            assert isinstance(request["response"], list)
+
+    @requires_sample_files
+    def test_sample_session_scan_integration(self, sample_session_path, tmp_path):
+        """Test that sample session can be scanned using the scanner module."""
+        from copilot_chat_archive.scanner import _parse_chat_session_file
+
+        session = _parse_chat_session_file(
+            sample_session_path,
+            workspace_name="test-workspace",
+            workspace_path=str(tmp_path),
+            edition="stable"
+        )
+        assert session is not None
+        assert isinstance(session, ChatSession)
+        assert len(session.messages) > 0
+        # Should have both user and assistant messages
+        roles = {msg.role for msg in session.messages}
+        assert "user" in roles or "assistant" in roles
+
+
+class TestPerformanceBenchmarks:
+    """Performance tests for large session parsing."""
+
+    @requires_sample_files
+    def test_large_session_parsing_time(self, all_sample_session_paths):
+        """Test that large session files parse within acceptable time limits."""
+        import orjson
+        from copilot_chat_archive.scanner import _parse_chat_session_file
+
+        for sample_path in all_sample_session_paths:
+            file_size = sample_path.stat().st_size
+            
+            # Only benchmark files larger than 100KB
+            if file_size < 100 * 1024:
+                continue
+
+            start_time = time.perf_counter()
+            
+            # Parse the file
+            session = _parse_chat_session_file(
+                sample_path,
+                workspace_name="benchmark",
+                workspace_path="/tmp/benchmark",
+                edition="stable"
+            )
+            
+            elapsed_time = time.perf_counter() - start_time
+            
+            # Log performance metrics (useful for baseline establishment)
+            file_size_mb = file_size / (1024 * 1024)
+            print(f"\nParsed {sample_path.name}: {file_size_mb:.2f}MB in {elapsed_time:.3f}s")
+            
+            # Assert parsing succeeded
+            assert session is not None
+            
+            # Assert reasonable time limit: 5 seconds per MB as baseline
+            max_time = max(5.0, file_size_mb * 5)
+            assert elapsed_time < max_time, f"Parsing took {elapsed_time:.2f}s, expected < {max_time:.2f}s"
+
+    @requires_sample_files
+    def test_orjson_parse_performance(self, sample_session_path):
+        """Test raw orjson parsing performance."""
+        import orjson
+
+        file_size = sample_session_path.stat().st_size
+        
+        start_time = time.perf_counter()
+        with open(sample_session_path, "rb") as f:
+            data = orjson.loads(f.read())
+        elapsed_time = time.perf_counter() - start_time
+        
+        file_size_mb = file_size / (1024 * 1024)
+        print(f"\norjson parsed {sample_session_path.name}: {file_size_mb:.2f}MB in {elapsed_time:.3f}s")
+        
+        assert data is not None
+        # orjson should be very fast - less than 1 second per MB
+        max_time = max(1.0, file_size_mb * 1)
+        assert elapsed_time < max_time

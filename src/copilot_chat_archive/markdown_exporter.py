@@ -100,18 +100,31 @@ def _had_thinking_content(message: ChatMessage) -> bool:
     return any(block.kind == "thinking" for block in message.content_blocks)
 
 
-def _format_message_content(message: ChatMessage) -> str:
-    """Format message content, excluding thinking blocks but noting them."""
+def _format_message_content(message: ChatMessage, include_thinking: bool = False) -> str:
+    """Format message content, optionally including thinking blocks.
+    
+    Args:
+        message: The ChatMessage to format.
+        include_thinking: If True, include thinking block content. If False, show
+                         a notice that thinking occurred but omit the content.
+    
+    Returns:
+        Formatted message content as a string.
+    """
     parts = []
     
     # Check if there was thinking content
     had_thinking = _had_thinking_content(message)
     
     if message.content_blocks:
-        # Use structured content blocks (excluding thinking)
+        # Use structured content blocks
         for block in message.content_blocks:
             if block.kind == "thinking":
-                continue  # Skip thinking blocks in markdown export
+                if include_thinking:
+                    # Include the actual thinking content in a blockquote
+                    parts.append(f"> **Thinking:**\n> {block.content.replace(chr(10), chr(10) + '> ')}")
+                # If not including, we'll add a notice at the start
+                continue
             elif block.kind == "toolInvocation":
                 # Italicize tool invocation messages (only if non-empty)
                 if block.content.strip():
@@ -151,18 +164,20 @@ def _format_message_content(message: ChatMessage) -> str:
         content
     )
     
-    # Add thinking notice if there was thinking content
-    if had_thinking:
+    # Add thinking notice if there was thinking content (and not already included)
+    if had_thinking and not include_thinking:
         content = "*[Was thinking...]*\n\n" + content
     
     return content
 
 
-def session_to_markdown(session: ChatSession) -> str:
+def session_to_markdown(session: ChatSession, include_thinking: bool = False) -> str:
     """Convert a chat session to markdown format.
     
     Args:
         session: The ChatSession to convert.
+        include_thinking: If True, include thinking block content. If False (default),
+                         show a notice that thinking occurred but omit the content.
         
     Returns:
         Markdown string representation of the session.
@@ -226,8 +241,8 @@ def session_to_markdown(session: ChatSession) -> str:
             lines.append(f"*{_format_timestamp(message.timestamp)}*")
             lines.append("")
         
-        # Content (excluding thinking blocks)
-        content = _format_message_content(message)
+        # Content (optionally including thinking blocks)
+        content = _format_message_content(message, include_thinking=include_thinking)
         lines.append(content)
         
         # Tool invocations summary (in italics)
@@ -252,14 +267,15 @@ def session_to_markdown(session: ChatSession) -> str:
     return "\n".join(lines)
 
 
-def export_session_to_file(session: ChatSession, output_path: Path | str) -> None:
+def export_session_to_file(session: ChatSession, output_path: Path | str, include_thinking: bool = False) -> None:
     """Export a single session to a markdown file.
     
     Args:
         session: The ChatSession to export.
         output_path: Path to the output markdown file.
+        include_thinking: If True, include thinking block content in the export.
     """
-    markdown = session_to_markdown(session)
+    markdown = session_to_markdown(session, include_thinking=include_thinking)
     Path(output_path).write_text(markdown, encoding="utf-8")
 
 

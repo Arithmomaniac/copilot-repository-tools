@@ -166,6 +166,22 @@ class TestSessionToMarkdown:
         # Non-thinking content should be present
         assert "Here's my answer after thinking." in markdown
 
+    def test_thinking_blocks_included_when_requested(self, session_with_thinking):
+        """Test that thinking blocks are included when include_thinking=True."""
+        markdown = session_to_markdown(session_with_thinking, include_thinking=True)
+        
+        # Thinking content should be included
+        assert "Let me think about this" in markdown
+        
+        # Should be in a blockquote with "Thinking:" label
+        assert "> **Thinking:**" in markdown
+        
+        # Should NOT have the "[Was thinking...]" notice
+        assert "*[Was thinking...]*" not in markdown
+        
+        # Non-thinking content should also be present
+        assert "Here's my answer after thinking." in markdown
+
     def test_tool_summary_in_italics(self, session_with_tools):
         """Test that tool summaries are in italics."""
         markdown = session_to_markdown(session_with_tools)
