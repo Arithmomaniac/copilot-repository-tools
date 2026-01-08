@@ -70,5 +70,8 @@ venv.bak/
 archive/
 output/
 
+# Sample files with sensitive data
+sample_files/
+
 # macOS
 .DS_Store
