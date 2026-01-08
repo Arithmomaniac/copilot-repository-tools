@@ -7,7 +7,7 @@ import pytest
 
 from copilot_chat_archive.database import Database
 from copilot_chat_archive.scanner import ChatMessage, ChatSession
-from copilot_chat_archive.webapp import create_app, _markdown_to_html, _parse_diff_stats
+from copilot_chat_archive.webapp import create_app, _markdown_to_html, _parse_diff_stats, _extract_filename
 
 
 @pytest.fixture
@@ -130,6 +130,44 @@ class TestParseDiffStats:
         assert result["additions"] == 2
         assert result["deletions"] == 2
 
+    def test_skips_hunk_headers(self):
+        """Test that hunk headers (@@ lines) are not counted as deletions."""
+        diff = """--- a/file.py
++++ b/file.py
+@@ -1,5 +1,6 @@
+ line 1
++added line
+@@ -10,3 +11,4 @@
+ line 10
++another added"""
+        result = _parse_diff_stats(diff)
+        # Should have 2 additions, 0 deletions (hunk headers should be skipped)
+        assert result["additions"] == 2
+        assert result["deletions"] == 0
+
+
+class TestExtractFilename:
+    """Tests for the filename extractor."""
+
+    def test_empty_path(self):
+        """Test extracting from empty path."""
+        assert _extract_filename("") == ""
+        assert _extract_filename(None) == ""
+
+    def test_unix_path(self):
+        """Test extracting from Unix-style path."""
+        assert _extract_filename("/home/user/project/file.py") == "file.py"
+        assert _extract_filename("src/main.py") == "main.py"
+
+    def test_windows_path(self):
+        """Test extracting from Windows-style path."""
+        assert _extract_filename("C:\\Users\\user\\file.py") == "file.py"
+        assert _extract_filename("src\\main.py") == "main.py"
+
+    def test_filename_only(self):
+        """Test extracting when input is just a filename."""
+        assert _extract_filename("file.py") == "file.py"
+
 
 class TestWebappRoutes:
     """Tests for the webapp routes."""
@@ -199,6 +237,7 @@ class TestCreateApp:
         assert "urldecode" in app.jinja_env.filters
         assert "format_timestamp" in app.jinja_env.filters
         assert "parse_diff_stats" in app.jinja_env.filters
+        assert "extract_filename" in app.jinja_env.filters
 
 
 class TestEmptyDatabase:

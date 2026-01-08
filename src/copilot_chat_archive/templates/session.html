@@ -785,7 +785,7 @@ footer a {
                         {% for change in message.file_changes %}
                         <div class="file-change">
                             <div class="file-header">
-                                <strong>{{ change.path.split('/')[-1] if '/' in change.path else change.path.split('\\')[-1] if '\\' in change.path else change.path }}</strong>
+                                <strong>{{ change.path | extract_filename }}</strong>
                                 {% if change.language_id %}
                                 <span class="language-badge">{{ change.language_id }}</span>
                                 {% endif %}
@@ -885,7 +885,8 @@ footer a {
             document.querySelectorAll('.message-content pre').forEach(function(pre) {
                 const code = pre.querySelector('code') || pre;
                 const text = code.textContent || '';
-                const lineCount = (text.match(/\n/g) || []).length + 1;
+                // Count lines properly: empty string = 0 lines, otherwise count newlines + 1
+                const lineCount = text.length === 0 ? 0 : (text.match(/\n/g) || []).length + 1;
 
                 if (lineCount > CODE_LINE_THRESHOLD) {
                     // Wrap the pre in a collapse wrapper

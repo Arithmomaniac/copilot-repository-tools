@@ -114,8 +114,8 @@ def _parse_diff_stats(diff: str) -> dict:
     deletions = 0
     
     for line in diff.split('\n'):
-        # Skip diff headers
-        if line.startswith('+++') or line.startswith('---'):
+        # Skip diff headers and hunk headers
+        if line.startswith('+++') or line.startswith('---') or line.startswith('@@'):
             continue
         if line.startswith('+'):
             additions += 1
@@ -123,6 +123,25 @@ def _parse_diff_stats(diff: str) -> dict:
             deletions += 1
     
     return {"additions": additions, "deletions": deletions}
+
+
+def _extract_filename(path: str) -> str:
+    """Extract the filename from a file path.
+    
+    Args:
+        path: Full file path (Unix or Windows style).
+        
+    Returns:
+        The filename portion of the path.
+    """
+    if not path:
+        return ""
+    # Handle both Unix and Windows path separators
+    if '/' in path:
+        return path.split('/')[-1]
+    if '\\' in path:
+        return path.split('\\')[-1]
+    return path
 
 
 def create_app(db_path: str, title: str = "Copilot Chat Archive", storage_paths: list | None = None) -> Flask:
@@ -153,6 +172,7 @@ def create_app(db_path: str, title: str = "Copilot Chat Archive", storage_paths:
     app.jinja_env.filters["urldecode"] = _urldecode
     app.jinja_env.filters["format_timestamp"] = _format_timestamp
     app.jinja_env.filters["parse_diff_stats"] = _parse_diff_stats
+    app.jinja_env.filters["extract_filename"] = _extract_filename
     
     # Store database path, title, and storage paths in app config
     app.config["DB_PATH"] = db_path
