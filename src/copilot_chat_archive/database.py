@@ -521,38 +521,47 @@ class Database:
     def get_messages_markdown(
         self,
         session_id: str,
-        message_indices: list[int] | None = None,
+        start: int | None = None,
+        end: int | None = None,
+        include_diffs: bool = True,
+        include_tool_inputs: bool = True,
     ) -> str:
-        """Get cached markdown for specific messages or all messages in a session.
+        """Get markdown for specific messages or all messages in a session.
 
         Args:
             session_id: The session ID to get messages from.
-            message_indices: Optional list of 1-based message indices to include.
-                           If None, includes all messages.
+            start: Optional 1-based start message index (inclusive).
+            end: Optional 1-based end message index (inclusive).
+            include_diffs: Whether to include file diffs in the markdown.
+            include_tool_inputs: Whether to include tool inputs in the markdown.
 
         Returns:
             Combined markdown string for the selected messages.
         """
+        from .markdown_exporter import message_to_markdown
+        
         with self._get_connection() as conn:
             cursor = conn.cursor()
-
-            if message_indices:
-                # Convert to 0-based indices for database query
-                zero_based = [i - 1 for i in message_indices if i > 0]
-                placeholders = ",".join("?" * len(zero_based))
+            
+            # Build query based on range
+            if start is not None or end is not None:
+                # Convert to 0-based indices
+                start_idx = (start - 1) if start else 0
+                end_idx = (end - 1) if end else 999999  # Large number for "no limit"
+                
                 cursor.execute(
-                    f"""
-                    SELECT cached_markdown 
+                    """
+                    SELECT id, role, content, timestamp, cached_markdown, message_index
                     FROM messages 
-                    WHERE session_id = ? AND message_index IN ({placeholders})
+                    WHERE session_id = ? AND message_index >= ? AND message_index <= ?
                     ORDER BY message_index
                     """,
-                    [session_id] + zero_based,
+                    (session_id, start_idx, end_idx),
                 )
             else:
                 cursor.execute(
                     """
-                    SELECT cached_markdown 
+                    SELECT id, role, content, timestamp, cached_markdown, message_index
                     FROM messages 
                     WHERE session_id = ? 
                     ORDER BY message_index
@@ -562,9 +571,100 @@ class Database:
 
             rows = cursor.fetchall()
             markdown_parts = []
-            for row in rows:
-                md = row[0]
-                if md:
+            
+            # If both options are enabled, use cached markdown
+            if include_diffs and include_tool_inputs:
+                for row in rows:
+                    md = row["cached_markdown"]
+                    if md:
+                        markdown_parts.append(md)
+            else:
+                # Need to regenerate markdown with specific options
+                for row in rows:
+                    message_id = row["id"]
+                    message_index = row["message_index"] + 1  # Convert to 1-based
+                    
+                    # Get tool invocations for this message
+                    cursor.execute(
+                        "SELECT * FROM tool_invocations WHERE message_id = ?",
+                        (message_id,),
+                    )
+                    tool_invocations = [
+                        ToolInvocation(
+                            name=t["name"],
+                            input=t["input"],
+                            result=t["result"],
+                            status=t["status"],
+                            start_time=t["start_time"],
+                            end_time=t["end_time"],
+                        )
+                        for t in cursor.fetchall()
+                    ]
+                    
+                    # Get file changes for this message
+                    cursor.execute(
+                        "SELECT * FROM file_changes WHERE message_id = ?",
+                        (message_id,),
+                    )
+                    file_changes = [
+                        FileChange(
+                            path=f["path"],
+                            diff=f["diff"],
+                            content=f["content"],
+                            explanation=f["explanation"],
+                            language_id=f["language_id"],
+                        )
+                        for f in cursor.fetchall()
+                    ]
+                    
+                    # Get command runs for this message
+                    cursor.execute(
+                        "SELECT * FROM command_runs WHERE message_id = ?",
+                        (message_id,),
+                    )
+                    command_runs = [
+                        CommandRun(
+                            command=c["command"],
+                            title=c["title"],
+                            result=c["result"],
+                            status=c["status"],
+                            output=c["output"],
+                            timestamp=c["timestamp"],
+                        )
+                        for c in cursor.fetchall()
+                    ]
+                    
+                    # Get content blocks for this message
+                    cursor.execute(
+                        "SELECT * FROM content_blocks WHERE message_id = ? ORDER BY block_index",
+                        (message_id,),
+                    )
+                    content_blocks = [
+                        ContentBlock(
+                            kind=b["kind"],
+                            content=b["content"],
+                        )
+                        for b in cursor.fetchall()
+                    ]
+                    
+                    # Create message object
+                    message = ChatMessage(
+                        role=row["role"],
+                        content=row["content"],
+                        timestamp=row["timestamp"],
+                        tool_invocations=tool_invocations,
+                        file_changes=file_changes,
+                        command_runs=command_runs,
+                        content_blocks=content_blocks,
+                    )
+                    
+                    # Generate markdown with specified options
+                    md = message_to_markdown(
+                        message,
+                        message_number=message_index,
+                        include_diffs=include_diffs,
+                        include_tool_inputs=include_tool_inputs,
+                    )
                     markdown_parts.append(md)
             
             return "\n".join(markdown_parts)

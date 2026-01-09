@@ -325,25 +325,46 @@ def create_app(db_path: str, title: str = "Copilot Chat Archive", storage_paths:
         """Get cached markdown for a session's messages.
         
         Query parameters:
-        - messages: Comma-separated list of 1-based message numbers (optional).
-                   If omitted, returns markdown for all messages.
+        - start: Start message number (1-based, optional, defaults to 1)
+        - end: End message number (1-based, optional, defaults to last message)
+        - include_diffs: Whether to include file diffs (default: true)
+        - include_tool_inputs: Whether to include tool inputs (default: true)
         
         Returns:
             JSON with 'markdown' field containing the combined markdown.
         """
         db = Database(app.config["DB_PATH"])
         
-        # Parse message indices from query string
-        messages_param = request.args.get("messages", "").strip()
-        message_indices = None
+        # Parse range parameters
+        start_param = request.args.get("start", "").strip()
+        end_param = request.args.get("end", "").strip()
         
-        if messages_param:
+        # Parse boolean options
+        include_diffs = request.args.get("include_diffs", "true").lower() == "true"
+        include_tool_inputs = request.args.get("include_tool_inputs", "true").lower() == "true"
+        
+        start = None
+        end = None
+        
+        if start_param:
             try:
-                message_indices = [int(x.strip()) for x in messages_param.split(",") if x.strip()]
+                start = int(start_param)
             except ValueError:
-                return jsonify({"error": "Invalid message indices"}), 400
+                return jsonify({"error": "Invalid start value"}), 400
         
-        markdown_content = db.get_messages_markdown(session_id, message_indices)
+        if end_param:
+            try:
+                end = int(end_param)
+            except ValueError:
+                return jsonify({"error": "Invalid end value"}), 400
+        
+        markdown_content = db.get_messages_markdown(
+            session_id, 
+            start=start, 
+            end=end,
+            include_diffs=include_diffs,
+            include_tool_inputs=include_tool_inputs,
+        )
         
         if not markdown_content:
             return jsonify({"error": "No messages found"}), 404

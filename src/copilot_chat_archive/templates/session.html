@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ session.workspace_name or session.session_id }} - {{ title }}</title>
+    <!-- Font Awesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" integrity="sha512-DTOQO9RWCH3ppGqcWaEA1BIZOC6xxalwEsw9c2QQeAIftl+Vegovlnee1c9QX4TctnWMn13TZye+giMm8e2LwA==" crossorigin="anonymous" referrerpolicy="no-referrer" />
     <style>
 :root {
     --bg-primary: #ffffff;
@@ -642,19 +644,45 @@ pre.command-output {
     font-size: 0.9em;
 }
 
-.copy-markdown-toolbar select {
+.copy-markdown-toolbar input[type="number"] {
     padding: 6px 10px;
     border: 1px solid var(--border-color);
     border-radius: 4px;
     background-color: var(--bg-primary);
     color: var(--text-primary);
     font-size: 0.9em;
-    min-width: 200px;
+    width: 60px;
 }
 
-.copy-markdown-toolbar select:focus {
+.copy-markdown-toolbar input[type="number"]:focus {
     outline: 2px solid var(--link-color);
     outline-offset: -1px;
+}
+
+.range-separator {
+    color: var(--text-secondary);
+    font-size: 0.9em;
+}
+
+.toolbar-options {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-left: 8px;
+    padding-left: 16px;
+    border-left: 1px solid var(--border-color);
+}
+
+.toolbar-options label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    font-size: 0.85em;
+}
+
+.toolbar-options input[type="checkbox"] {
+    accent-color: var(--link-color);
 }
 
 .copy-markdown-btn {
@@ -691,6 +719,29 @@ pre.command-output {
 
 .copy-status.error {
     color: #cf222e;
+}
+
+/* Per-message copy button */
+.message-copy-btn {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 4px 8px;
+    font-size: 0.85em;
+    opacity: 0.4;
+    transition: opacity 0.2s, color 0.2s;
+    margin-left: 8px;
+}
+
+.message-copy-btn:hover {
+    opacity: 1;
+    color: var(--link-color);
+}
+
+.message-copy-btn.copied {
+    color: #1a7f37;
+    opacity: 1;
 }
 
 /* Tables */
@@ -772,17 +823,24 @@ footer a {
 
         <!-- Copy Markdown Toolbar -->
         <div class="copy-markdown-toolbar">
-            <label for="message-select">Copy markdown:</label>
-            <select id="message-select" multiple>
-                <option value="all" selected>All messages</option>
-                {% for message in session.messages %}
-                <option value="{{ loop.index }}">
-                    #{{ loop.index }} {{ message.role }}: {{ message.content[:50] | e }}{% if message.content | length > 50 %}...{% endif %}
-                </option>
-                {% endfor %}
-            </select>
-            <button type="button" class="copy-markdown-btn" id="copy-markdown-btn" data-session-id="{{ session.session_id }}">
-                📋 Copy Markdown
+            <label>Messages:</label>
+            <input type="number" id="range-start" min="1" max="{{ message_count }}" placeholder="1" title="Start message (leave empty for first)">
+            <span class="range-separator">to</span>
+            <input type="number" id="range-end" min="1" max="{{ message_count }}" placeholder="{{ message_count }}" title="End message (leave empty for last)">
+            
+            <div class="toolbar-options">
+                <label title="Include file change diffs in the markdown">
+                    <input type="checkbox" id="include-diffs" checked>
+                    Diffs
+                </label>
+                <label title="Include tool inputs in the markdown">
+                    <input type="checkbox" id="include-tool-inputs" checked>
+                    Tool inputs
+                </label>
+            </div>
+            
+            <button type="button" class="copy-markdown-btn" id="copy-markdown-btn" data-session-id="{{ session.session_id }}" data-message-count="{{ message_count }}">
+                <i class="fa-regular fa-copy"></i> Copy Markdown
             </button>
             <span class="copy-status" id="copy-status"></span>
         </div>
@@ -796,6 +854,9 @@ footer a {
                     <span class="message-timestamp">{{ message.timestamp | format_timestamp }}</span>
                     {% endif %}
                     <a href="#msg-{{ loop.index }}" class="message-anchor" title="Link to this message">#{{ loop.index }}</a>
+                    <button type="button" class="message-copy-btn" data-message-index="{{ loop.index }}" data-session-id="{{ session.session_id }}" title="Copy this message as markdown">
+                        <i class="fa-regular fa-copy"></i>
+                    </button>
                 </div>
                 <div class="message-content">
                     {% if message.content_blocks %}
@@ -997,28 +1058,44 @@ footer a {
                 }
             });
 
-            // Copy Markdown functionality
+            // Copy Markdown functionality (toolbar)
             const copyBtn = document.getElementById('copy-markdown-btn');
-            const messageSelect = document.getElementById('message-select');
+            const rangeStart = document.getElementById('range-start');
+            const rangeEnd = document.getElementById('range-end');
+            const includeDiffs = document.getElementById('include-diffs');
+            const includeToolInputs = document.getElementById('include-tool-inputs');
             const copyStatus = document.getElementById('copy-status');
 
-            if (copyBtn && messageSelect) {
+            if (copyBtn) {
                 copyBtn.addEventListener('click', async function() {
                     const sessionId = this.dataset.sessionId;
-                    const selectedOptions = Array.from(messageSelect.selectedOptions);
+                    const messageCount = parseInt(this.dataset.messageCount, 10);
                     
-                    // Build message indices parameter
-                    let messagesParam = '';
-                    const hasAll = selectedOptions.some(opt => opt.value === 'all');
+                    // Get range values (default to full range)
+                    const start = rangeStart.value ? parseInt(rangeStart.value, 10) : 1;
+                    const end = rangeEnd.value ? parseInt(rangeEnd.value, 10) : messageCount;
                     
-                    if (!hasAll) {
-                        const indices = selectedOptions
-                            .filter(opt => opt.value !== 'all')
-                            .map(opt => opt.value);
-                        if (indices.length > 0) {
-                            messagesParam = '?messages=' + indices.join(',');
-                        }
+                    // Validate range
+                    if (start < 1 || start > messageCount || end < 1 || end > messageCount || start > end) {
+                        copyStatus.textContent = '✗ Invalid range';
+                        copyStatus.className = 'copy-status error';
+                        return;
                     }
+                    
+                    // Build query parameters
+                    const params = new URLSearchParams();
+                    
+                    // Only add range if not full range
+                    if (start !== 1 || end !== messageCount) {
+                        params.set('start', start);
+                        params.set('end', end);
+                    }
+                    
+                    // Add options
+                    params.set('include_diffs', includeDiffs.checked);
+                    params.set('include_tool_inputs', includeToolInputs.checked);
+                    
+                    const queryString = params.toString() ? '?' + params.toString() : '';
                     
                     // Disable button during fetch
                     copyBtn.disabled = true;
@@ -1026,7 +1103,7 @@ footer a {
                     copyStatus.className = 'copy-status';
                     
                     try {
-                        const response = await fetch('/api/markdown/' + sessionId + messagesParam);
+                        const response = await fetch('/api/markdown/' + sessionId + queryString);
                         const data = await response.json();
                         
                         if (response.ok && data.markdown) {
@@ -1050,22 +1127,39 @@ footer a {
                         copyBtn.disabled = false;
                     }
                 });
+            }
 
-                // Handle "all" option logic - deselect others when "all" is selected
-                messageSelect.addEventListener('change', function() {
-                    const allOption = messageSelect.querySelector('option[value="all"]');
-                    const otherSelected = Array.from(messageSelect.selectedOptions)
-                        .filter(opt => opt.value !== 'all');
+            // Per-message copy buttons
+            document.querySelectorAll('.message-copy-btn').forEach(btn => {
+                btn.addEventListener('click', async function() {
+                    const sessionId = this.dataset.sessionId;
+                    const messageIndex = this.dataset.messageIndex;
+                    const icon = this.querySelector('i');
                     
-                    if (otherSelected.length > 0) {
-                        // If specific messages selected, deselect "all"
-                        allOption.selected = false;
-                    } else {
-                        // If nothing selected, select "all"
-                        allOption.selected = true;
+                    try {
+                        const response = await fetch('/api/markdown/' + sessionId + '?start=' + messageIndex + '&end=' + messageIndex);
+                        const data = await response.json();
+                        
+                        if (response.ok && data.markdown) {
+                            await navigator.clipboard.writeText(data.markdown);
+                            
+                            // Show success feedback
+                            this.classList.add('copied');
+                            icon.classList.remove('fa-copy');
+                            icon.classList.add('fa-check');
+                            
+                            // Reset after 2 seconds
+                            setTimeout(() => {
+                                this.classList.remove('copied');
+                                icon.classList.remove('fa-check');
+                                icon.classList.add('fa-copy');
+                            }, 2000);
+                        }
+                    } catch (err) {
+                        console.error('Failed to copy message:', err);
                     }
                 });
-            }
+            });
         });
     </script>
 </body>
