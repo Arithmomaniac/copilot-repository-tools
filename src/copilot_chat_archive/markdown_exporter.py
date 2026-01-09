@@ -246,38 +246,69 @@ def session_to_markdown(
     
     # Messages
     for i, message in enumerate(session.messages, 1):
-        # Message header: number and role
+        msg_md = message_to_markdown(
+            message,
+            message_number=i,
+            include_diffs=include_diffs,
+            include_tool_inputs=include_tool_inputs,
+        )
+        lines.append(msg_md)
+    
+    return "\n".join(lines)
+
+
+def message_to_markdown(
+    message: ChatMessage,
+    message_number: int = 0,
+    include_diffs: bool = False,
+    include_tool_inputs: bool = False,
+) -> str:
+    """Convert a single message to markdown format.
+    
+    Args:
+        message: The ChatMessage to convert.
+        message_number: The 1-based message number (0 means don't include header).
+        include_diffs: If True, include file diffs as code blocks.
+        include_tool_inputs: If True, include tool inputs as code blocks.
+        
+    Returns:
+        Markdown string representation of the message.
+    """
+    lines = []
+    
+    # Message header: number and role (if message_number > 0)
+    if message_number > 0:
         role_display = message.role.upper()
-        lines.append(f"## Message {i}: **{role_display}**")
+        lines.append(f"## Message {message_number}: **{role_display}**")
         lines.append("")
-        
-        # Timestamp if available
-        if message.timestamp:
-            lines.append(f"*{_format_timestamp(message.timestamp)}*")
-            lines.append("")
-        
-        # Content (excluding thinking blocks)
-        content = _format_message_content(message)
-        lines.append(content)
-        
-        # Tool invocations summary (in italics, with optional inputs)
-        tool_summary = _format_tool_summary(message, include_inputs=include_tool_inputs)
-        if tool_summary:
-            lines.append(tool_summary)
-        
-        # File changes summary (in italics, with optional diffs)
-        file_summary = _format_file_changes_summary(message, include_diffs=include_diffs)
-        if file_summary:
-            lines.append(file_summary)
-        
-        # Command runs summary (in italics)
-        cmd_summary = _format_command_runs_summary(message)
-        if cmd_summary:
-            lines.append(cmd_summary)
-        
+    
+    # Timestamp if available
+    if message.timestamp:
+        lines.append(f"*{_format_timestamp(message.timestamp)}*")
         lines.append("")
-        lines.append("---")
-        lines.append("")
+    
+    # Content (excluding thinking blocks)
+    content = _format_message_content(message)
+    lines.append(content)
+    
+    # Tool invocations summary (in italics, with optional inputs)
+    tool_summary = _format_tool_summary(message, include_inputs=include_tool_inputs)
+    if tool_summary:
+        lines.append(tool_summary)
+    
+    # File changes summary (in italics, with optional diffs)
+    file_summary = _format_file_changes_summary(message, include_diffs=include_diffs)
+    if file_summary:
+        lines.append(file_summary)
+    
+    # Command runs summary (in italics)
+    cmd_summary = _format_command_runs_summary(message)
+    if cmd_summary:
+        lines.append(cmd_summary)
+    
+    lines.append("")
+    lines.append("---")
+    lines.append("")
     
     return "\n".join(lines)
 

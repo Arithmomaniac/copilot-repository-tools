@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Iterator
 
 from .scanner import ChatMessage, ChatSession, ToolInvocation, FileChange, CommandRun, ContentBlock
+from .markdown_exporter import message_to_markdown
 
 
 class Database:
@@ -45,6 +46,7 @@ class Database:
         role TEXT NOT NULL,
         content TEXT NOT NULL,
         timestamp TEXT,
+        cached_markdown TEXT,
         FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
     );
 
@@ -165,12 +167,19 @@ class Database:
         cursor = conn.cursor()
         # Check if the source_file_mtime column exists
         cursor.execute("PRAGMA table_info(sessions)")
-        columns = {row[1] for row in cursor.fetchall()}
+        session_columns = {row[1] for row in cursor.fetchall()}
         
-        if "source_file_mtime" not in columns:
+        if "source_file_mtime" not in session_columns:
             cursor.execute("ALTER TABLE sessions ADD COLUMN source_file_mtime REAL")
-        if "source_file_size" not in columns:
+        if "source_file_size" not in session_columns:
             cursor.execute("ALTER TABLE sessions ADD COLUMN source_file_size INTEGER")
+        
+        # Check if the cached_markdown column exists in messages
+        cursor.execute("PRAGMA table_info(messages)")
+        message_columns = {row[1] for row in cursor.fetchall()}
+        
+        if "cached_markdown" not in message_columns:
+            cursor.execute("ALTER TABLE messages ADD COLUMN cached_markdown TEXT")
 
     def add_session(self, session: ChatSession) -> bool:
         """Add a chat session to the database.
@@ -218,11 +227,19 @@ class Database:
 
             # Insert messages and associated data
             for idx, msg in enumerate(session.messages):
+                # Generate cached markdown for this message (with diffs and inputs for full fidelity)
+                cached_md = message_to_markdown(
+                    msg,
+                    message_number=idx + 1,
+                    include_diffs=True,
+                    include_tool_inputs=True,
+                )
+                
                 cursor.execute(
                     """
                     INSERT INTO messages 
-                    (session_id, message_index, role, content, timestamp)
-                    VALUES (?, ?, ?, ?, ?)
+                    (session_id, message_index, role, content, timestamp, cached_markdown)
+                    VALUES (?, ?, ?, ?, ?, ?)
                     """,
                     (
                         session.session_id,
@@ -230,6 +247,7 @@ class Database:
                         msg.role,
                         msg.content,
                         msg.timestamp,
+                        cached_md,
                     ),
                 )
                 message_id = cursor.lastrowid
@@ -388,7 +406,7 @@ class Database:
             # Get messages with their IDs for fetching related data
             cursor.execute(
                 """
-                SELECT id, role, content, timestamp 
+                SELECT id, role, content, timestamp, cached_markdown 
                 FROM messages 
                 WHERE session_id = ? 
                 ORDER BY message_index
@@ -400,6 +418,8 @@ class Database:
             messages = []
             for msg_row in message_rows:
                 message_id = msg_row["id"]
+                # Safely get cached_markdown (may be NULL in older databases)
+                cached_md = msg_row["cached_markdown"] if "cached_markdown" in msg_row.keys() else None
 
                 # Get tool invocations for this message
                 cursor.execute(
@@ -472,6 +492,7 @@ class Database:
                     file_changes=file_changes,
                     command_runs=command_runs,
                     content_blocks=content_blocks,
+                    cached_markdown=cached_md,
                 ))
 
             # Helper to safely get optional fields from sqlite3.Row
@@ -496,6 +517,57 @@ class Database:
                 source_file_mtime=safe_get("source_file_mtime"),
                 source_file_size=safe_get("source_file_size"),
             )
+
+    def get_messages_markdown(
+        self,
+        session_id: str,
+        message_indices: list[int] | None = None,
+    ) -> str:
+        """Get cached markdown for specific messages or all messages in a session.
+
+        Args:
+            session_id: The session ID to get messages from.
+            message_indices: Optional list of 1-based message indices to include.
+                           If None, includes all messages.
+
+        Returns:
+            Combined markdown string for the selected messages.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            if message_indices:
+                # Convert to 0-based indices for database query
+                zero_based = [i - 1 for i in message_indices if i > 0]
+                placeholders = ",".join("?" * len(zero_based))
+                cursor.execute(
+                    f"""
+                    SELECT cached_markdown 
+                    FROM messages 
+                    WHERE session_id = ? AND message_index IN ({placeholders})
+                    ORDER BY message_index
+                    """,
+                    [session_id] + zero_based,
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT cached_markdown 
+                    FROM messages 
+                    WHERE session_id = ? 
+                    ORDER BY message_index
+                    """,
+                    (session_id,),
+                )
+
+            rows = cursor.fetchall()
+            markdown_parts = []
+            for row in rows:
+                md = row[0]
+                if md:
+                    markdown_parts.append(md)
+            
+            return "\n".join(markdown_parts)
 
     def list_sessions(
         self,

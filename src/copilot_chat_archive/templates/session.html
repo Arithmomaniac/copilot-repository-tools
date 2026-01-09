@@ -497,6 +497,84 @@ pre.command-output {
     }
 }
 
+/* Copy Markdown toolbar */
+.copy-markdown-toolbar {
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.copy-markdown-toolbar label {
+    color: var(--text-secondary);
+    font-size: 0.9em;
+}
+
+.copy-markdown-toolbar select {
+    padding: 6px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 0.9em;
+    min-width: 200px;
+}
+
+.copy-markdown-toolbar select:focus {
+    outline: 2px solid var(--link-color);
+    outline-offset: -1px;
+}
+
+.copy-markdown-btn {
+    background-color: var(--link-color);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 8px 16px;
+    cursor: pointer;
+    font-size: 0.9em;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.copy-markdown-btn:hover {
+    opacity: 0.9;
+}
+
+.copy-markdown-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.copy-status {
+    font-size: 0.85em;
+    color: var(--text-secondary);
+}
+
+.copy-status.success {
+    color: #1a7f37;
+}
+
+.copy-status.error {
+    color: #cf222e;
+}
+
+/* Message checkbox for selection */
+.message-checkbox {
+    margin-right: 8px;
+    accent-color: var(--link-color);
+    width: 16px;
+    height: 16px;
+    cursor: pointer;
+}
+
 footer {
     margin-top: 40px;
     padding: 20px 0;
@@ -545,6 +623,23 @@ footer a {
             <div class="session-id">
                 <small>Session ID: <code>{{ session.session_id }}</code></small>
             </div>
+        </div>
+
+        <!-- Copy Markdown Toolbar -->
+        <div class="copy-markdown-toolbar">
+            <label for="message-select">Copy markdown:</label>
+            <select id="message-select" multiple>
+                <option value="all" selected>All messages</option>
+                {% for message in session.messages %}
+                <option value="{{ loop.index }}">
+                    #{{ loop.index }} {{ message.role }}: {{ message.content[:50] | e }}{% if message.content | length > 50 %}...{% endif %}
+                </option>
+                {% endfor %}
+            </select>
+            <button type="button" class="copy-markdown-btn" id="copy-markdown-btn" data-session-id="{{ session.session_id }}">
+                📋 Copy Markdown
+            </button>
+            <span class="copy-status" id="copy-status"></span>
         </div>
 
         <div class="messages">
@@ -706,6 +801,76 @@ footer a {
                     }
                 });
             });
+
+            // Copy Markdown functionality
+            const copyBtn = document.getElementById('copy-markdown-btn');
+            const messageSelect = document.getElementById('message-select');
+            const copyStatus = document.getElementById('copy-status');
+
+            if (copyBtn && messageSelect) {
+                copyBtn.addEventListener('click', async function() {
+                    const sessionId = this.dataset.sessionId;
+                    const selectedOptions = Array.from(messageSelect.selectedOptions);
+                    
+                    // Build message indices parameter
+                    let messagesParam = '';
+                    const hasAll = selectedOptions.some(opt => opt.value === 'all');
+                    
+                    if (!hasAll) {
+                        const indices = selectedOptions
+                            .filter(opt => opt.value !== 'all')
+                            .map(opt => opt.value);
+                        if (indices.length > 0) {
+                            messagesParam = `?messages=${indices.join(',')}`;
+                        }
+                    }
+                    
+                    // Disable button during fetch
+                    copyBtn.disabled = true;
+                    copyStatus.textContent = 'Fetching...';
+                    copyStatus.className = 'copy-status';
+                    
+                    try {
+                        const response = await fetch(`/api/markdown/${sessionId}${messagesParam}`);
+                        const data = await response.json();
+                        
+                        if (response.ok && data.markdown) {
+                            // Copy to clipboard
+                            await navigator.clipboard.writeText(data.markdown);
+                            copyStatus.textContent = '✓ Copied to clipboard!';
+                            copyStatus.className = 'copy-status success';
+                            
+                            // Clear status after 3 seconds
+                            setTimeout(() => {
+                                copyStatus.textContent = '';
+                            }, 3000);
+                        } else {
+                            copyStatus.textContent = '✗ ' + (data.error || 'Failed to get markdown');
+                            copyStatus.className = 'copy-status error';
+                        }
+                    } catch (err) {
+                        copyStatus.textContent = '✗ Error: ' + err.message;
+                        copyStatus.className = 'copy-status error';
+                    } finally {
+                        copyBtn.disabled = false;
+                    }
+                });
+
+                // Handle "all" option logic - deselect others when "all" is selected
+                messageSelect.addEventListener('change', function() {
+                    const allOption = messageSelect.querySelector('option[value="all"]');
+                    const otherSelected = Array.from(messageSelect.selectedOptions)
+                        .filter(opt => opt.value !== 'all');
+                    
+                    if (otherSelected.length > 0) {
+                        // If specific messages selected, deselect "all"
+                        allOption.selected = false;
+                    } else {
+                        // If nothing selected, select "all"
+                        allOption.selected = true;
+                    }
+                });
+            }
         });
     </script>
 </body>

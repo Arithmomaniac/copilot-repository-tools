@@ -3,7 +3,7 @@
 from datetime import datetime
 from urllib.parse import unquote
 
-from flask import Flask, render_template, request, redirect, url_for, session
+from flask import Flask, render_template, request, redirect, url_for, session, jsonify
 import markdown
 
 from .database import Database
@@ -271,6 +271,36 @@ def create_app(db_path: str, title: str = "Copilot Chat Archive", storage_paths:
         }
         
         return redirect(url_for("index"))
+    
+    @app.route("/api/markdown/<session_id>", methods=["GET"])
+    def get_markdown(session_id: str):
+        """Get cached markdown for a session's messages.
+        
+        Query parameters:
+        - messages: Comma-separated list of 1-based message numbers (optional).
+                   If omitted, returns markdown for all messages.
+        
+        Returns:
+            JSON with 'markdown' field containing the combined markdown.
+        """
+        db = Database(app.config["DB_PATH"])
+        
+        # Parse message indices from query string
+        messages_param = request.args.get("messages", "").strip()
+        message_indices = None
+        
+        if messages_param:
+            try:
+                message_indices = [int(x.strip()) for x in messages_param.split(",") if x.strip()]
+            except ValueError:
+                return jsonify({"error": "Invalid message indices"}), 400
+        
+        markdown_content = db.get_messages_markdown(session_id, message_indices)
+        
+        if not markdown_content:
+            return jsonify({"error": "No messages found"}), 404
+        
+        return jsonify({"markdown": markdown_content})
     
     return app
 

@@ -87,6 +87,7 @@ class ChatMessage:
     file_changes: list[FileChange] = field(default_factory=list)
     command_runs: list[CommandRun] = field(default_factory=list)
     content_blocks: list[ContentBlock] = field(default_factory=list)  # Structured content with kind
+    cached_markdown: str | None = None  # Pre-computed markdown for this message
 
 
 @dataclass
