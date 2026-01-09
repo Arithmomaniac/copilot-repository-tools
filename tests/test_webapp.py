@@ -7,7 +7,7 @@ import pytest
 
 from copilot_chat_archive.database import Database
 from copilot_chat_archive.scanner import ChatMessage, ChatSession
-from copilot_chat_archive.webapp import create_app, _markdown_to_html
+from copilot_chat_archive.webapp import create_app, _markdown_to_html, _parse_diff_stats, _extract_filename
 
 
 @pytest.fixture
@@ -74,6 +74,99 @@ class TestMarkdownToHtml:
         assert "<pre>" in result
         assert "<code" in result
         assert "print" in result
+
+
+class TestParseDiffStats:
+    """Tests for the diff statistics parser."""
+
+    def test_empty_diff(self):
+        """Test parsing empty diff returns zeros."""
+        result = _parse_diff_stats("")
+        assert result == {"additions": 0, "deletions": 0}
+
+    def test_none_diff(self):
+        """Test parsing None diff returns zeros."""
+        result = _parse_diff_stats(None)
+        assert result == {"additions": 0, "deletions": 0}
+
+    def test_additions_only(self):
+        """Test parsing diff with only additions."""
+        diff = """--- a/file.py
++++ b/file.py
+@@ -1,3 +1,5 @@
+ existing line
++new line 1
++new line 2
+ another existing"""
+        result = _parse_diff_stats(diff)
+        assert result["additions"] == 2
+        assert result["deletions"] == 0
+
+    def test_deletions_only(self):
+        """Test parsing diff with only deletions."""
+        diff = """--- a/file.py
++++ b/file.py
+@@ -1,5 +1,3 @@
+ existing line
+-removed line 1
+-removed line 2
+ another existing"""
+        result = _parse_diff_stats(diff)
+        assert result["additions"] == 0
+        assert result["deletions"] == 2
+
+    def test_mixed_changes(self):
+        """Test parsing diff with both additions and deletions."""
+        diff = """--- a/file.py
++++ b/file.py
+@@ -1,4 +1,4 @@
+ existing line
+-old code
++new code
++another new line
+-old line removed
+ final line"""
+        result = _parse_diff_stats(diff)
+        assert result["additions"] == 2
+        assert result["deletions"] == 2
+
+    def test_skips_hunk_headers(self):
+        """Test that hunk headers (@@ lines) are not counted as deletions."""
+        diff = """--- a/file.py
++++ b/file.py
+@@ -1,5 +1,6 @@
+ line 1
++added line
+@@ -10,3 +11,4 @@
+ line 10
++another added"""
+        result = _parse_diff_stats(diff)
+        # Should have 2 additions, 0 deletions (hunk headers should be skipped)
+        assert result["additions"] == 2
+        assert result["deletions"] == 0
+
+
+class TestExtractFilename:
+    """Tests for the filename extractor."""
+
+    def test_empty_path(self):
+        """Test extracting from empty path."""
+        assert _extract_filename("") == ""
+        assert _extract_filename(None) == ""
+
+    def test_unix_path(self):
+        """Test extracting from Unix-style path."""
+        assert _extract_filename("/home/user/project/file.py") == "file.py"
+        assert _extract_filename("src/main.py") == "main.py"
+
+    def test_windows_path(self):
+        """Test extracting from Windows-style path."""
+        assert _extract_filename("C:\\Users\\user\\file.py") == "file.py"
+        assert _extract_filename("src\\main.py") == "main.py"
+
+    def test_filename_only(self):
+        """Test extracting when input is just a filename."""
+        assert _extract_filename("file.py") == "file.py"
 
 
 class TestWebappRoutes:
@@ -143,6 +236,8 @@ class TestCreateApp:
         assert "markdown" in app.jinja_env.filters
         assert "urldecode" in app.jinja_env.filters
         assert "format_timestamp" in app.jinja_env.filters
+        assert "parse_diff_stats" in app.jinja_env.filters
+        assert "extract_filename" in app.jinja_env.filters
 
 
 class TestEmptyDatabase:

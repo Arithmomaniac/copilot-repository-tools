@@ -16,6 +16,8 @@ from pathlib import Path
 from typing import Iterator
 from urllib.parse import unquote
 
+import orjson
+
 
 @dataclass
 class ToolInvocation:
@@ -216,8 +218,8 @@ def _parse_workspace_json(workspace_dir: Path) -> tuple[str | None, str | None]:
     workspace_json = workspace_dir / "workspace.json"
     if workspace_json.exists():
         try:
-            with open(workspace_json, encoding="utf-8") as f:
-                data = json.load(f)
+            with open(workspace_json, "rb") as f:
+                data = orjson.loads(f.read())
                 folder = data.get("folder", "")
                 # folder is often a URI like file:///path/to/workspace
                 if folder.startswith("file://"):
@@ -229,7 +231,7 @@ def _parse_workspace_json(workspace_dir: Path) -> tuple[str | None, str | None]:
                 folder = unquote(folder) if folder else ""
                 workspace_name = Path(folder).name if folder else None
                 return workspace_name, folder if folder else None
-        except (json.JSONDecodeError, OSError):
+        except (orjson.JSONDecodeError, OSError):
             pass
     return None, None
 
@@ -332,16 +334,35 @@ def _extract_edit_group_text(item: dict, edit_type: str = "Edited") -> str | Non
     
     These items represent file edits and should be rendered as:
     "Edited `filename.ext`" or similar.
+    
+    Handles URIs that can be either:
+    - A dict object: {$mid: 1, path: "/path/to/file", scheme: "file", ...}
+    - A string: "file:///path/to/file"
     """
     uri = item.get("uri")
-    if not isinstance(uri, dict):
-        return None
     
-    filename = _extract_uri_filename(uri)
-    if not filename:
-        return None
+    # Handle URI as dict object (common in VS Code response data)
+    if isinstance(uri, dict):
+        filename = _extract_uri_filename(uri)
+        if not filename:
+            return None
+        return f"{edit_type} `{filename}`"
     
-    return f"{edit_type} `{filename}`"
+    # Handle URI as string
+    if isinstance(uri, str):
+        # Extract filename from URI string
+        path = uri
+        if path.startswith("file://"):
+            path = path[7:]
+        if "\\" in path:
+            filename = path.split("\\")[-1]
+        elif "/" in path:
+            filename = path.split("/")[-1]
+        else:
+            filename = path
+        return f"{edit_type} `{filename}`" if filename else None
+    
+    return None
 
 
 def _extract_uri_path(uri: dict) -> str:
@@ -866,9 +887,9 @@ def _parse_chat_session_file(
     - VS Code Copilot Chat "requests" format (from Arbuzov/copilot-chat-history)
     """
     try:
-        with open(file_path, encoding="utf-8") as f:
-            data = json.load(f)
-    except (json.JSONDecodeError, OSError):
+        with open(file_path, "rb") as f:
+            data = orjson.loads(f.read())
+    except (orjson.JSONDecodeError, OSError):
         return None
 
     messages = []
@@ -1089,7 +1110,7 @@ def _parse_vscdb_file(
         for key, value in rows:
             if value:
                 try:
-                    data = json.loads(value)
+                    data = orjson.loads(value)
                     # Try to parse as session data
                     if isinstance(data, dict):
                         session = _extract_session_from_dict(
@@ -1105,7 +1126,7 @@ def _parse_vscdb_file(
                                 )
                                 if session:
                                     sessions.append(session)
-                except (json.JSONDecodeError, TypeError):
+                except (orjson.JSONDecodeError, TypeError):
                     pass
         
         conn.close()
