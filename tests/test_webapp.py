@@ -510,3 +510,407 @@ class TestRefreshWithTestData:
             same_session.source_file_size
         )
         assert not needs_update, "needs_update should return False for unchanged file"
+
+
+class TestMarkdownFileUriConversion:
+    """Tests for file:// URI to filename conversion in markdown."""
+
+    def test_file_uri_to_monospace(self):
+        """Test that file:// URIs with empty link text become monospace filenames."""
+        result = _markdown_to_html("Reading [](file:///c%3A/Users/test/file.py)")
+        assert "<code>file.py</code>" in result
+        assert "[](" not in result  # Empty link should be replaced
+
+    def test_file_uri_with_anchor(self):
+        """Test that file:// URIs with anchors extract filename correctly."""
+        result = _markdown_to_html("Reading [](file:///c%3A/path/to/SKILL.md#1-1), lines 1 to 100")
+        assert "<code>SKILL.md</code>" in result
+        assert "lines 1 to 100" in result
+
+    def test_file_uri_url_encoded(self):
+        """Test that URL-encoded paths are decoded properly."""
+        result = _markdown_to_html("Reading [](file:///c%3A/Users/test%20user/my%20file.py)")
+        assert "<code>my file.py</code>" in result
+
+    def test_file_uri_unix_path(self):
+        """Test Unix-style file:// URIs."""
+        result = _markdown_to_html("Created [](file:///home/user/project/main.py)")
+        assert "<code>main.py</code>" in result
+
+    def test_multiple_file_uris(self):
+        """Test multiple file:// URIs in the same text."""
+        result = _markdown_to_html("Read [](file:///a/b.py) and [](file:///c/d.py)")
+        assert "<code>b.py</code>" in result
+        assert "<code>d.py</code>" in result
+
+
+class TestHtmlOutputToolInvocations:
+    """Tests for HTML output of tool invocation rendering."""
+
+    @pytest.fixture
+    def session_with_tools(self, tmp_path):
+        """Create a session with various tool invocations for testing."""
+        from copilot_chat_archive.scanner import (
+            ChatMessage, ChatSession, ContentBlock, ToolInvocation
+        )
+        
+        db_path = tmp_path / "test_tools.db"
+        db = Database(str(db_path))
+        
+        # Create session with tool invocations
+        session = ChatSession(
+            session_id="tool-test-session",
+            workspace_name="test-workspace",
+            workspace_path="/home/user/test",
+            messages=[
+                ChatMessage(role="user", content="Run some tools"),
+                ChatMessage(
+                    role="assistant",
+                    content="I'll run some tools for you.",
+                    content_blocks=[
+                        ContentBlock(kind="text", content="Let me help."),
+                        ContentBlock(kind="toolInvocation", content="Running `test_mcp_tool`"),
+                        ContentBlock(kind="toolInvocation", content="Reading [](file:///path/to/file.py)"),
+                        ContentBlock(kind="toolInvocation", content='Using "Run in Terminal"'),
+                    ],
+                    tool_invocations=[
+                        ToolInvocation(
+                            name="mcp_test_tool",
+                            status="completed",
+                            input='{"query": "test input"}',
+                            result="Tool output result",
+                            source_type="mcp",
+                            invocation_message="Running `test_mcp_tool`",
+                        ),
+                        ToolInvocation(
+                            name="copilot_readFile",
+                            status="completed",
+                            input=None,
+                            result=None,
+                            source_type="internal",
+                            invocation_message="Reading [](file:///path/to/file.py)",
+                        ),
+                        ToolInvocation(
+                            name="run_in_terminal",
+                            status="completed",
+                            input="ls -la",
+                            result="total 42\ndrwxr-xr-x 5 user user 4096 Jan 10 file.txt",
+                            source_type="internal",
+                            invocation_message='Using "Run in Terminal"',
+                        ),
+                    ],
+                ),
+            ],
+            created_at="2025-01-15T10:00:00Z",
+            vscode_edition="stable",
+        )
+        db.add_session(session)
+        
+        return db_path
+
+    def test_mcp_tool_renders_collapsible(self, session_with_tools):
+        """Test that MCP tools render with collapsible details."""
+        app = create_app(str(session_with_tools))
+        app.config["TESTING"] = True
+        client = app.test_client()
+        
+        response = client.get("/session/tool-test-session")
+        html = response.data.decode("utf-8")
+        
+        # MCP tool should have collapsible wrapper
+        assert "tool-invocation-wrapper" in html
+        # Should show the tool name inside
+        assert "mcp_test_tool" in html
+        # Should have input/output sections
+        assert "test input" in html
+        assert "Tool output result" in html
+
+    def test_internal_file_tool_renders_inline(self, session_with_tools):
+        """Test that internal file tools render inline without collapsible."""
+        app = create_app(str(session_with_tools))
+        app.config["TESTING"] = True
+        client = app.test_client()
+        
+        response = client.get("/session/tool-test-session")
+        html = response.data.decode("utf-8")
+        
+        # Should render the filename in monospace
+        assert "<code>file.py</code>" in html
+
+    def test_terminal_tool_renders_collapsible(self, session_with_tools):
+        """Test that run_in_terminal renders with collapsible output."""
+        app = create_app(str(session_with_tools))
+        app.config["TESTING"] = True
+        client = app.test_client()
+        
+        response = client.get("/session/tool-test-session")
+        html = response.data.decode("utf-8")
+        
+        # Terminal tool should have collapsible wrapper
+        assert "run_in_terminal" in html
+        # Should show the command
+        assert "ls -la" in html
+        # Should have the output
+        assert "total 42" in html
+
+    def test_tool_status_badge_rendered(self, session_with_tools):
+        """Test that tool status badges are rendered."""
+        app = create_app(str(session_with_tools))
+        app.config["TESTING"] = True
+        client = app.test_client()
+        
+        response = client.get("/session/tool-test-session")
+        html = response.data.decode("utf-8")
+        
+        # Status badges should appear
+        assert 'status-badge' in html
+        assert 'completed' in html
+
+
+class TestHtmlOutputThinkingBlocks:
+    """Tests for HTML output of thinking block rendering."""
+
+    @pytest.fixture
+    def session_with_thinking(self, tmp_path):
+        """Create a session with thinking blocks for testing."""
+        from copilot_chat_archive.scanner import ChatMessage, ChatSession, ContentBlock
+        
+        db_path = tmp_path / "test_thinking.db"
+        db = Database(str(db_path))
+        
+        session = ChatSession(
+            session_id="thinking-test-session",
+            workspace_name="test-workspace",
+            workspace_path="/home/user/test",
+            messages=[
+                ChatMessage(role="user", content="Think about something"),
+                ChatMessage(
+                    role="assistant",
+                    content="Here's my thought process...",
+                    content_blocks=[
+                        ContentBlock(
+                            kind="thinking",
+                            content="Let me analyze this carefully...",
+                            description="Analyzing the request",
+                        ),
+                        ContentBlock(kind="text", content="Based on my analysis, here's the answer."),
+                    ],
+                ),
+            ],
+            created_at="2025-01-15T10:00:00Z",
+            vscode_edition="stable",
+        )
+        db.add_session(session)
+        
+        return db_path
+
+    def test_thinking_block_renders_collapsible(self, session_with_thinking):
+        """Test that thinking blocks render as collapsible sections."""
+        app = create_app(str(session_with_thinking))
+        app.config["TESTING"] = True
+        client = app.test_client()
+        
+        response = client.get("/session/thinking-test-session")
+        html = response.data.decode("utf-8")
+        
+        # Should have thinking block structure
+        assert "thinking-block" in html
+        assert "Thinking" in html
+
+    def test_thinking_block_shows_description(self, session_with_thinking):
+        """Test that thinking block description is shown in header."""
+        app = create_app(str(session_with_thinking))
+        app.config["TESTING"] = True
+        client = app.test_client()
+        
+        response = client.get("/session/thinking-test-session")
+        html = response.data.decode("utf-8")
+        
+        # Description should be in the summary
+        assert "Analyzing the request" in html
+
+    def test_thinking_block_content_inside_details(self, session_with_thinking):
+        """Test that thinking content is inside the collapsible."""
+        app = create_app(str(session_with_thinking))
+        app.config["TESTING"] = True
+        client = app.test_client()
+        
+        response = client.get("/session/thinking-test-session")
+        html = response.data.decode("utf-8")
+        
+        # Content should be in thinking-content div
+        assert "thinking-content" in html
+        assert "analyze this carefully" in html
+
+
+class TestHtmlOutputFileChanges:
+    """Tests for HTML output of file changes rendering."""
+
+    @pytest.fixture
+    def session_with_file_changes(self, tmp_path):
+        """Create a session with file changes for testing."""
+        from copilot_chat_archive.scanner import ChatMessage, ChatSession, FileChange
+        
+        db_path = tmp_path / "test_files.db"
+        db = Database(str(db_path))
+        
+        session = ChatSession(
+            session_id="files-test-session",
+            workspace_name="test-workspace",
+            workspace_path="/home/user/test",
+            messages=[
+                ChatMessage(role="user", content="Edit some files"),
+                ChatMessage(
+                    role="assistant",
+                    content="I'll edit the files.",
+                    file_changes=[
+                        FileChange(
+                            path="/src/main.py",
+                            language_id="python",
+                            explanation="Added error handling",
+                            diff="+try:\n+    result = process()\n+except Exception as e:\n+    log_error(e)",
+                        ),
+                        FileChange(
+                            path="/src/utils.js",
+                            language_id="javascript",
+                            explanation="Fixed bug in helper",
+                            diff="-const old = 1;\n+const fixed = 2;",
+                        ),
+                    ],
+                ),
+            ],
+            created_at="2025-01-15T10:00:00Z",
+            vscode_edition="stable",
+        )
+        db.add_session(session)
+        
+        return db_path
+
+    def test_file_changes_renders_collapsible(self, session_with_file_changes):
+        """Test that file changes render in a collapsible section."""
+        app = create_app(str(session_with_file_changes))
+        app.config["TESTING"] = True
+        client = app.test_client()
+        
+        response = client.get("/session/files-test-session")
+        html = response.data.decode("utf-8")
+        
+        # Should have file changes section
+        assert "File Changes" in html
+        assert "file-change" in html
+
+    def test_file_changes_shows_filename(self, session_with_file_changes):
+        """Test that file changes show the filename."""
+        app = create_app(str(session_with_file_changes))
+        app.config["TESTING"] = True
+        client = app.test_client()
+        
+        response = client.get("/session/files-test-session")
+        html = response.data.decode("utf-8")
+        
+        # Filenames should appear
+        assert "main.py" in html
+        assert "utils.js" in html
+
+    def test_file_changes_shows_language_badge(self, session_with_file_changes):
+        """Test that file changes show language badges."""
+        app = create_app(str(session_with_file_changes))
+        app.config["TESTING"] = True
+        client = app.test_client()
+        
+        response = client.get("/session/files-test-session")
+        html = response.data.decode("utf-8")
+        
+        # Language badges should appear
+        assert "language-badge" in html
+        assert "python" in html
+        assert "javascript" in html
+
+    def test_file_changes_shows_diff_stats(self, session_with_file_changes):
+        """Test that file changes show addition/deletion statistics."""
+        app = create_app(str(session_with_file_changes))
+        app.config["TESTING"] = True
+        client = app.test_client()
+        
+        response = client.get("/session/files-test-session")
+        html = response.data.decode("utf-8")
+        
+        # Diff stats should be shown
+        assert "file-stat-add" in html or "file-stat-del" in html
+
+    def test_file_changes_shows_explanation(self, session_with_file_changes):
+        """Test that file changes show explanations."""
+        app = create_app(str(session_with_file_changes))
+        app.config["TESTING"] = True
+        client = app.test_client()
+        
+        response = client.get("/session/files-test-session")
+        html = response.data.decode("utf-8")
+        
+        # Explanations should appear
+        assert "Added error handling" in html
+        assert "Fixed bug in helper" in html
+
+    def test_file_changes_shows_diff(self, session_with_file_changes):
+        """Test that file changes show the diff content."""
+        app = create_app(str(session_with_file_changes))
+        app.config["TESTING"] = True
+        client = app.test_client()
+        
+        response = client.get("/session/files-test-session")
+        html = response.data.decode("utf-8")
+        
+        # Diff content should appear
+        assert "process()" in html
+        assert "log_error" in html
+
+
+class TestHtmlOutputCodeBlocks:
+    """Tests for HTML output of code block rendering."""
+
+    def test_code_block_renders_with_pre(self, client):
+        """Test that code blocks render with pre tag."""
+        response = client.get("/session/webapp-test-session")
+        html = response.data.decode("utf-8")
+        
+        # Code block should have pre and code tags
+        assert "<pre>" in html or "<pre " in html
+        assert "<code" in html
+
+    def test_inline_code_renders_with_code(self):
+        """Test that inline code renders with code tag."""
+        result = _markdown_to_html("Use the `foo()` function")
+        assert "<code>foo()</code>" in result
+
+
+class TestHtmlOutputMessageStructure:
+    """Tests for the overall message HTML structure."""
+
+    def test_messages_have_role_class(self, client):
+        """Test that messages have role-based CSS classes."""
+        response = client.get("/session/webapp-test-session")
+        html = response.data.decode("utf-8")
+        
+        # Should have role-based classes
+        assert 'class="message user"' in html
+        assert 'class="message assistant"' in html
+
+    def test_messages_have_anchors(self, client):
+        """Test that messages have anchor links."""
+        response = client.get("/session/webapp-test-session")
+        html = response.data.decode("utf-8")
+        
+        # Should have message anchors
+        assert 'id="msg-1"' in html
+        assert 'id="msg-2"' in html
+        assert 'href="#msg-1"' in html
+
+    def test_session_header_shows_metadata(self, client):
+        """Test that session header shows metadata."""
+        response = client.get("/session/webapp-test-session")
+        html = response.data.decode("utf-8")
+        
+        # Should show workspace name
+        assert "test-workspace" in html
+        # Should show edition badge
+        assert "stable" in html
