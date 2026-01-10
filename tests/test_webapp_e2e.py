@@ -1,4 +1,14 @@
-"""Playwright end-to-end tests for the webapp."""
+"""Playwright end-to-end tests for the webapp.
+
+These tests are focused on client-side JavaScript behavior that cannot be tested
+with Flask's test client. For HTML output validation and server-side rendering,
+see test_webapp.py.
+
+Tests that require Playwright:
+- JavaScript form submission (workspace filter Apply/Clear buttons)
+- Flash notification display and auto-dismiss behavior
+- Client-side navigation (clicking links and verifying URL changes)
+"""
 
 import tempfile
 import threading
@@ -6,6 +16,19 @@ import time
 from pathlib import Path
 
 import pytest
+
+# Check if playwright is available
+try:
+    from playwright.sync_api import Page
+    HAS_PLAYWRIGHT = True
+except ImportError:
+    HAS_PLAYWRIGHT = False
+
+# Skip all tests in this module if playwright is not installed
+pytestmark = pytest.mark.skipif(
+    not HAS_PLAYWRIGHT,
+    reason="pytest-playwright not installed"
+)
 
 from copilot_chat_archive.database import Database
 from copilot_chat_archive.scanner import ChatMessage, ChatSession
@@ -84,68 +107,19 @@ def live_server(test_db):
     yield "http://127.0.0.1:5099"
 
 
-class TestIndexPage:
-    """Playwright tests for the index page."""
+# NOTE: TestIndexPage, TestSessionPage, and TestErrorHandling tests have been
+# moved to test_webapp.py as Flask client tests. They don't require a real
+# browser since they only test HTML output, not JavaScript behavior.
 
-    def test_index_page_loads(self, live_server, page):
-        """Test that the index page loads correctly."""
-        page.goto(live_server)
-        
-        # Check title
-        assert "E2E Test Archive" in page.title()
-        
-        # Check header
-        assert page.locator("h1").text_content() == "E2E Test Archive"
 
-    def test_sessions_displayed_with_custom_title(self, live_server, page):
-        """Test that sessions with custom titles show the title as link."""
-        page.goto(live_server)
-        
-        # Check that custom title is displayed as link
-        link = page.locator("a:has-text('VS Code debug configuration')")
-        assert link.is_visible()
-        
-        # Check workspace is shown as property
-        workspace = page.locator(".session-workspace:has-text('my-workspace')")
-        assert workspace.is_visible()
-
-    def test_sessions_without_custom_title_show_workspace(self, live_server, page):
-        """Test that sessions without custom title show workspace name as link."""
-        page.goto(live_server)
-        
-        # Check that workspace name is displayed as link
-        link = page.locator("a:has-text('another-project')")
-        assert link.is_visible()
-
-    def test_search_functionality(self, live_server, page):
-        """Test that search returns results with snippets."""
-        page.goto(f"{live_server}/?q=Flask")
-        
-        # Check search info is displayed
-        assert page.locator(".search-info").is_visible()
-        assert "Flask" in page.locator(".search-info").text_content()
-        
-        # Check that matching session is shown
-        assert page.locator("a:has-text('VS Code debug')").is_visible()
-
-    def test_search_snippets_with_message_links(self, live_server, page):
-        """Test that search shows snippets with direct message links."""
-        page.goto(f"{live_server}/?q=Flask")
-        
-        # Check snippets are displayed
-        snippets = page.locator(".search-snippets")
-        if snippets.count() > 0:
-            # Check that snippet has a link to message
-            snippet_links = snippets.first.locator("a")
-            assert snippet_links.count() > 0
-            href = snippet_links.first.get_attribute("href")
-            assert "#msg-" in href
+class TestClearSearchNavigation:
+    """Test client-side navigation for clearing search."""
 
     def test_clear_search(self, live_server, page):
-        """Test clearing search results."""
+        """Test clearing search results navigates back to index."""
         page.goto(f"{live_server}/?q=Python")
         
-        # Click clear search
+        # Click clear search link
         page.locator("a:has-text('clear search')").click()
         
         # Should be on index without query
@@ -156,38 +130,10 @@ class TestIndexPage:
         assert page.locator("a:has-text('another-project')").is_visible()
 
 
-class TestSessionPage:
-    """Playwright tests for the session page."""
+class TestBackLinkNavigation:
+    """Test client-side navigation for back links."""
 
-    def test_session_page_loads(self, live_server, page):
-        """Test that a session page loads correctly."""
-        page.goto(f"{live_server}/session/e2e-session-1")
-        
-        # Check title contains session info
-        assert "VS Code debug" in page.title() or "my-workspace" in page.title()
-        
-        # Check back link exists
-        assert page.locator("a:has-text('Back to all sessions')").is_visible()
-
-    def test_session_shows_messages(self, live_server, page):
-        """Test that session page shows all messages."""
-        page.goto(f"{live_server}/session/e2e-session-1")
-        
-        # Check user message
-        assert page.locator("text=How do I debug a command line app").is_visible()
-        
-        # Check assistant response
-        assert page.locator("text=Create a launch.json file").is_visible()
-
-    def test_message_anchor_links(self, live_server, page):
-        """Test that message anchor links work."""
-        page.goto(f"{live_server}/session/e2e-session-1#msg-3")
-        
-        # Message 3 should be in view (Flask question)
-        flask_message = page.locator("#msg-3")
-        assert flask_message.is_visible()
-
-    def test_back_link_navigation(self, live_server, page):
+    def test_back_link_navigation_from_session(self, live_server, page):
         """Test that back link navigates to index."""
         page.goto(f"{live_server}/session/e2e-session-1")
         
@@ -196,44 +142,13 @@ class TestSessionPage:
         # Should be on index
         assert page.url == f"{live_server}/"
 
-    def test_code_blocks_rendered(self, live_server, page):
-        """Test that code blocks are properly rendered."""
-        page.goto(f"{live_server}/session/e2e-session-1")
-        
-        # Check for code blocks
-        code_blocks = page.locator("pre code")
-        assert code_blocks.count() > 0
-
-    def test_markdown_newlines_preserved(self, live_server, page):
-        """Test that newlines in markdown are preserved as line breaks."""
-        page.goto(f"{live_server}/session/e2e-session-1")
-        
-        # The numbered list items should be on separate lines
-        content = page.locator(".message-content").first
-        html = content.inner_html()
-        
-        # Should have line breaks or paragraph structure
-        assert "<br" in html.lower() or "<p>" in html.lower() or "<li>" in html.lower()
-
-
-class TestErrorHandling:
-    """Playwright tests for error handling."""
-
-    def test_404_for_missing_session(self, live_server, page):
-        """Test that missing session returns 404 page."""
-        response = page.goto(f"{live_server}/session/nonexistent-session")
-        
-        assert response.status == 404
-        assert page.locator("text=Session not found").is_visible()
-
-    def test_404_has_back_link(self, live_server, page):
-        """Test that 404 page has link back to index."""
+    def test_back_link_navigation_from_404(self, live_server, page):
+        """Test that 404 page back link navigates to index."""
         page.goto(f"{live_server}/session/nonexistent-session")
         
         back_link = page.locator("a:has-text('Back to all sessions')")
-        assert back_link.is_visible()
-        
         back_link.click()
+        
         assert page.url == f"{live_server}/"
 
 
