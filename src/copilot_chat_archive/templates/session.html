@@ -278,6 +278,25 @@ header h1 {
 
 .thinking-icon {
     font-size: 1em;
+    color: #9b59b6;
+}
+
+.thinking-label {
+    font-weight: 600;
+    color: #9b59b6;
+}
+
+@media (prefers-color-scheme: dark) {
+    .thinking-icon, .thinking-label {
+        color: #bb8fce;
+    }
+}
+
+.thinking-description {
+    color: var(--text-secondary);
+    font-weight: 400;
+    font-size: 0.9em;
+    margin-left: 4px;
 }
 
 .thinking-content {
@@ -310,11 +329,79 @@ header h1 {
     }
 }
 
+/* Inline tool invocation blocks */
+.tool-invocation-inline {
+    margin: 8px 0;
+}
+
+.tool-invocation-inline .tool-invocation-message {
+    color: var(--text-secondary);
+    font-style: italic;
+    margin-bottom: 4px;
+}
+
+.tool-invocation-inline .tool-invocation-message p {
+    margin: 0;
+}
+
+.tool-invocation-inline .tool-invocation-wrapper {
+    margin-top: 4px;
+    margin-left: 0;
+}
+
 /* Tool invocations */
 .tool-summary {
     margin: 8px 0;
     color: var(--text-secondary);
     font-size: 0.9em;
+}
+
+/* Individual tool collapsible container */
+.tool-invocation-wrapper {
+    margin: 8px 0;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background-color: var(--bg-tertiary);
+}
+
+.tool-invocation-wrapper summary {
+    padding: 10px 14px;
+    cursor: pointer;
+    font-size: 0.9em;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    user-select: none;
+    flex-wrap: wrap;
+}
+
+.tool-invocation-wrapper summary:hover {
+    background-color: var(--border-color);
+}
+
+/* Tool invocation message in summary - render inline */
+.tool-invocation-wrapper summary .tool-invocation-message {
+    flex: 1;
+}
+
+.tool-invocation-wrapper summary .tool-invocation-message p {
+    margin: 0;
+    display: inline;
+}
+
+.tool-invocation-wrapper .tool-name {
+    font-weight: 600;
+}
+
+.tool-invocation-wrapper .collapsible-icon {
+    font-size: 0.7em;
+    transition: transform 0.2s;
+}
+
+.tool-invocation-content {
+    padding: 12px 14px;
+    border-top: 1px solid var(--border-color);
 }
 
 .tool-invocation {
@@ -343,6 +430,7 @@ header h1 {
 .tool-label {
     display: block;
     font-size: 0.8em;
+    font-weight: 500;
     color: var(--text-secondary);
     margin-bottom: 4px;
 }
@@ -351,8 +439,17 @@ header h1 {
     margin: 0;
     padding: 10px;
     font-size: 0.85em;
-    max-height: 200px;
+    max-height: 300px;
     overflow: auto;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    word-break: break-word;
+}
+
+.tool-section code {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    word-break: break-word;
 }
 
 /* Status badges */
@@ -865,12 +962,68 @@ footer a {
                             {% if block.kind == 'thinking' %}
                             <details class="thinking-block">
                                 <summary>
-                                    <span class="thinking-icon">💭</span> Thinking
+                                    <span class="thinking-icon">💭</span>
+                                    <span class="thinking-label">Thinking</span>
+                                    {% if block.description %}
+                                    <span class="thinking-description">— {{ block.description }}</span>
+                                    {% endif %}
                                 </summary>
                                 <div class="thinking-content">
                                     {{ block.content | markdown | safe }}
                                 </div>
                             </details>
+                            {% elif block.kind == 'toolInvocation' %}
+                            {# Use pre-computed tool matching from route handler #}
+                            {% set matched_tool = message._block_tool_map.get(loop.index0) %}
+                            
+                            {# Show collapsible details for tools with input/output: #}
+                            {# - MCP tools (source_type == 'mcp') #}
+                            {# - run_in_terminal (has command input and terminal output) #}
+                            {# Internal file tools (copilot_readFile, etc.) just show pretty invocation message #}
+                            {% set is_mcp_tool = matched_tool and matched_tool.source_type == 'mcp' %}
+                            {% set is_terminal_tool = matched_tool and matched_tool.name == 'run_in_terminal' %}
+                            {% set has_tool_details = matched_tool and (matched_tool.input or matched_tool.result) %}
+                            {% set show_collapsible = (is_mcp_tool or is_terminal_tool) and has_tool_details %}
+                            
+                            {# Determine the pretty header text - use invocation_message if available, else block content #}
+                            {% set pretty_header = matched_tool.invocation_message if matched_tool and matched_tool.invocation_message else block.content %}
+                            
+                            {% if show_collapsible %}
+                            <div class="content-block content-block-toolInvocation tool-invocation-inline">
+                                <details class="tool-invocation-wrapper">
+                                    <summary>
+                                        <span class="collapsible-icon" aria-hidden="true">▶</span>
+                                        <span class="tool-invocation-message">{{ pretty_header | markdown | safe }}</span>
+                                        {% if matched_tool.status %}
+                                        <span class="status-badge {{ matched_tool.status }}">{{ matched_tool.status }}</span>
+                                        {% endif %}
+                                    </summary>
+                                    <div class="tool-invocation-content">
+                                        <div class="tool-section">
+                                            <span class="tool-label">Tool:</span>
+                                            <code>{{ matched_tool.name }}</code>
+                                        </div>
+                                        {% if matched_tool.input %}
+                                        <div class="tool-section">
+                                            <span class="tool-label">Input:</span>
+                                            <pre><code>{{ matched_tool.input }}</code></pre>
+                                        </div>
+                                        {% endif %}
+                                        {% if matched_tool.result %}
+                                        <div class="tool-section">
+                                            <span class="tool-label">Output:</span>
+                                            <pre><code>{{ matched_tool.result }}</code></pre>
+                                        </div>
+                                        {% endif %}
+                                    </div>
+                                </details>
+                            </div>
+                            {% else %}
+                            {# Internal tools or tools without input/output - just show the pretty message #}
+                            <div class="content-block content-block-toolInvocation">
+                                {{ block.content | markdown | safe }}
+                            </div>
+                            {% endif %}
                             {% elif block.kind == 'text' %}
                             <div class="content-block content-block-text result-block">
                                 {{ block.content | markdown | safe }}
@@ -887,35 +1040,56 @@ footer a {
                     {% endif %}
                 </div>
 
-                {% if message.tool_invocations %}
-                <p class="tool-summary"><em>Used {{ message.tool_invocations | length }} tool{{ 's' if message.tool_invocations | length > 1 else '' }}: {{ message.tool_invocations | map(attribute='name') | list | join(', ') | truncate(100) }}</em></p>
-                <details class="collapsible tool-invocations">
+                {# Only show unmatched tool invocations at the bottom #}
+                {# Include MCP tools and run_in_terminal with input/output #}
+                {% set unmatched_tools = [] %}
+                {% for tool in message.tool_invocations %}
+                    {% set is_collapsible_tool = (tool.source_type == 'mcp' or tool.name == 'run_in_terminal') and (tool.input or tool.result) %}
+                    {% if tool.name not in message._matched_tool_names and is_collapsible_tool %}
+                        {% set _ = unmatched_tools.append(tool) %}
+                    {% endif %}
+                {% endfor %}
+                
+                {% if unmatched_tools %}
+                <p class="tool-summary"><em>Used {{ unmatched_tools | length }} tool{{ 's' if unmatched_tools | length > 1 else '' }}: {{ unmatched_tools | map(attribute='name') | list | join(', ') | truncate(100) }}</em></p>
+                <details class="collapsible tool-invocations-header" open>
                     <summary aria-label="Toggle tool invocations section">
-                        <span class="collapsible-icon" aria-hidden="true">▶</span>
-                        Tool Invocations ({{ message.tool_invocations | length }})
+                        <span class="collapsible-icon" aria-hidden="true">▼</span>
+                        Tool Invocations ({{ unmatched_tools | length }})
                     </summary>
                     <div class="collapsible-content">
-                        {% for tool in message.tool_invocations %}
-                        <div class="tool-invocation">
-                            <div class="tool-header">
-                                <strong>{{ tool.name }}</strong>
+                        {% for tool in unmatched_tools %}
+                        <details class="tool-invocation-wrapper">
+                            <summary>
+                                <span class="collapsible-icon" aria-hidden="true">▶</span>
+                                {% if tool.invocation_message %}
+                                <span class="tool-invocation-message">{{ tool.invocation_message | markdown | safe }}</span>
+                                {% else %}
+                                <span class="tool-name">{{ tool.name }}</span>
+                                {% endif %}
                                 {% if tool.status %}
                                 <span class="status-badge {{ tool.status }}">{{ tool.status }}</span>
                                 {% endif %}
+                            </summary>
+                            <div class="tool-invocation-content">
+                                <div class="tool-section">
+                                    <span class="tool-label">Tool:</span>
+                                    <code>{{ tool.name }}</code>
+                                </div>
+                                {% if tool.input %}
+                                <div class="tool-section">
+                                    <span class="tool-label">Input:</span>
+                                    <pre><code>{{ tool.input }}</code></pre>
+                                </div>
+                                {% endif %}
+                                {% if tool.result %}
+                                <div class="tool-section">
+                                    <span class="tool-label">Output:</span>
+                                    <pre><code>{{ tool.result }}</code></pre>
+                                </div>
+                                {% endif %}
                             </div>
-                            {% if tool.input %}
-                            <div class="tool-section">
-                                <span class="tool-label">Input:</span>
-                                <pre><code>{{ tool.input }}</code></pre>
-                            </div>
-                            {% endif %}
-                            {% if tool.result %}
-                            <div class="tool-section">
-                                <span class="tool-label">Result:</span>
-                                <pre><code>{{ tool.result }}</code></pre>
-                            </div>
-                            {% endif %}
-                        </div>
+                        </details>
                         {% endfor %}
                     </div>
                 </details>
@@ -1018,9 +1192,9 @@ footer a {
             }
 
             // Toggle collapsible icon on details open/close
-            document.querySelectorAll('details.collapsible, details.terminal-output-toggle').forEach(details => {
+            document.querySelectorAll('details.collapsible, details.tool-invocations-header, details.terminal-output-toggle, details.tool-invocation-wrapper').forEach(details => {
                 details.addEventListener('toggle', function() {
-                    const icon = this.querySelector('.collapsible-icon');
+                    const icon = this.querySelector(':scope > summary > .collapsible-icon');
                     if (icon) {
                         icon.textContent = this.open ? '▼' : '▶';
                     }

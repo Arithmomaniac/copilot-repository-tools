@@ -60,6 +60,8 @@ class Database:
         status TEXT,
         start_time INTEGER,
         end_time INTEGER,
+        source_type TEXT,
+        invocation_message TEXT,
         FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
     );
 
@@ -95,6 +97,7 @@ class Database:
         block_index INTEGER NOT NULL,
         kind TEXT NOT NULL DEFAULT 'text',
         content TEXT NOT NULL,
+        description TEXT,
         FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
     );
 
@@ -180,6 +183,22 @@ class Database:
         
         if "cached_markdown" not in message_columns:
             cursor.execute("ALTER TABLE messages ADD COLUMN cached_markdown TEXT")
+        
+        # Check if the description column exists in content_blocks
+        cursor.execute("PRAGMA table_info(content_blocks)")
+        content_block_columns = {row[1] for row in cursor.fetchall()}
+        
+        if "description" not in content_block_columns:
+            cursor.execute("ALTER TABLE content_blocks ADD COLUMN description TEXT")
+        
+        # Check if the source_type and invocation_message columns exist in tool_invocations
+        cursor.execute("PRAGMA table_info(tool_invocations)")
+        tool_columns = {row[1] for row in cursor.fetchall()}
+        
+        if "source_type" not in tool_columns:
+            cursor.execute("ALTER TABLE tool_invocations ADD COLUMN source_type TEXT")
+        if "invocation_message" not in tool_columns:
+            cursor.execute("ALTER TABLE tool_invocations ADD COLUMN invocation_message TEXT")
 
     def add_session(self, session: ChatSession) -> bool:
         """Add a chat session to the database.
@@ -257,8 +276,8 @@ class Database:
                     cursor.execute(
                         """
                         INSERT INTO tool_invocations
-                        (message_id, name, input, result, status, start_time, end_time)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        (message_id, name, input, result, status, start_time, end_time, source_type, invocation_message)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             message_id,
@@ -268,6 +287,8 @@ class Database:
                             tool.status,
                             tool.start_time,
                             tool.end_time,
+                            tool.source_type,
+                            tool.invocation_message,
                         ),
                     )
 
@@ -313,14 +334,15 @@ class Database:
                     cursor.execute(
                         """
                         INSERT INTO content_blocks
-                        (message_id, block_index, kind, content)
-                        VALUES (?, ?, ?, ?)
+                        (message_id, block_index, kind, content, description)
+                        VALUES (?, ?, ?, ?, ?)
                         """,
                         (
                             message_id,
                             block_idx,
                             block.kind,
                             block.content,
+                            block.description,
                         ),
                     )
 
@@ -426,17 +448,20 @@ class Database:
                     "SELECT * FROM tool_invocations WHERE message_id = ?",
                     (message_id,),
                 )
-                tool_invocations = [
-                    ToolInvocation(
+                tool_invocations = []
+                for t in cursor.fetchall():
+                    # Handle columns that may not exist in older databases
+                    t_keys = t.keys()
+                    tool_invocations.append(ToolInvocation(
                         name=t["name"],
                         input=t["input"],
                         result=t["result"],
                         status=t["status"],
                         start_time=t["start_time"],
                         end_time=t["end_time"],
-                    )
-                    for t in cursor.fetchall()
-                ]
+                        source_type=t["source_type"] if "source_type" in t_keys else None,
+                        invocation_message=t["invocation_message"] if "invocation_message" in t_keys else None,
+                    ))
 
                 # Get file changes for this message
                 cursor.execute(
@@ -480,6 +505,7 @@ class Database:
                     ContentBlock(
                         kind=b["kind"],
                         content=b["content"],
+                        description=b["description"] if "description" in b.keys() else None,
                     )
                     for b in cursor.fetchall()
                 ]
@@ -589,17 +615,20 @@ class Database:
                         "SELECT * FROM tool_invocations WHERE message_id = ?",
                         (message_id,),
                     )
-                    tool_invocations = [
-                        ToolInvocation(
+                    tool_invocations = []
+                    for t in cursor.fetchall():
+                        # Handle columns that may not exist in older databases
+                        t_keys = t.keys()
+                        tool_invocations.append(ToolInvocation(
                             name=t["name"],
                             input=t["input"],
                             result=t["result"],
                             status=t["status"],
                             start_time=t["start_time"],
                             end_time=t["end_time"],
-                        )
-                        for t in cursor.fetchall()
-                    ]
+                            source_type=t["source_type"] if "source_type" in t_keys else None,
+                            invocation_message=t["invocation_message"] if "invocation_message" in t_keys else None,
+                        ))
                     
                     # Get file changes for this message
                     cursor.execute(
@@ -643,6 +672,7 @@ class Database:
                         ContentBlock(
                             kind=b["kind"],
                             content=b["content"],
+                            description=b["description"] if "description" in b.keys() else None,
                         )
                         for b in cursor.fetchall()
                     ]
