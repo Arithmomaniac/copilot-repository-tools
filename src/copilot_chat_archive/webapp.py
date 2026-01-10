@@ -365,7 +365,10 @@ def create_app(db_path: str, title: str = "Copilot Chat Archive", storage_paths:
         full_refresh = request.form.get("full", "false").lower() == "true"
         
         # Get storage paths - use configured paths or default VS Code paths
-        storage_paths = app.config.get("STORAGE_PATHS") or get_vscode_storage_paths()
+        # Check for None explicitly since empty list [] is a valid value (for testing)
+        storage_paths = app.config.get("STORAGE_PATHS")
+        if storage_paths is None:
+            storage_paths = get_vscode_storage_paths()
         
         added = 0
         updated = 0
