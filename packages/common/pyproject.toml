@@ -1,0 +1,15 @@
+[build-system]
+requires = ["uv_build>=0.6.0,<0.10.0"]
+build-backend = "uv_build"
+
+[project]
+name = "copilot-repository-tools-common"
+version = "0.1.0"
+description = "Common utilities for Copilot Repository Tools"
+requires-python = ">=3.12"
+dependencies = [
+    "orjson>=3.9.0",
+]
+
+[tool.uv]
+package = true

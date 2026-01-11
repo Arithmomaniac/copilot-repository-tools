@@ -6,8 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from copilot_chat_archive.database import Database
-from copilot_chat_archive.scanner import ChatMessage, ChatSession
+from copilot_repository_tools_common import Database, ChatMessage, ChatSession
 
 
 @pytest.fixture

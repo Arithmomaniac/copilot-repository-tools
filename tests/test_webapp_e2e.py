@@ -30,9 +30,8 @@ pytestmark = pytest.mark.skipif(
     reason="pytest-playwright not installed"
 )
 
-from copilot_chat_archive.database import Database
-from copilot_chat_archive.scanner import ChatMessage, ChatSession
-from copilot_chat_archive.webapp import create_app
+from copilot_repository_tools_common import Database, ChatMessage, ChatSession
+from copilot_repository_tools_web import create_app
 
 
 @pytest.fixture(scope="module")

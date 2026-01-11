@@ -6,8 +6,7 @@ from urllib.parse import unquote
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify
 import markdown
 
-from .database import Database
-from .scanner import get_vscode_storage_paths, scan_chat_sessions
+from copilot_repository_tools_common import Database, get_vscode_storage_paths, scan_chat_sessions
 
 
 # Create a reusable markdown converter with extensions
