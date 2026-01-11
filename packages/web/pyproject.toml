@@ -1,6 +1,6 @@
 [build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+requires = ["uv_build>=0.6.0,<0.10.0"]
+build-backend = "uv_build"
 
 [project]
 name = "copilot-repository-tools-web"
@@ -38,14 +38,8 @@ copilot-chat-web = "copilot_repository_tools_web:main"
 Homepage = "https://github.com/Arithmomaniac/copilot-repository-tools"
 Repository = "https://github.com/Arithmomaniac/copilot-repository-tools"
 
+[tool.uv]
+package = true
+
 [tool.uv.sources]
 copilot-repository-tools-common = { workspace = true }
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/copilot_repository_tools_web"]
-
-[tool.hatch.build.targets.sdist]
-include = [
-    "src/copilot_repository_tools_web/**/*.py",
-    "src/copilot_repository_tools_web/templates/*.html",
-]
