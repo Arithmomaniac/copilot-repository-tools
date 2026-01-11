@@ -6,11 +6,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from click.testing import CliRunner
+from typer.testing import CliRunner
 
-from copilot_chat_archive.cli import main
-from copilot_chat_archive.database import Database
-from copilot_chat_archive.scanner import ChatMessage, ChatSession
+from copilot_repository_tools_cli import app
+from copilot_repository_tools_common import Database, ChatMessage, ChatSession
 
 
 @pytest.fixture
@@ -22,7 +21,7 @@ def runner():
 @pytest.fixture
 def mock_no_vscode_paths():
     """Mock get_vscode_storage_paths to return empty list for faster tests."""
-    with patch("copilot_chat_archive.cli.get_vscode_storage_paths", return_value=[]):
+    with patch("copilot_repository_tools_common.get_vscode_storage_paths", return_value=[]):
         yield
 
 
@@ -53,27 +52,27 @@ class TestCLI:
 
     def test_version(self, runner):
         """Test --version flag."""
-        result = runner.invoke(main, ["--version"])
+        result = runner.invoke(app, ["--version"])
         assert result.exit_code == 0
         assert "0.1.0" in result.output
 
     def test_scan_no_paths(self, runner, tmp_path, mock_no_vscode_paths):
         """Test scan command with no valid paths."""
         db_path = tmp_path / "test.db"
-        result = runner.invoke(main, ["scan", "--db", str(db_path)])
+        result = runner.invoke(app, ["scan", "--db", str(db_path)])
         assert result.exit_code == 0
         assert "Scanning" in result.output
 
     def test_stats_command(self, runner, temp_db_with_data):
         """Test stats command."""
-        result = runner.invoke(main, ["stats", "--db", str(temp_db_with_data)])
+        result = runner.invoke(app, ["stats", "--db", str(temp_db_with_data)])
         assert result.exit_code == 0
         assert "Sessions: 1" in result.output
         assert "Messages: 2" in result.output
 
     def test_stats_missing_db(self, runner, tmp_path):
         """Test stats command with missing database."""
-        result = runner.invoke(main, ["stats", "--db", str(tmp_path / "missing.db")])
+        result = runner.invoke(app, ["stats", "--db", str(tmp_path / "missing.db")])
         # Click returns exit code 2 for parameter validation errors (exists=True)
         assert result.exit_code != 0
         assert "does not exist" in result.output or "not found" in result.output or "Invalid value" in result.output
@@ -81,7 +80,7 @@ class TestCLI:
     def test_search_command(self, runner, temp_db_with_data):
         """Test search command."""
         result = runner.invoke(
-            main, ["search", "--db", str(temp_db_with_data), "Hello"]
+            app, ["search", "--db", str(temp_db_with_data), "Hello"]
         )
         assert result.exit_code == 0
         # Should find results
@@ -90,14 +89,14 @@ class TestCLI:
     def test_search_no_results(self, runner, temp_db_with_data):
         """Test search command with no results."""
         result = runner.invoke(
-            main, ["search", "--db", str(temp_db_with_data), "nonexistent term xyz123"]
+            app, ["search", "--db", str(temp_db_with_data), "nonexistent term xyz123"]
         )
         assert result.exit_code == 0
         assert "No results" in result.output
 
     def test_export_command(self, runner, temp_db_with_data):
         """Test export command."""
-        result = runner.invoke(main, ["export", "--db", str(temp_db_with_data)])
+        result = runner.invoke(app, ["export", "--db", str(temp_db_with_data)])
         assert result.exit_code == 0
         # Output should be valid JSON
         data = json.loads(result.output)
@@ -108,7 +107,7 @@ class TestCLI:
         """Test export command to file."""
         output_file = tmp_path / "export.json"
         result = runner.invoke(
-            main,
+            app,
             ["export", "--db", str(temp_db_with_data), "--output", str(output_file)],
         )
         assert result.exit_code == 0
@@ -134,7 +133,7 @@ class TestCLI:
         json_file.write_text(json.dumps(sessions))
 
         result = runner.invoke(
-            main, ["import-json", "--db", str(db_path), str(json_file)]
+            app, ["import-json", "--db", str(db_path), str(json_file)]
         )
         assert result.exit_code == 0
         assert "Added: 1" in result.output
@@ -163,7 +162,7 @@ class TestCLI:
         db.add_session(session)
         
         # Test that --full flag is recognized
-        result = runner.invoke(main, ["scan", "--db", str(db_path), "--full"])
+        result = runner.invoke(app, ["scan", "--db", str(db_path), "--full"])
         assert result.exit_code == 0
         assert "Full mode" in result.output or "Updated:" in result.output
 
@@ -172,13 +171,13 @@ class TestCLI:
         db_path = tmp_path / "incremental_test.db"
         
         # Create a database (it will be empty)
-        result = runner.invoke(main, ["scan", "--db", str(db_path)])
+        result = runner.invoke(app, ["scan", "--db", str(db_path)])
         assert result.exit_code == 0
         assert "Incremental mode" in result.output
 
     def test_serve_missing_db(self, runner, tmp_path):
         """Test serve command with missing database."""
-        result = runner.invoke(main, ["serve", "--db", str(tmp_path / "missing.db")])
+        result = runner.invoke(app, ["serve", "--db", str(tmp_path / "missing.db")])
         # Click returns exit code 2 for parameter validation errors (exists=True)
         assert result.exit_code != 0
         assert "does not exist" in result.output or "not found" in result.output or "Invalid value" in result.output
@@ -188,7 +187,7 @@ class TestCLI:
         output_dir = tmp_path / "markdown_output"
         
         result = runner.invoke(
-            main,
+            app,
             ["export-markdown", "--db", str(temp_db_with_data), "--output-dir", str(output_dir), "-v"]
         )
         assert result.exit_code == 0
@@ -212,7 +211,7 @@ class TestCLI:
         output_dir = tmp_path / "markdown_output"
         
         result = runner.invoke(
-            main,
+            app,
             ["export-markdown", "--db", str(temp_db_with_data), "--output-dir", str(output_dir), "--session-id", "cli-test-session"]
         )
         assert result.exit_code == 0
@@ -227,7 +226,7 @@ class TestCLI:
         output_dir = tmp_path / "markdown_output"
         
         result = runner.invoke(
-            main,
+            app,
             ["export-markdown", "--db", str(temp_db_with_data), "--output-dir", str(output_dir), "--session-id", "nonexistent-session"]
         )
         assert result.exit_code == 1

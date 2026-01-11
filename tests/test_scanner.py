@@ -7,14 +7,17 @@ from pathlib import Path
 
 import pytest
 
-from copilot_chat_archive.scanner import (
+from copilot_repository_tools_common import (
     ChatMessage,
     ChatSession,
+    CommandRun,
     ContentBlock,
     FileChange,
     ToolInvocation,
     find_copilot_chat_dirs,
     scan_chat_sessions,
+)
+from copilot_repository_tools_common.scanner import (
     _extract_inline_reference_name,
     _extract_edit_group_text,
     _parse_tool_invocation_serialized,
@@ -146,8 +149,6 @@ class TestToolInvocationsAndFileChanges:
 
     def test_chat_message_with_tool_invocations(self):
         """Test ChatMessage with tool invocations."""
-        from copilot_chat_archive.scanner import ToolInvocation
-
         msg = ChatMessage(
             role="assistant",
             content="Running a command...",
@@ -166,8 +167,6 @@ class TestToolInvocationsAndFileChanges:
 
     def test_chat_message_with_file_changes(self):
         """Test ChatMessage with file changes."""
-        from copilot_chat_archive.scanner import FileChange
-
         msg = ChatMessage(
             role="assistant",
             content="Made some changes...",
@@ -185,8 +184,6 @@ class TestToolInvocationsAndFileChanges:
 
     def test_chat_message_with_command_runs(self):
         """Test ChatMessage with command runs."""
-        from copilot_chat_archive.scanner import CommandRun
-
         msg = ChatMessage(
             role="assistant",
             content="Executing...",

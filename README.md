@@ -1,4 +1,4 @@
-# Copilot Chat Archive
+# Copilot Repository Tools
 
 Create a searchable archive of your VS Code GitHub Copilot chat history, with a web viewer similar to [simonw/claude-code-transcripts](https://github.com/simonw/claude-code-transcripts).
 
@@ -16,22 +16,68 @@ This project was informed by and borrows patterns from several excellent open-so
 - **Scan** VS Code workspace storage to find Copilot chat sessions (format based on [Arbuzov/copilot-chat-history](https://github.com/Arbuzov/copilot-chat-history))
 - **Support** for both VS Code Stable and Insiders editions
 - **Store** chat history in a SQLite database with FTS5 full-text search (inspired by [tad-hq/universal-session-viewer](https://github.com/tad-hq/universal-session-viewer))
-- **Generate** static HTML files for browsing and searching your archive (similar to [simonw/claude-code-transcripts](https://github.com/simonw/claude-code-transcripts))
-- **Export/Import** sessions as JSON for backup or migration
+- **Browse** your archive with a web interface (similar to [simonw/claude-code-transcripts](https://github.com/simonw/claude-code-transcripts))
+- **Export/Import** sessions as JSON or Markdown for backup or migration
 - **Tool invocations & file changes** tracking from chat sessions
+
+## Project Structure
+
+This is a [uv workspace](https://docs.astral.sh/uv/concepts/workspaces/) with three packages:
+
+| Package | Description |
+|---------|-------------|
+| `copilot-repository-tools-common` | Core utilities: database, scanner, markdown exporter |
+| `copilot-repository-tools-cli` | Command-line interface built with [Typer](https://typer.tiangolo.com/) |
+| `copilot-repository-tools-web` | Flask-based web interface for browsing chat sessions |
+
+## Quick Start
+
+Run the CLI directly with [uvx](https://docs.astral.sh/uv/guides/tools/) (no installation needed):
+
+```bash
+# Scan for chat sessions
+uvx copilot-repository-tools-cli scan
+
+# Start the web viewer
+uvx copilot-repository-tools-web --db copilot_chats.db
+
+# Search through chat history
+uvx copilot-repository-tools-cli search "authentication"
+```
 
 ## Installation
 
+### Using uv (recommended)
+
 ```bash
-pip install copilot-chat-archive
+# Install the CLI
+uv tool install copilot-repository-tools-cli
+
+# Install the web interface
+uv tool install copilot-repository-tools-web
 ```
 
-Or install from source:
+### Using pip
+
+```bash
+# Install the CLI
+pip install copilot-repository-tools-cli
+
+# Install the web interface
+pip install copilot-repository-tools-web
+```
+
+### From source (development)
 
 ```bash
 git clone https://github.com/Arithmomaniac/copilot-repository-tools.git
 cd copilot-repository-tools
-pip install -e .
+
+# Install uv if you haven't already
+pip install uv
+
+# Sync the workspace (installs all packages in development mode)
+uv sync
 ```
 
 ## Usage
@@ -59,36 +105,48 @@ copilot-chat-archive scan --storage-path /path/to/workspaceStorage
 # Verbose output
 copilot-chat-archive scan --verbose
 
-# Force re-import of existing sessions (updates changed sessions)
-copilot-chat-archive scan --force
+# Force re-import of all sessions
+copilot-chat-archive scan --full
 ```
 
-**Incremental Updates**: By default, the `scan` command only adds new sessions and skips existing ones. Use `--force` to re-import and update sessions that may have new messages.
+**Incremental Updates**: By default, the `scan` command only adds new sessions and updates changed ones based on file modification time. Use `--full` to re-import all sessions.
 
-### 2. Generate HTML Archive
+### 2. Start the Web Server
 
-Generate static HTML files to browse your chat archive:
+Browse your chat archive in a web interface:
 
 ```bash
-# Generate to ./archive directory
-copilot-chat-archive generate
+# Start the web server (uses copilot_chats.db by default)
+copilot-chat-web
 
-# Custom output directory
-copilot-chat-archive generate --output ./my-archive
+# Or use the CLI
+copilot-chat-archive serve
 
-# Custom title
-copilot-chat-archive generate --title "My Copilot Chats"
+# Custom options
+copilot-chat-web --db my_chats.db --port 8080 --title "My Copilot Chats"
 ```
 
-Then open `./archive/index.html` in your browser.
+Then open `http://127.0.0.1:5000/` in your browser.
 
 ### 3. Search Chats
 
 Search through your chat history from the command line:
 
 ```bash
+# Basic search
 copilot-chat-archive search "authentication"
+
+# Limit results
 copilot-chat-archive search "React hooks" --limit 50
+
+# Filter by role
+copilot-chat-archive search "error" --role assistant
+
+# Search only tool invocations
+copilot-chat-archive search "git" --tools-only
+
+# Show full content (not truncated)
+copilot-chat-archive search "complex query" --full
 ```
 
 ### 4. View Statistics
@@ -97,7 +155,7 @@ copilot-chat-archive search "React hooks" --limit 50
 copilot-chat-archive stats
 ```
 
-### 5. Export/Import JSON
+### 5. Export/Import
 
 ```bash
 # Export all sessions to JSON
@@ -105,6 +163,15 @@ copilot-chat-archive export --output chats.json
 
 # Export to stdout
 copilot-chat-archive export
+
+# Export as Markdown files
+copilot-chat-archive export-markdown --output-dir ./markdown-archive
+
+# Export a single session
+copilot-chat-archive export-markdown --session-id abc123 --output-dir ./session
+
+# Include file diffs in markdown
+copilot-chat-archive export-markdown --include-diffs
 
 # Import from JSON
 copilot-chat-archive import-json chats.json
@@ -124,7 +191,7 @@ For VS Code Insiders, replace `Code` with `Code - Insiders`.
 
 ## Database Schema
 
-The SQLite database uses the following schema:
+The SQLite database uses FTS5 for full-text search (inspired by [tad-hq/universal-session-viewer](https://github.com/tad-hq/universal-session-viewer)):
 
 ```sql
 -- Sessions table
@@ -137,45 +204,61 @@ CREATE TABLE sessions (
     updated_at TEXT,
     source_file TEXT,
     vscode_edition TEXT,
+    custom_title TEXT,
     imported_at TIMESTAMP
 );
 
--- Messages table with full-text search
+-- Messages table
 CREATE TABLE messages (
     id INTEGER PRIMARY KEY,
     session_id TEXT NOT NULL,
     message_index INTEGER NOT NULL,
     role TEXT NOT NULL,
     content TEXT NOT NULL,
-    timestamp TEXT
+    timestamp TEXT,
+    cached_markdown TEXT
 );
 
 -- Full-text search virtual table
 CREATE VIRTUAL TABLE messages_fts USING fts5(content);
+
+-- Tool invocations, file changes, and command runs are also tracked
 ```
 
 ## Web Viewer Features
 
-The generated HTML archive includes:
+The web interface includes:
 
 - **Session list** with workspace names and message counts
 - **Workspace filtering** to focus on specific projects
-- **Client-side search** to filter sessions
+- **Full-text search** with highlighting
 - **Dark mode support** via CSS `prefers-color-scheme`
 - **Responsive design** for mobile and desktop
 - **Syntax highlighting** for code blocks
+- **Incremental refresh** to update without restarting
 
 ## Development
 
 ```bash
-# Install development dependencies
-pip install -e ".[dev]"
+# Clone the repository
+git clone https://github.com/Arithmomaniac/copilot-repository-tools.git
+cd copilot-repository-tools
+
+# Install uv
+pip install uv
+
+# Sync the workspace (installs all packages in development mode)
+uv sync
 
 # Run tests
-pytest
+uv run pytest
 
 # Run tests with coverage
-pytest --cov=copilot_chat_archive
+uv run pytest --cov
+
+# Run a specific package's CLI
+uv run copilot-chat-archive --help
+uv run copilot-chat-web --help
 ```
 
 ## Related Projects

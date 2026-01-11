@@ -1,7 +1,11 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
-name = "copilot-repository-tools"
+name = "copilot-repository-tools-common"
 version = "0.1.0"
-description = "A collection of tools for VS Code GitHub Copilot chat history"
+description = "Common utilities for Copilot Repository Tools - database, scanner, and exporters"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
@@ -19,27 +23,13 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
+dependencies = [
+    "orjson>=3.9.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/Arithmomaniac/copilot-repository-tools"
 Repository = "https://github.com/Arithmomaniac/copilot-repository-tools"
 
-[tool.uv.workspace]
-members = ["packages/*"]
-
-[tool.uv.sources]
-copilot-repository-tools-common = { workspace = true }
-copilot-repository-tools-cli = { workspace = true }
-copilot-repository-tools-web = { workspace = true }
-
-[dependency-groups]
-dev = [
-    "pytest>=7.0.0",
-    "pytest-cov>=4.0.0",
-    "pytest-playwright>=0.4.0",
-    "pytest-benchmark>=4.0.0",
-]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["packages/common/src", "packages/cli/src", "packages/web/src"]
+[tool.hatch.build.targets.wheel]
+packages = ["src/copilot_repository_tools_common"]

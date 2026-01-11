@@ -1,14 +1,18 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
 [project]
-name = "copilot-repository-tools"
+name = "copilot-repository-tools-web"
 version = "0.1.0"
-description = "A collection of tools for VS Code GitHub Copilot chat history"
+description = "Web interface for Copilot Repository Tools - browse and search VS Code Copilot chat history"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [
     { name = "copilot-repository-tools contributors" }
 ]
-keywords = ["copilot", "vscode", "chat", "archive", "sqlite"]
+keywords = ["copilot", "vscode", "chat", "archive", "sqlite", "web", "flask"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Programming Language :: Python :: 3",
@@ -18,28 +22,30 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
+    "Framework :: Flask",
 ]
+dependencies = [
+    "copilot-repository-tools-common",
+    "flask>=3.0.0",
+    "jinja2>=3.0.0",
+    "markdown>=3.4.0",
+]
+
+[project.scripts]
+copilot-chat-web = "copilot_repository_tools_web:main"
 
 [project.urls]
 Homepage = "https://github.com/Arithmomaniac/copilot-repository-tools"
 Repository = "https://github.com/Arithmomaniac/copilot-repository-tools"
 
-[tool.uv.workspace]
-members = ["packages/*"]
-
 [tool.uv.sources]
 copilot-repository-tools-common = { workspace = true }
-copilot-repository-tools-cli = { workspace = true }
-copilot-repository-tools-web = { workspace = true }
 
-[dependency-groups]
-dev = [
-    "pytest>=7.0.0",
-    "pytest-cov>=4.0.0",
-    "pytest-playwright>=0.4.0",
-    "pytest-benchmark>=4.0.0",
+[tool.hatch.build.targets.wheel]
+packages = ["src/copilot_repository_tools_web"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "src/copilot_repository_tools_web/**/*.py",
+    "src/copilot_repository_tools_web/templates/*.html",
 ]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["packages/common/src", "packages/cli/src", "packages/web/src"]

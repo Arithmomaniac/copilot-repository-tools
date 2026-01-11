@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from copilot_chat_archive.database import Database
-from copilot_chat_archive.scanner import ChatMessage, ChatSession
-from copilot_chat_archive.webapp import create_app, _markdown_to_html, _parse_diff_stats, _extract_filename
+from copilot_repository_tools_common import Database, ChatMessage, ChatSession
+from copilot_repository_tools_web import create_app
+from copilot_repository_tools_web.webapp import _markdown_to_html, _parse_diff_stats, _extract_filename
 
 
 @pytest.fixture
@@ -359,7 +359,7 @@ class TestRefreshWithTestData:
         assert stats["session_count"] == 0
         
         # Manually import the session using the scanner
-        from copilot_chat_archive.scanner import scan_chat_sessions
+        from copilot_repository_tools_common.scanner import scan_chat_sessions
         storage_paths = [(str(tmp_path / "workspaceStorage"), "stable")]
         sessions = list(scan_chat_sessions(storage_paths))
         
@@ -408,7 +408,7 @@ class TestRefreshWithTestData:
         }))
         
         # Import initial session
-        from copilot_chat_archive.scanner import scan_chat_sessions
+        from copilot_repository_tools_common.scanner import scan_chat_sessions
         storage_paths = [(str(tmp_path / "workspaceStorage"), "stable")]
         sessions = list(scan_chat_sessions(storage_paths))
         assert len(sessions) == 1
@@ -492,7 +492,7 @@ class TestRefreshWithTestData:
         }))
         
         # Import session
-        from copilot_chat_archive.scanner import scan_chat_sessions
+        from copilot_repository_tools_common.scanner import scan_chat_sessions
         storage_paths = [(str(tmp_path / "workspaceStorage"), "stable")]
         sessions = list(scan_chat_sessions(storage_paths))
         assert len(sessions) == 1
@@ -550,7 +550,7 @@ class TestHtmlOutputToolInvocations:
     @pytest.fixture
     def session_with_tools(self, tmp_path):
         """Create a session with various tool invocations for testing."""
-        from copilot_chat_archive.scanner import (
+        from copilot_repository_tools_common.scanner import (
             ChatMessage, ChatSession, ContentBlock, ToolInvocation
         )
         
@@ -673,7 +673,7 @@ class TestHtmlOutputThinkingBlocks:
     @pytest.fixture
     def session_with_thinking(self, tmp_path):
         """Create a session with thinking blocks for testing."""
-        from copilot_chat_archive.scanner import ChatMessage, ChatSession, ContentBlock
+        from copilot_repository_tools_common.scanner import ChatMessage, ChatSession, ContentBlock
         
         db_path = tmp_path / "test_thinking.db"
         db = Database(str(db_path))
@@ -749,7 +749,7 @@ class TestHtmlOutputFileChanges:
     @pytest.fixture
     def session_with_file_changes(self, tmp_path):
         """Create a session with file changes for testing."""
-        from copilot_chat_archive.scanner import ChatMessage, ChatSession, FileChange
+        from copilot_repository_tools_common.scanner import ChatMessage, ChatSession, FileChange
         
         db_path = tmp_path / "test_files.db"
         db = Database(str(db_path))
