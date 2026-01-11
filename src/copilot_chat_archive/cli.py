@@ -574,5 +574,59 @@ def import_json(db: str, json_file: str):
     click.echo(f"  Skipped: {skipped} sessions")
 
 
+@main.command()
+@click.option(
+    "--db",
+    "-d",
+    default="copilot_chats.db",
+    help="Path to SQLite database file.",
+    type=click.Path(exists=True, dir_okay=False),
+)
+@click.option("--verbose", "-v", is_flag=True, help="Show verbose output.")
+def rebuild(db: str, verbose: bool):
+    """Rebuild derived tables from raw JSON data.
+    
+    This command drops all derived tables (sessions, messages, tool_invocations,
+    file_changes, command_runs, content_blocks) and recreates them from the
+    compressed raw JSON stored in raw_sessions.
+    
+    Use this after schema changes to regenerate all derived data without needing
+    to re-scan the original VS Code storage.
+    """
+    if not Path(db).exists():
+        click.echo(f"Error: Database file '{db}' not found.", err=True)
+        sys.exit(1)
+
+    database = Database(db)
+    
+    # Check if there are any raw sessions to rebuild from
+    raw_count = database.get_raw_session_count()
+    if raw_count == 0:
+        click.echo("Warning: No raw sessions found in database.", err=True)
+        click.echo("Run 'copilot-chat-archive scan' first to import sessions.", err=True)
+        sys.exit(1)
+
+    click.echo(f"Rebuilding {raw_count} sessions from raw JSON...")
+    
+    def progress_callback(processed, total):
+        if verbose:
+            click.echo(f"  Processed: {processed}/{total}")
+    
+    result = database.rebuild_derived_tables(
+        progress_callback=progress_callback if verbose else None
+    )
+    
+    click.echo(f"\nRebuild complete:")
+    click.echo(f"  Processed: {result['processed']} sessions")
+    if result['errors'] > 0:
+        click.echo(f"  Errors: {result['errors']} sessions")
+    
+    stats = database.get_stats()
+    click.echo(f"\nDatabase now contains:")
+    click.echo(f"  {stats['session_count']} sessions")
+    click.echo(f"  {stats['message_count']} messages")
+    click.echo(f"  {stats['workspace_count']} workspaces")
+
+
 if __name__ == "__main__":
     main()

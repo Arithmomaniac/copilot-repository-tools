@@ -115,6 +115,7 @@ class ChatSession:
     responder_username: str | None = None
     source_file_mtime: float | None = None  # File modification time for incremental refresh
     source_file_size: int | None = None  # File size in bytes for incremental refresh
+    raw_json: bytes | None = None  # Original raw JSON bytes from source file
 
 
 def get_vscode_storage_paths() -> list[tuple[str, str]]:
@@ -896,15 +897,17 @@ def _parse_command_runs(raw_commands: list) -> list[CommandRun]:
     return commands
 
 
-def _get_file_metadata(file_path: str | Path) -> tuple[float | None, int | None]:
+def _get_file_metadata(file_path: str | Path | None) -> tuple[float | None, int | None]:
     """Get file modification time and size for incremental refresh.
     
     Args:
-        file_path: Path to the file.
+        file_path: Path to the file, or None.
         
     Returns:
-        Tuple of (mtime, size) or (None, None) if file cannot be accessed.
+        Tuple of (mtime, size) or (None, None) if file cannot be accessed or path is None.
     """
+    if file_path is None:
+        return None, None
     try:
         stat_result = os.stat(file_path)
         return stat_result.st_mtime, stat_result.st_size
@@ -923,7 +926,8 @@ def _parse_chat_session_file(
     """
     try:
         with open(file_path, "rb") as f:
-            data = orjson.loads(f.read())
+            raw_json_bytes = f.read()
+            data = orjson.loads(raw_json_bytes)
     except (orjson.JSONDecodeError, OSError):
         return None
 
@@ -1127,6 +1131,7 @@ def _parse_chat_session_file(
         responder_username=data.get("responderUsername"),
         source_file_mtime=source_file_mtime,
         source_file_size=source_file_size,
+        raw_json=raw_json_bytes,
     )
 
 
@@ -1149,19 +1154,25 @@ def _parse_vscdb_file(
         for key, value in rows:
             if value:
                 try:
+                    # Preserve raw JSON bytes for storage
+                    raw_json_bytes = value if isinstance(value, bytes) else value.encode('utf-8')
                     data = orjson.loads(value)
                     # Try to parse as session data
                     if isinstance(data, dict):
                         session = _extract_session_from_dict(
-                            data, workspace_name, workspace_path, edition, str(file_path)
+                            data, workspace_name, workspace_path, edition, str(file_path),
+                            raw_json=raw_json_bytes
                         )
                         if session:
                             sessions.append(session)
                     elif isinstance(data, list):
                         for item in data:
                             if isinstance(item, dict):
+                                # For list items, serialize each item back to bytes
+                                item_json = orjson.dumps(item)
                                 session = _extract_session_from_dict(
-                                    item, workspace_name, workspace_path, edition, str(file_path)
+                                    item, workspace_name, workspace_path, edition, str(file_path),
+                                    raw_json=item_json
                                 )
                                 if session:
                                     sessions.append(session)
@@ -1178,7 +1189,7 @@ def _parse_vscdb_file(
 
 def _extract_session_from_dict(
     data: dict, workspace_name: str | None, workspace_path: str | None, 
-    edition: str, source_file: str
+    edition: str, source_file: str, raw_json: bytes | None = None
 ) -> ChatSession | None:
     """Extract a chat session from a dictionary structure.
     
@@ -1380,6 +1391,7 @@ def _extract_session_from_dict(
         responder_username=data.get("responderUsername"),
         source_file_mtime=source_file_mtime,
         source_file_size=source_file_size,
+        raw_json=raw_json,
     )
 
 
