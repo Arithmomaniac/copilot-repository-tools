@@ -268,7 +268,12 @@ class TestRebuildCommand:
         # Click returns exit code 2 for bad parameter (missing required file)
         assert result.exit_code != 0
         # The error could be from Click or our code depending on the check
-        assert "not found" in result.output.lower() or "does not exist" in result.output.lower() or "no such file" in result.output.lower() or result.exit_code == 2
+        error_patterns = ["not found", "does not exist", "no such file"]
+        is_expected_error = (
+            result.exit_code == 2 or
+            any(pattern in result.output.lower() for pattern in error_patterns)
+        )
+        assert is_expected_error
 
     def test_rebuild_command_empty_db(self, runner, tmp_path):
         """Test rebuild command with empty database (no raw sessions)."""

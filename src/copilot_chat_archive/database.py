@@ -178,6 +178,12 @@ class Database:
         "messages",
         "sessions",
     ]
+    
+    # List of triggers that need to be dropped/recreated with derived tables
+    DERIVED_TRIGGERS = ["messages_ai", "messages_ad", "messages_au"]
+    
+    # Compression level for zlib (0-9, 6 is a good balance of speed and compression)
+    COMPRESSION_LEVEL = 6
 
     def __init__(self, db_path: str | Path):
         """Initialize the database connection.
@@ -278,10 +284,10 @@ class Database:
 
             # Store compressed raw JSON in raw_sessions table
             if session.raw_json:
-                compressed_json = zlib.compress(session.raw_json, level=6)
+                compressed_json = zlib.compress(session.raw_json, level=self.COMPRESSION_LEVEL)
             else:
                 # Create minimal JSON from session data if no raw JSON available
-                compressed_json = zlib.compress(b'{}', level=6)
+                compressed_json = zlib.compress(b'{}', level=self.COMPRESSION_LEVEL)
             
             cursor.execute(
                 """
@@ -1054,16 +1060,23 @@ class Database:
             conn.execute("PRAGMA foreign_keys = OFF")
             
             # Drop derived tables in order (FTS first, then dependent tables)
+            # Tables are validated against the predefined DERIVED_TABLES list
             for table in self.DERIVED_TABLES:
+                # Validate table name is alphanumeric with underscores only
+                if not all(c.isalnum() or c == '_' for c in table):
+                    raise ValueError(f"Invalid table name: {table}")
                 try:
-                    cursor.execute(f"DROP TABLE IF EXISTS {table}")
+                    cursor.execute(f"DROP TABLE IF EXISTS {table}")  # noqa: S608
                 except sqlite3.OperationalError:
                     # FTS tables might need special handling
                     pass
             
-            # Drop triggers
-            for trigger in ["messages_ai", "messages_ad", "messages_au"]:
-                cursor.execute(f"DROP TRIGGER IF EXISTS {trigger}")
+            # Drop triggers (validated against DERIVED_TRIGGERS list)
+            for trigger in self.DERIVED_TRIGGERS:
+                # Validate trigger name is alphanumeric with underscores only
+                if not all(c.isalnum() or c == '_' for c in trigger):
+                    raise ValueError(f"Invalid trigger name: {trigger}")
+                cursor.execute(f"DROP TRIGGER IF EXISTS {trigger}")  # noqa: S608
             
             conn.commit()
             
