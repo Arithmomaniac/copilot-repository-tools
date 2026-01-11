@@ -210,58 +210,17 @@ class Database:
             conn.close()
 
     def _ensure_schema(self):
-        """Ensure the database schema exists and migrate if necessary."""
+        """Ensure the database schema exists.
+        
+        With the new two-layer design:
+        - raw_sessions is the source of truth (never needs migration)
+        - Derived tables can be dropped and rebuilt, so no migrations needed
+        """
         with self._get_connection() as conn:
             # Create raw_sessions table first (source of truth)
             conn.executescript(self.RAW_SCHEMA)
             # Create derived tables
             conn.executescript(self.DERIVED_SCHEMA)
-            # Migrate existing databases: add new columns if they don't exist
-            self._migrate_schema(conn)
-
-    def _migrate_schema(self, conn):
-        """Add new columns to existing databases for incremental refresh support."""
-        cursor = conn.cursor()
-        
-        # Check if raw_sessions table exists (for migration from older databases)
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='raw_sessions'")
-        has_raw_sessions = cursor.fetchone() is not None
-        
-        if not has_raw_sessions:
-            # Create raw_sessions table for existing databases
-            conn.executescript(self.RAW_SCHEMA)
-        
-        # Check if the source_file_mtime column exists
-        cursor.execute("PRAGMA table_info(sessions)")
-        session_columns = {row[1] for row in cursor.fetchall()}
-        
-        if "source_file_mtime" not in session_columns:
-            cursor.execute("ALTER TABLE sessions ADD COLUMN source_file_mtime REAL")
-        if "source_file_size" not in session_columns:
-            cursor.execute("ALTER TABLE sessions ADD COLUMN source_file_size INTEGER")
-        
-        # Check if the cached_markdown column exists in messages
-        cursor.execute("PRAGMA table_info(messages)")
-        message_columns = {row[1] for row in cursor.fetchall()}
-        
-        if "cached_markdown" not in message_columns:
-            cursor.execute("ALTER TABLE messages ADD COLUMN cached_markdown TEXT")
-        
-        # Check if the description column exists in content_blocks
-        cursor.execute("PRAGMA table_info(content_blocks)")
-        content_block_columns = {row[1] for row in cursor.fetchall()}
-        
-        if "description" not in content_block_columns:
-            cursor.execute("ALTER TABLE content_blocks ADD COLUMN description TEXT")
-        
-        # Check if the source_type and invocation_message columns exist in tool_invocations
-        cursor.execute("PRAGMA table_info(tool_invocations)")
-        tool_columns = {row[1] for row in cursor.fetchall()}
-        
-        if "source_type" not in tool_columns:
-            cursor.execute("ALTER TABLE tool_invocations ADD COLUMN source_type TEXT")
-        if "invocation_message" not in tool_columns:
-            cursor.execute("ALTER TABLE tool_invocations ADD COLUMN invocation_message TEXT")
 
     def add_session(self, session: ChatSession) -> bool:
         """Add a chat session to the database.
