@@ -73,7 +73,7 @@ class TestCLI:
     def test_stats_missing_db(self, runner, tmp_path):
         """Test stats command with missing database."""
         result = runner.invoke(app, ["stats", "--db", str(tmp_path / "missing.db")])
-        # Click returns exit code 2 for parameter validation errors (exists=True)
+        # Typer returns non-zero exit code for parameter validation errors (exists=True)
         assert result.exit_code != 0
         assert "does not exist" in result.output or "not found" in result.output or "Invalid value" in result.output
 
@@ -178,7 +178,7 @@ class TestCLI:
     def test_serve_missing_db(self, runner, tmp_path):
         """Test serve command with missing database."""
         result = runner.invoke(app, ["serve", "--db", str(tmp_path / "missing.db")])
-        # Click returns exit code 2 for parameter validation errors (exists=True)
+        # Typer returns non-zero exit code for parameter validation errors (exists=True)
         assert result.exit_code != 0
         assert "does not exist" in result.output or "not found" in result.output or "Invalid value" in result.output
 
