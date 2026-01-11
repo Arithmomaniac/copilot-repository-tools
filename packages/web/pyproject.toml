@@ -5,25 +5,8 @@ build-backend = "uv_build"
 [project]
 name = "copilot-repository-tools-web"
 version = "0.1.0"
-description = "Web interface for Copilot Repository Tools - browse and search VS Code Copilot chat history"
-readme = "README.md"
-requires-python = ">=3.10"
-license = "MIT"
-authors = [
-    { name = "copilot-repository-tools contributors" }
-]
-keywords = ["copilot", "vscode", "chat", "archive", "sqlite", "web", "flask"]
-classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
-    "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
-    "Framework :: Flask",
-]
+description = "Web interface for Copilot Repository Tools"
+requires-python = ">=3.12"
 dependencies = [
     "copilot-repository-tools-common",
     "flask>=3.0.0",
@@ -33,10 +16,6 @@ dependencies = [
 
 [project.scripts]
 copilot-chat-web = "copilot_repository_tools_web:main"
-
-[project.urls]
-Homepage = "https://github.com/Arithmomaniac/copilot-repository-tools"
-Repository = "https://github.com/Arithmomaniac/copilot-repository-tools"
 
 [tool.uv]
 package = true

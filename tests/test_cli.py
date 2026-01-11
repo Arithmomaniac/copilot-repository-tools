@@ -175,13 +175,6 @@ class TestCLI:
         assert result.exit_code == 0
         assert "Incremental mode" in result.output
 
-    def test_serve_missing_db(self, runner, tmp_path):
-        """Test serve command with missing database."""
-        result = runner.invoke(app, ["serve", "--db", str(tmp_path / "missing.db")])
-        # Typer returns non-zero exit code for parameter validation errors (exists=True)
-        assert result.exit_code != 0
-        assert "does not exist" in result.output or "not found" in result.output or "Invalid value" in result.output
-
     def test_export_markdown_command(self, runner, temp_db_with_data, tmp_path):
         """Test export-markdown command exports sessions to markdown files."""
         output_dir = tmp_path / "markdown_output"

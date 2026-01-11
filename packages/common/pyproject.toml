@@ -5,31 +5,11 @@ build-backend = "uv_build"
 [project]
 name = "copilot-repository-tools-common"
 version = "0.1.0"
-description = "Common utilities for Copilot Repository Tools - database, scanner, and exporters"
-readme = "README.md"
-requires-python = ">=3.10"
-license = "MIT"
-authors = [
-    { name = "copilot-repository-tools contributors" }
-]
-keywords = ["copilot", "vscode", "chat", "archive", "sqlite"]
-classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
-    "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
-]
+description = "Common utilities for Copilot Repository Tools"
+requires-python = ">=3.12"
 dependencies = [
     "orjson>=3.9.0",
 ]
-
-[project.urls]
-Homepage = "https://github.com/Arithmomaniac/copilot-repository-tools"
-Repository = "https://github.com/Arithmomaniac/copilot-repository-tools"
 
 [tool.uv]
 package = true

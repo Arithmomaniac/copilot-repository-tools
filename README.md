@@ -119,9 +119,6 @@ Browse your chat archive in a web interface:
 # Start the web server (uses copilot_chats.db by default)
 copilot-chat-web
 
-# Or use the CLI
-copilot-chat-archive serve
-
 # Custom options
 copilot-chat-web --db my_chats.db --port 8080 --title "My Copilot Chats"
 ```

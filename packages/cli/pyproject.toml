@@ -5,25 +5,8 @@ build-backend = "uv_build"
 [project]
 name = "copilot-repository-tools-cli"
 version = "0.1.0"
-description = "CLI for Copilot Repository Tools - scan, search, and export VS Code Copilot chat history"
-readme = "README.md"
-requires-python = ">=3.10"
-license = "MIT"
-authors = [
-    { name = "copilot-repository-tools contributors" }
-]
-keywords = ["copilot", "vscode", "chat", "archive", "sqlite", "cli"]
-classifiers = [
-    "Development Status :: 3 - Alpha",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
-    "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
-    "Environment :: Console",
-]
+description = "CLI for Copilot Repository Tools"
+requires-python = ">=3.12"
 dependencies = [
     "copilot-repository-tools-common",
     "typer>=0.12.0",
@@ -32,10 +15,6 @@ dependencies = [
 
 [project.scripts]
 copilot-chat-archive = "copilot_repository_tools_cli:run"
-
-[project.urls]
-Homepage = "https://github.com/Arithmomaniac/copilot-repository-tools"
-Repository = "https://github.com/Arithmomaniac/copilot-repository-tools"
 
 [tool.uv]
 package = true
