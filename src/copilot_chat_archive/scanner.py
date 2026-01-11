@@ -5,6 +5,8 @@ Data structures are informed by:
 - microsoft/vscode-copilot-chat (https://github.com/microsoft/vscode-copilot-chat)
 """
 
+import difflib
+import json
 import os
 import platform
 import sqlite3
@@ -30,6 +32,8 @@ class ToolInvocation:
     status: str | None = None
     start_time: int | None = None
     end_time: int | None = None
+    source_type: str | None = None  # 'mcp' or 'internal'
+    invocation_message: str | None = None  # Pretty display message (e.g., "Reading file.txt, lines 1 to 100")
 
 
 @dataclass
@@ -71,6 +75,7 @@ class ContentBlock:
     
     kind: str  # 'text', 'thinking', 'tool', 'promptFile', etc.
     content: str
+    description: str | None = None  # Optional description (e.g., generatedTitle for thinking blocks)
 
 
 @dataclass
@@ -87,6 +92,7 @@ class ChatMessage:
     file_changes: list[FileChange] = field(default_factory=list)
     command_runs: list[CommandRun] = field(default_factory=list)
     content_blocks: list[ContentBlock] = field(default_factory=list)  # Structured content with kind
+    cached_markdown: str | None = None  # Pre-computed markdown for this message
 
 
 @dataclass
@@ -362,15 +368,296 @@ def _extract_edit_group_text(item: dict, edit_type: str = "Edited") -> str | Non
     return None
 
 
-def _merge_content_blocks(blocks: list[tuple[str, str]]) -> list[ContentBlock]:
+def _extract_uri_path(uri: dict) -> str:
+    """Extract the full path from a VS Code URI object."""
+    if not isinstance(uri, dict):
+        return ""
+    
+    path = uri.get("fsPath") or uri.get("path") or uri.get("external") or ""
+    
+    # Handle file:// URIs
+    if isinstance(path, str) and path.startswith("file://"):
+        path = path[7:]
+    
+    return path
+
+
+def _apply_edits_to_content(original_content: str, edits: list[list[dict]]) -> tuple[str, str] | None:
+    """Apply edits to original content and return (original, modified) for diff generation.
+    
+    VS Code textEditGroup stores edits as:
+    edits: [[{range: {startLineNumber, startColumn, endLineNumber, endColumn}, text: "new content"}], ...]
+    
+    Returns tuple of (original_content, modified_content) for diff generation,
+    or None if edits cannot be applied.
+    """
+    if not edits or not isinstance(edits, list) or not original_content:
+        return None
+    
+    # Split content into lines (1-indexed to match VS Code)
+    lines = original_content.split("\n")
+    modified_lines = lines.copy()
+    
+    # Collect all edits and sort by position (reverse order to apply from end to start)
+    all_edits = []
+    for edit_batch in edits:
+        if not isinstance(edit_batch, list):
+            continue
+        for edit in edit_batch:
+            if isinstance(edit, dict) and "range" in edit:
+                all_edits.append(edit)
+    
+    # Sort by start position, reverse order (so we can apply from end to beginning)
+    all_edits.sort(
+        key=lambda e: (
+            e.get("range", {}).get("startLineNumber", 0),
+            e.get("range", {}).get("startColumn", 0)
+        ),
+        reverse=True
+    )
+    
+    try:
+        for edit in all_edits:
+            edit_range = edit.get("range", {})
+            new_text = edit.get("text", "")
+            
+            start_line = edit_range.get("startLineNumber", 1) - 1  # Convert to 0-indexed
+            start_col = edit_range.get("startColumn", 1) - 1
+            end_line = edit_range.get("endLineNumber", 1) - 1
+            end_col = edit_range.get("endColumn", 1) - 1
+            
+            # Validate line indices
+            if start_line < 0 or end_line >= len(modified_lines):
+                continue
+            
+            # Validate column indices
+            if start_col < 0 or end_col < 0:
+                continue
+            
+            # Apply the edit
+            if start_line == end_line:
+                # Single line edit - validate column bounds
+                line = modified_lines[start_line]
+                if start_col > len(line) or end_col > len(line):
+                    continue
+                modified_lines[start_line] = line[:start_col] + new_text + line[end_col:]
+            else:
+                # Multi-line edit - validate column bounds on each line
+                first_line = modified_lines[start_line]
+                last_line = modified_lines[end_line] if end_line < len(modified_lines) else ""
+                if start_col > len(first_line) or end_col > len(last_line):
+                    continue
+                first_part = first_line[:start_col]
+                last_part = last_line[end_col:]
+                new_lines = (first_part + new_text + last_part).split("\n")
+                modified_lines[start_line:end_line + 1] = new_lines
+        
+        return (original_content, "\n".join(modified_lines))
+    except (IndexError, KeyError, TypeError):
+        return None
+
+
+def _generate_unified_diff(original: str, modified: str, filename: str = "file") -> str:
+    """Generate a unified diff between original and modified content."""
+    original_lines = original.splitlines(keepends=True)
+    modified_lines = modified.splitlines(keepends=True)
+    
+    diff = difflib.unified_diff(
+        original_lines,
+        modified_lines,
+        fromfile=f"a/{filename}",
+        tofile=f"b/{filename}",
+    )
+    
+    return "".join(diff)
+
+
+def _format_edits_as_diff(
+    edits: list[list[dict]],
+    original_content: str | None = None,
+    filename: str = "file"
+) -> str | None:
+    """Format textEditGroup edits as a diff-style representation.
+    
+    If original_content is provided (from a recent file read), generates a proper unified diff.
+    Otherwise, generates a simplified diff showing only the insertions.
+    
+    Args:
+        edits: List of edit batches. Each batch is a list of dicts with
+               {range: {startLineNumber, startColumn, endLineNumber, endColumn}, text: "new content"}
+        original_content: Optional original file content from a recent read
+        filename: Filename to use in the diff header
+        
+    Returns:
+        Diff string or None if no edits
+    """
+    if not edits or not isinstance(edits, list):
+        return None
+    
+    # If we have original content, try to generate a proper unified diff
+    if original_content:
+        result = _apply_edits_to_content(original_content, edits)
+        if result:
+            original, modified = result
+            diff = _generate_unified_diff(original, modified, filename)
+            if diff:
+                return diff
+    
+    # Fallback: Generate simplified diff showing insertions
+    diff_lines = []
+    
+    for edit_batch in edits:
+        if not isinstance(edit_batch, list):
+            continue
+        
+        for edit in edit_batch:
+            if not isinstance(edit, dict):
+                continue
+            
+            edit_range = edit.get("range", {})
+            new_text = edit.get("text", "")
+            
+            if not new_text:
+                continue
+            
+            # Extract line numbers
+            start_line = edit_range.get("startLineNumber", "?")
+            end_line = edit_range.get("endLineNumber", "?")
+            
+            # Format as a simple diff showing the insertion
+            if start_line == end_line:
+                diff_lines.append(f"@@ Line {start_line} @@")
+            else:
+                diff_lines.append(f"@@ Lines {start_line}-{end_line} @@")
+            
+            # Show the new text with + prefix for each line
+            for line in new_text.split("\n"):
+                diff_lines.append(f"+ {line}")
+            
+            diff_lines.append("")  # Empty line between edits
+    
+    if diff_lines:
+        return "\n".join(diff_lines).rstrip()
+    
+    return None
+
+
+def _parse_text_edit_group(item: dict, file_contents_cache: dict | None = None) -> FileChange | None:
+    """Parse a textEditGroup item into a FileChange object with diff content.
+    
+    VS Code stores file edits as textEditGroup items with:
+    - uri: VS Code URI object for the file
+    - edits: Array of edit batches, each containing edits with range and text
+    
+    Args:
+        item: The textEditGroup item from the response
+        file_contents_cache: Optional dict mapping file paths to their content
+                            (from recent file reads in the same response)
+    """
+    uri = item.get("uri")
+    if not isinstance(uri, dict):
+        return None
+    
+    path = _extract_uri_path(uri)
+    if not path:
+        return None
+    
+    # Extract filename for diff header
+    filename = _extract_uri_filename(uri) or "file"
+    
+    # Check if we have cached content for this file
+    original_content = None
+    if file_contents_cache:
+        # Try direct path match first
+        original_content = file_contents_cache.get(path)
+        
+        if not original_content:
+            # Try with just the filename as key
+            original_content = file_contents_cache.get(filename)
+        
+        if not original_content:
+            # Try normalized path comparison using os.path for robust matching
+            path_basename = os.path.basename(path) if path else ""
+            for cached_path, content in file_contents_cache.items():
+                cached_basename = os.path.basename(cached_path) if cached_path else ""
+                # Match if basenames are the same (case-sensitive)
+                if path_basename and cached_basename and path_basename == cached_basename:
+                    original_content = content
+                    break
+    
+    # Generate diff from edits
+    edits = item.get("edits", [])
+    diff = _format_edits_as_diff(edits, original_content, filename)
+    
+    return FileChange(
+        path=path,
+        diff=diff,
+        content=None,
+        explanation=None,
+        language_id=None,
+    )
+
+
+def _extract_file_content_from_tool(item: dict) -> tuple[str, str] | None:
+    """Extract file path and content from a readFile tool invocation result.
+    
+    VS Code stores file read results in resultDetails for MCP tools,
+    or in the tool's result content.
+    
+    Returns tuple of (file_path, content) or None if not a file read.
+    """
+    if not isinstance(item, dict):
+        return None
+    
+    tool_id = item.get("toolId", "")
+    
+    # Check if this is a file read tool
+    if "readFile" not in tool_id and "read_file" not in tool_id.lower():
+        return None
+    
+    # Get file path from toolSpecificData
+    tool_data = item.get("toolSpecificData", {})
+    file_path = None
+    
+    if isinstance(tool_data, dict):
+        file_info = tool_data.get("file", {})
+        if isinstance(file_info, dict):
+            file_uri = file_info.get("uri", {})
+            if isinstance(file_uri, dict):
+                file_path = file_uri.get("fsPath") or file_uri.get("path")
+    
+    if not file_path:
+        return None
+    
+    # Get file content from resultDetails
+    result_details = item.get("resultDetails", {})
+    content = None
+    
+    if isinstance(result_details, dict):
+        # MCP format: resultDetails.output is an array of {value: "content"}
+        outputs = result_details.get("output", [])
+        if isinstance(outputs, list):
+            for out in outputs:
+                if isinstance(out, dict) and out.get("value"):
+                    content = str(out["value"])
+                    break
+    
+    if content:
+        return (file_path, content)
+    
+    return None
+
+
+def _merge_content_blocks(blocks: list[tuple[str, str, str | None]]) -> list[ContentBlock]:
     """Merge consecutive non-thinking content blocks into single blocks.
     
-    Takes a list of (kind, content) tuples and merges consecutive non-thinking
+    Takes a list of (kind, content, description) tuples and merges consecutive non-thinking
     blocks into single ContentBlock objects. This ensures that inline references
     and text flow together as a single rendered unit.
     
     Args:
-        blocks: List of (kind, content) tuples where kind is 'thinking' or 'text'
+        blocks: List of (kind, content, description) tuples where kind is 'thinking' or 'text'
+                and description is optional (used for thinking block descriptions)
     
     Returns:
         List of ContentBlock objects with consecutive text blocks merged
@@ -381,8 +668,16 @@ def _merge_content_blocks(blocks: list[tuple[str, str]]) -> list[ContentBlock]:
     merged = []
     current_kind = None
     current_content = []
+    current_description = None
     
-    for kind, content in blocks:
+    for block in blocks:
+        # Handle both 2-tuples and 3-tuples for backward compatibility
+        if len(block) == 3:
+            kind, content, description = block
+        else:
+            kind, content = block
+            description = None
+        
         # Never merge toolInvocation blocks - each should be separate for individual italic formatting
         # Keep thinking separate, merge other text-like content
         if kind == "toolInvocation":
@@ -390,10 +685,12 @@ def _merge_content_blocks(blocks: list[tuple[str, str]]) -> list[ContentBlock]:
             if current_content:
                 merged.append(ContentBlock(
                     kind=current_kind or "text",
-                    content="".join(current_content)
+                    content="".join(current_content),
+                    description=current_description
                 ))
                 current_content = []
                 current_kind = None
+                current_description = None
             # Add toolInvocation as standalone block
             merged.append(ContentBlock(kind="toolInvocation", content=content))
         elif kind == "thinking":
@@ -401,14 +698,19 @@ def _merge_content_blocks(blocks: list[tuple[str, str]]) -> list[ContentBlock]:
             if effective_kind == current_kind:
                 current_content.append("\n\n")
                 current_content.append(content)
+                # Keep the first description if we're merging thinking blocks
+                if description and not current_description:
+                    current_description = description
             else:
                 if current_content:
                     merged.append(ContentBlock(
                         kind=current_kind or "text",
-                        content="".join(current_content)
+                        content="".join(current_content),
+                        description=current_description
                     ))
                 current_kind = effective_kind
                 current_content = [content]
+                current_description = description
         else:
             # Regular text content - can be merged
             effective_kind = "text"
@@ -424,16 +726,19 @@ def _merge_content_blocks(blocks: list[tuple[str, str]]) -> list[ContentBlock]:
                 if current_content:
                     merged.append(ContentBlock(
                         kind=current_kind or "text",
-                        content="".join(current_content)
+                        content="".join(current_content),
+                        description=current_description
                     ))
                 current_kind = effective_kind
                 current_content = [content]
+                current_description = None
     
     # Flush any remaining content
     if current_content:
         merged.append(ContentBlock(
             kind=current_kind or "text",
-            content="".join(current_content)
+            content="".join(current_content),
+            description=current_description
         ))
     
     return merged
@@ -443,7 +748,12 @@ def _parse_tool_invocation_serialized(item: dict) -> ToolInvocation | None:
     """Parse a single toolInvocationSerialized item from VS Code response.
     
     VS Code stores tool invocations as individual response items with kind=toolInvocationSerialized.
-    Structure: {kind, toolId, invocationMessage, toolSpecificData, isComplete, ...}
+    Structure: {kind, toolId, invocationMessage, toolSpecificData, isComplete, resultDetails, ...}
+    
+    Tool types and their data:
+    - Terminal tools: toolSpecificData.commandLine (can be string or {original, toolEdited})
+    - File tools: toolSpecificData.file.uri
+    - MCP tools: resultDetails.input (string) and resultDetails.output (array)
     """
     if not isinstance(item, dict):
         return None
@@ -454,29 +764,85 @@ def _parse_tool_invocation_serialized(item: dict) -> ToolInvocation | None:
     if isinstance(invocation_msg, dict) and "value" in invocation_msg:
         invocation_msg = invocation_msg["value"]
     tool_data = item.get("toolSpecificData", {})
+    result_details = item.get("resultDetails", {})
     
-    # Extract input from toolSpecificData (for terminal commands, this is commandLine)
+    # Extract input from toolSpecificData based on tool kind
     input_data = None
+    result_data = None
+    
     if isinstance(tool_data, dict):
-        # Terminal command data
+        kind = tool_data.get("kind", "")
+        
+        # Terminal command data - commandLine can be string or object
         if "commandLine" in tool_data:
-            input_data = str(tool_data.get("commandLine"))
+            cmd_line = tool_data.get("commandLine")
+            if isinstance(cmd_line, dict):
+                # Use toolEdited if available (modified by AI), otherwise original
+                input_data = cmd_line.get("toolEdited") or cmd_line.get("original")
+            else:
+                input_data = str(cmd_line) if cmd_line else None
+        
+        # File tool data - extract file URI
+        elif "file" in tool_data and isinstance(tool_data.get("file"), dict):
+            file_info = tool_data["file"]
+            file_uri = file_info.get("uri", {})
+            if isinstance(file_uri, dict):
+                # Extract path from VS Code URI object
+                file_path = file_uri.get("fsPath") or file_uri.get("path") or ""
+                if file_path:
+                    input_data = file_path
+            elif isinstance(file_uri, str):
+                input_data = file_uri
+        
         # Other tool types might have different keys
         elif "input" in tool_data:
             val = tool_data.get("input")
             input_data = str(val) if val is not None else None
     
+    # Extract MCP tool results if available
+    if isinstance(result_details, dict):
+        # MCP tools store input/output in resultDetails
+        if "input" in result_details:
+            mcp_input = result_details.get("input")
+            if mcp_input and not input_data:
+                input_data = str(mcp_input)
+        
+        # Extract output for MCP tools
+        if "output" in result_details:
+            outputs = result_details.get("output", [])
+            if isinstance(outputs, list):
+                output_parts = []
+                for out in outputs:
+                    if isinstance(out, dict) and out.get("value"):
+                        output_parts.append(str(out["value"]))
+                if output_parts:
+                    result_data = "\n".join(output_parts)
+    
     # Status: use isComplete to determine status
     status = "completed" if item.get("isComplete") else "pending"
+    
+    # Extract source type (mcp vs internal)
+    source = item.get("source", {})
+    source_type = source.get("type") if isinstance(source, dict) else None
+    
+    # For terminal tools, also extract command output if available
+    if isinstance(tool_data, dict) and tool_data.get("kind") == "terminal":
+        terminal_output = tool_data.get("terminalCommandOutput", {})
+        if isinstance(terminal_output, dict) and terminal_output.get("text"):
+            if not result_data:
+                result_data = terminal_output.get("text")
     
     return ToolInvocation(
         name=str(tool_id) if tool_id else "unknown",
         input=input_data,
-        result=None,  # Result not typically stored in the serialized format
+        result=result_data,
         status=status,
         start_time=None,
         end_time=None,
+        source_type=source_type,
+        invocation_message=invocation_msg if isinstance(invocation_msg, str) else None,
     )
+
 
 
 def _parse_tool_invocations(raw_invocations: list) -> list[ToolInvocation]:
@@ -596,7 +962,17 @@ def _parse_chat_session_file(
                     tool_invocations = []
                     file_changes = []
                     command_runs = []
+                    file_contents_cache = {}  # Cache file contents from readFile tools
                     
+                    # First pass: collect file contents from readFile tool invocations
+                    for item in response_items:
+                        if isinstance(item, dict) and item.get("kind") == "toolInvocationSerialized":
+                            file_content = _extract_file_content_from_tool(item)
+                            if file_content:
+                                file_path, content = file_content
+                                file_contents_cache[file_path] = content
+                    
+                    # Second pass: process all response items
                     for item in response_items:
                         if isinstance(item, dict):
                             kind = item.get("kind")
@@ -614,7 +990,7 @@ def _parse_chat_session_file(
                                         msg_text = msg_text["value"]
                                     msg_text = str(msg_text)
                                     response_content.append(msg_text)
-                                    raw_blocks.append(("toolInvocation", msg_text))
+                                    raw_blocks.append(("toolInvocation", msg_text, None))
                             
                             # Extract text content with kind info
                             elif item.get("value"):
@@ -627,7 +1003,11 @@ def _parse_chat_session_file(
                                     value = str(value)
                                 kind = kind or "text"
                                 response_content.append(value)
-                                raw_blocks.append((kind, value))
+                                # For thinking blocks, extract the generatedTitle as description
+                                description = None
+                                if kind == "thinking":
+                                    description = item.get("generatedTitle")
+                                raw_blocks.append((kind, value, description))
                             # Handle inline file references (VS Code Copilot Chat format)
                             # These appear as separate array items with kind="inlineReference"
                             elif kind == "inlineReference":
@@ -635,36 +1015,28 @@ def _parse_chat_session_file(
                                 if ref_name:
                                     # Append as inline text to flow with surrounding content
                                     response_content.append(ref_name)
-                                    raw_blocks.append(("text", ref_name))
+                                    raw_blocks.append(("text", ref_name, None))
                             # Handle file edit indicators (textEditGroup, notebookEditGroup, codeblockUri)
                             elif kind == "textEditGroup":
                                 edit_text = _extract_edit_group_text(item, "Edited")
                                 if edit_text:
                                     response_content.append(edit_text)
-                                    raw_blocks.append(("toolInvocation", edit_text))
-                                # Also parse the actual edits as FileChange objects
-                                if item.get("edits"):
-                                    for edit_item in item.get("edits", []):
-                                        if isinstance(edit_item, dict):
-                                            uri = edit_item.get("uri", "")
-                                            if uri:
-                                                file_changes.append(FileChange(
-                                                    path=uri,
-                                                    diff=None,  # Diff not stored in this format
-                                                    content=None,
-                                                    explanation=None,
-                                                    language_id=None,
-                                                ))
+                                    raw_blocks.append(("toolInvocation", edit_text, None))
+                                # Parse the actual edits as FileChange with diff content
+                                # Pass file contents cache for better diff generation
+                                file_change = _parse_text_edit_group(item, file_contents_cache)
+                                if file_change:
+                                    file_changes.append(file_change)
                             elif kind == "notebookEditGroup":
                                 edit_text = _extract_edit_group_text(item, "Edited notebook")
                                 if edit_text:
                                     response_content.append(edit_text)
-                                    raw_blocks.append(("toolInvocation", edit_text))
+                                    raw_blocks.append(("toolInvocation", edit_text, None))
                             elif kind == "codeblockUri":
                                 edit_text = _extract_edit_group_text(item, "Editing")
                                 if edit_text:
                                     response_content.append(edit_text)
-                                    raw_blocks.append(("toolInvocation", edit_text))
+                                    raw_blocks.append(("toolInvocation", edit_text, None))
                             
                             # Extract tool invocations (legacy format - nested array)
                             if item.get("toolInvocations"):
@@ -845,7 +1217,17 @@ def _extract_session_from_dict(
                     tool_invocations = []
                     file_changes = []
                     command_runs = []
+                    file_contents_cache = {}  # Cache file contents from readFile tools
                     
+                    # First pass: collect file contents from readFile tool invocations
+                    for item in response_items:
+                        if isinstance(item, dict) and item.get("kind") == "toolInvocationSerialized":
+                            file_content = _extract_file_content_from_tool(item)
+                            if file_content:
+                                file_path, content = file_content
+                                file_contents_cache[file_path] = content
+                    
+                    # Second pass: process all response items
                     for item in response_items:
                         if isinstance(item, dict):
                             kind = item.get("kind")
@@ -863,7 +1245,7 @@ def _extract_session_from_dict(
                                         msg_text = msg_text["value"]
                                     msg_text = str(msg_text)
                                     response_content.append(msg_text)
-                                    raw_blocks.append(("toolInvocation", msg_text))
+                                    raw_blocks.append(("toolInvocation", msg_text, None))
                             
                             # Extract text content with kind info
                             elif item.get("value"):
@@ -876,45 +1258,37 @@ def _extract_session_from_dict(
                                     value = str(value)
                                 kind = kind or "text"
                                 response_content.append(value)
-                                raw_blocks.append((kind, value))
+                                # For thinking blocks, extract the generatedTitle as description
+                                description = None
+                                if kind == "thinking":
+                                    description = item.get("generatedTitle")
+                                raw_blocks.append((kind, value, description))
                             # Handle inline file references (VS Code Copilot Chat format)
                             elif kind == "inlineReference":
                                 ref_name = _extract_inline_reference_name(item)
                                 if ref_name:
                                     response_content.append(ref_name)
-                                    raw_blocks.append(("text", ref_name))
+                                    raw_blocks.append(("text", ref_name, None))
                             # Handle file edit indicators
                             elif kind == "textEditGroup":
                                 edit_text = _extract_edit_group_text(item, "Edited")
                                 if edit_text:
                                     response_content.append(edit_text)
-                                    raw_blocks.append(("toolInvocation", edit_text))
-                                # Parse actual edits
-                                if item.get("edits"):
-                                    for edit_item in item.get("edits", []):
-                                        if isinstance(edit_item, dict):
-                                            uri = edit_item.get("uri", "")
-                                            # URI might be a dict with $mid, path, etc.
-                                            if isinstance(uri, dict):
-                                                uri = uri.get("path", uri.get("fsPath", ""))
-                                            if uri and isinstance(uri, str):
-                                                file_changes.append(FileChange(
-                                                    path=uri,
-                                                    diff=None,
-                                                    content=None,
-                                                    explanation=None,
-                                                    language_id=None,
-                                                ))
+                                    raw_blocks.append(("toolInvocation", edit_text, None))
+                                # Parse actual edits with file contents cache for better diffs
+                                file_change = _parse_text_edit_group(item, file_contents_cache)
+                                if file_change:
+                                    file_changes.append(file_change)
                             elif kind == "notebookEditGroup":
                                 edit_text = _extract_edit_group_text(item, "Edited notebook")
                                 if edit_text:
                                     response_content.append(edit_text)
-                                    raw_blocks.append(("toolInvocation", edit_text))
+                                    raw_blocks.append(("toolInvocation", edit_text, None))
                             elif kind == "codeblockUri":
                                 edit_text = _extract_edit_group_text(item, "Editing")
                                 if edit_text:
                                     response_content.append(edit_text)
-                                    raw_blocks.append(("toolInvocation", edit_text))
+                                    raw_blocks.append(("toolInvocation", edit_text, None))
                             
                             # Extract tool invocations (legacy format)
                             if item.get("toolInvocations"):
@@ -923,17 +1297,17 @@ def _extract_session_from_dict(
                                 edit_text = _extract_edit_group_text(item, "Edited")
                                 if edit_text:
                                     response_content.append(edit_text)
-                                    raw_blocks.append(("toolInvocation", edit_text))
+                                    raw_blocks.append(("toolInvocation", edit_text, None))
                             elif item.get("kind") == "notebookEditGroup":
                                 edit_text = _extract_edit_group_text(item, "Edited notebook")
                                 if edit_text:
                                     response_content.append(edit_text)
-                                    raw_blocks.append(("toolInvocation", edit_text))
+                                    raw_blocks.append(("toolInvocation", edit_text, None))
                             elif item.get("kind") == "codeblockUri":
                                 edit_text = _extract_edit_group_text(item, "Editing")
                                 if edit_text:
                                     response_content.append(edit_text)
-                                    raw_blocks.append(("toolInvocation", edit_text))
+                                    raw_blocks.append(("toolInvocation", edit_text, None))
                             if item.get("toolInvocations"):
                                 tool_invocations.extend(_parse_tool_invocations(item["toolInvocations"]))
                             for key in ("fileChanges", "fileEdits", "files"):

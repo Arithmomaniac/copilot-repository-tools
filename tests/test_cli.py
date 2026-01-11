@@ -3,6 +3,7 @@
 import json
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from click.testing import CliRunner
@@ -16,6 +17,13 @@ from copilot_chat_archive.scanner import ChatMessage, ChatSession
 def runner():
     """Create a CLI test runner."""
     return CliRunner()
+
+
+@pytest.fixture
+def mock_no_vscode_paths():
+    """Mock get_vscode_storage_paths to return empty list for faster tests."""
+    with patch("copilot_chat_archive.cli.get_vscode_storage_paths", return_value=[]):
+        yield
 
 
 @pytest.fixture
@@ -49,7 +57,7 @@ class TestCLI:
         assert result.exit_code == 0
         assert "0.1.0" in result.output
 
-    def test_scan_no_paths(self, runner, tmp_path):
+    def test_scan_no_paths(self, runner, tmp_path, mock_no_vscode_paths):
         """Test scan command with no valid paths."""
         db_path = tmp_path / "test.db"
         result = runner.invoke(main, ["scan", "--db", str(db_path)])
@@ -136,7 +144,7 @@ class TestCLI:
         stats = db.get_stats()
         assert stats["session_count"] == 1
 
-    def test_scan_full_flag(self, runner, tmp_path):
+    def test_scan_full_flag(self, runner, tmp_path, mock_no_vscode_paths):
         """Test scan command with --full flag."""
         db_path = tmp_path / "full_test.db"
         
@@ -159,7 +167,7 @@ class TestCLI:
         assert result.exit_code == 0
         assert "Full mode" in result.output or "Updated:" in result.output
 
-    def test_scan_incremental_default(self, runner, tmp_path):
+    def test_scan_incremental_default(self, runner, tmp_path, mock_no_vscode_paths):
         """Test that scan command uses incremental mode by default."""
         db_path = tmp_path / "incremental_test.db"
         

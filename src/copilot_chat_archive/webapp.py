@@ -3,7 +3,7 @@
 from datetime import datetime
 from urllib.parse import unquote
 
-from flask import Flask, render_template, request, redirect, url_for, session
+from flask import Flask, render_template, request, redirect, url_for, session, jsonify
 import markdown
 
 from .database import Database
@@ -38,24 +38,35 @@ def _markdown_to_html(text: str) -> str:
     
     # Replace common VS Code Copilot UI patterns with proper markdown
     import re
+    from urllib.parse import unquote
+    
+    def extract_filename_from_file_uri(uri: str) -> str:
+        """Extract the filename from a file:// URI."""
+        # Decode URL encoding and get the leaf name
+        decoded = unquote(uri)
+        # Remove file:// prefix and any anchor
+        path = decoded.replace('file:///', '').split('#')[0]
+        # Get leaf name
+        if '/' in path:
+            return path.split('/')[-1]
+        if '\\' in path:
+            return path.split('\\')[-1]
+        return path
+    
+    # Handle empty-text links with file:// URIs: [](file://...) -> `filename`
+    # This covers patterns like "Reading [](file://...)" or "Created [](file://...)"
+    def replace_empty_file_link(match):
+        uri = match.group(1)
+        filename = extract_filename_from_file_uri(uri)
+        return f'`{filename}`'
+    
+    text = re.sub(r'\[\]\(file://([^)]+)\)', replace_empty_file_link, text)
     
     # "Using "Tool Name"" -> _Using "Tool Name"_
     text = re.sub(r'^(Using ["""][^"""]+["""])$', r'_\1_', text, flags=re.MULTILINE)
     
-    # "_Creating [](file://...)_" -> "_Creating filename_" (extract leaf name within italics)
-    text = re.sub(r'_Creating \[\]\(file://[^)]+/([^/)]+)\)_', r'_Creating \1_', text)
-    
-    # "_Reading [](file://...)_" -> "_Reading filename_" (extract leaf name within italics)
-    text = re.sub(r'_Reading \[\]\(file://[^)]+/([^/)]+)\)_', r'_Reading \1_', text)
-    
     # "_Edited `filename`_" -> "_Edited filename_" (remove backticks within italics)
     text = re.sub(r'_Edited `([^`]+)`_', r'_Edited \1_', text)
-    
-    # "Created [](file://...)" -> Better link text
-    text = re.sub(r'Created \[\]\((file://[^)]+)\)', r'Created file: [\1](\1)', text)
-    
-    # "Read [](file://...)" -> Better link text  
-    text = re.sub(r'Read \[\]\((file://[^)]+)\)', r'Read file: [\1](\1)', text)
     
     # "Ran terminal command:" -> _Ran terminal command:_
     text = re.sub(r'^(Ran terminal command:.*)$', r'_\1_', text, flags=re.MULTILINE)
@@ -144,6 +155,54 @@ def _extract_filename(path: str) -> str:
     return path
 
 
+def _match_tool_for_block(block_content: str, tools: list, used_indices: set) -> tuple:
+    """Match a tool invocation block content to a tool from the list.
+    
+    The block content contains text like "Running `pipelines_get_build_status`"
+    but the tool name might be "mcp_ado-mcp_pipelines_get_build_status".
+    We need to match by finding if the short name appears in the full tool name.
+    
+    Args:
+        block_content: The content of the toolInvocation block.
+        tools: List of ToolInvocation objects.
+        used_indices: Set of already used tool indices (to avoid duplicates).
+        
+    Returns:
+        Tuple of (matched_tool or None, updated used_indices set).
+    """
+    if not tools:
+        return None, used_indices
+    
+    # Extract the tool name from backticks in the content
+    # e.g., "Running `pipelines_get_build_status`" -> "pipelines_get_build_status"
+    import re
+    match = re.search(r'`([^`]+)`', block_content)
+    short_name = match.group(1) if match else None
+    
+    # Also try to extract from "Running X" pattern without backticks
+    if not short_name:
+        match = re.search(r'Running\s+(\S+)', block_content)
+        short_name = match.group(1) if match else None
+    
+    if short_name:
+        # Try to find a tool whose name ends with or contains the short name
+        for i, tool in enumerate(tools):
+            if i in used_indices:
+                continue
+            # Check if short_name appears in the tool name (case-insensitive)
+            if short_name.lower() in tool.name.lower() or tool.name.lower().endswith(short_name.lower()):
+                used_indices = used_indices | {i}
+                return tool, used_indices
+    
+    # Fallback: try sequential matching for tools not yet used
+    for i, tool in enumerate(tools):
+        if i not in used_indices:
+            used_indices = used_indices | {i}
+            return tool, used_indices
+    
+    return None, used_indices
+
+
 def create_app(db_path: str, title: str = "Copilot Chat Archive", storage_paths: list | None = None) -> Flask:
     """Create and configure the Flask application.
 
@@ -173,6 +232,9 @@ def create_app(db_path: str, title: str = "Copilot Chat Archive", storage_paths:
     app.jinja_env.filters["format_timestamp"] = _format_timestamp
     app.jinja_env.filters["parse_diff_stats"] = _parse_diff_stats
     app.jinja_env.filters["extract_filename"] = _extract_filename
+    
+    # Register global function for tool matching
+    app.jinja_env.globals["match_tool_for_block"] = _match_tool_for_block
     
     # Store database path, title, and storage paths in app config
     app.config["DB_PATH"] = db_path
@@ -264,6 +326,26 @@ def create_app(db_path: str, title: str = "Copilot Chat Archive", storage_paths:
                 message=f"No session found with ID: {session_id}",
             ), 404
         
+        # Pre-process messages to match tool invocations with content blocks
+        # This creates a mapping that the template can use directly
+        for message in session.messages:
+            if message.tool_invocations and message.content_blocks:
+                used_indices = set()
+                block_tool_map = {}
+                for i, block in enumerate(message.content_blocks):
+                    if block.kind == 'toolInvocation':
+                        matched_tool, used_indices = _match_tool_for_block(
+                            block.content, message.tool_invocations, used_indices
+                        )
+                        if matched_tool:
+                            block_tool_map[i] = matched_tool
+                # Store the mapping on the message for template access
+                message._block_tool_map = block_tool_map
+                message._matched_tool_names = {t.name for t in block_tool_map.values()}
+            else:
+                message._block_tool_map = {}
+                message._matched_tool_names = set()
+        
         return render_template(
             "session.html",
             title=app.config["ARCHIVE_TITLE"],
@@ -283,7 +365,10 @@ def create_app(db_path: str, title: str = "Copilot Chat Archive", storage_paths:
         full_refresh = request.form.get("full", "false").lower() == "true"
         
         # Get storage paths - use configured paths or default VS Code paths
-        storage_paths = app.config.get("STORAGE_PATHS") or get_vscode_storage_paths()
+        # Check for None explicitly since empty list [] is a valid value (for testing)
+        storage_paths = app.config.get("STORAGE_PATHS")
+        if storage_paths is None:
+            storage_paths = get_vscode_storage_paths()
         
         added = 0
         updated = 0
@@ -319,6 +404,57 @@ def create_app(db_path: str, title: str = "Copilot Chat Archive", storage_paths:
         }
         
         return redirect(url_for("index"))
+    
+    @app.route("/api/markdown/<session_id>", methods=["GET"])
+    def get_markdown(session_id: str):
+        """Get cached markdown for a session's messages.
+        
+        Query parameters:
+        - start: Start message number (1-based, optional, defaults to 1)
+        - end: End message number (1-based, optional, defaults to last message)
+        - include_diffs: Whether to include file diffs (default: true)
+        - include_tool_inputs: Whether to include tool inputs (default: true)
+        
+        Returns:
+            JSON with 'markdown' field containing the combined markdown.
+        """
+        db = Database(app.config["DB_PATH"])
+        
+        # Parse range parameters
+        start_param = request.args.get("start", "").strip()
+        end_param = request.args.get("end", "").strip()
+        
+        # Parse boolean options
+        include_diffs = request.args.get("include_diffs", "true").lower() == "true"
+        include_tool_inputs = request.args.get("include_tool_inputs", "true").lower() == "true"
+        
+        start = None
+        end = None
+        
+        if start_param:
+            try:
+                start = int(start_param)
+            except ValueError:
+                return jsonify({"error": "Invalid start value"}), 400
+        
+        if end_param:
+            try:
+                end = int(end_param)
+            except ValueError:
+                return jsonify({"error": "Invalid end value"}), 400
+        
+        markdown_content = db.get_messages_markdown(
+            session_id, 
+            start=start, 
+            end=end,
+            include_diffs=include_diffs,
+            include_tool_inputs=include_tool_inputs,
+        )
+        
+        if not markdown_content:
+            return jsonify({"error": "No messages found"}), 404
+        
+        return jsonify({"markdown": markdown_content})
     
     return app
 

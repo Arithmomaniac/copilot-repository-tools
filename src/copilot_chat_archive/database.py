@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Iterator
 
 from .scanner import ChatMessage, ChatSession, ToolInvocation, FileChange, CommandRun, ContentBlock
+from .markdown_exporter import message_to_markdown
 
 
 class Database:
@@ -45,6 +46,7 @@ class Database:
         role TEXT NOT NULL,
         content TEXT NOT NULL,
         timestamp TEXT,
+        cached_markdown TEXT,
         FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
     );
 
@@ -58,6 +60,8 @@ class Database:
         status TEXT,
         start_time INTEGER,
         end_time INTEGER,
+        source_type TEXT,
+        invocation_message TEXT,
         FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
     );
 
@@ -93,6 +97,7 @@ class Database:
         block_index INTEGER NOT NULL,
         kind TEXT NOT NULL DEFAULT 'text',
         content TEXT NOT NULL,
+        description TEXT,
         FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
     );
 
@@ -165,12 +170,35 @@ class Database:
         cursor = conn.cursor()
         # Check if the source_file_mtime column exists
         cursor.execute("PRAGMA table_info(sessions)")
-        columns = {row[1] for row in cursor.fetchall()}
+        session_columns = {row[1] for row in cursor.fetchall()}
         
-        if "source_file_mtime" not in columns:
+        if "source_file_mtime" not in session_columns:
             cursor.execute("ALTER TABLE sessions ADD COLUMN source_file_mtime REAL")
-        if "source_file_size" not in columns:
+        if "source_file_size" not in session_columns:
             cursor.execute("ALTER TABLE sessions ADD COLUMN source_file_size INTEGER")
+        
+        # Check if the cached_markdown column exists in messages
+        cursor.execute("PRAGMA table_info(messages)")
+        message_columns = {row[1] for row in cursor.fetchall()}
+        
+        if "cached_markdown" not in message_columns:
+            cursor.execute("ALTER TABLE messages ADD COLUMN cached_markdown TEXT")
+        
+        # Check if the description column exists in content_blocks
+        cursor.execute("PRAGMA table_info(content_blocks)")
+        content_block_columns = {row[1] for row in cursor.fetchall()}
+        
+        if "description" not in content_block_columns:
+            cursor.execute("ALTER TABLE content_blocks ADD COLUMN description TEXT")
+        
+        # Check if the source_type and invocation_message columns exist in tool_invocations
+        cursor.execute("PRAGMA table_info(tool_invocations)")
+        tool_columns = {row[1] for row in cursor.fetchall()}
+        
+        if "source_type" not in tool_columns:
+            cursor.execute("ALTER TABLE tool_invocations ADD COLUMN source_type TEXT")
+        if "invocation_message" not in tool_columns:
+            cursor.execute("ALTER TABLE tool_invocations ADD COLUMN invocation_message TEXT")
 
     def add_session(self, session: ChatSession) -> bool:
         """Add a chat session to the database.
@@ -218,11 +246,19 @@ class Database:
 
             # Insert messages and associated data
             for idx, msg in enumerate(session.messages):
+                # Generate cached markdown for this message (with diffs and inputs for full fidelity)
+                cached_md = message_to_markdown(
+                    msg,
+                    message_number=idx + 1,
+                    include_diffs=True,
+                    include_tool_inputs=True,
+                )
+                
                 cursor.execute(
                     """
                     INSERT INTO messages 
-                    (session_id, message_index, role, content, timestamp)
-                    VALUES (?, ?, ?, ?, ?)
+                    (session_id, message_index, role, content, timestamp, cached_markdown)
+                    VALUES (?, ?, ?, ?, ?, ?)
                     """,
                     (
                         session.session_id,
@@ -230,6 +266,7 @@ class Database:
                         msg.role,
                         msg.content,
                         msg.timestamp,
+                        cached_md,
                     ),
                 )
                 message_id = cursor.lastrowid
@@ -239,8 +276,8 @@ class Database:
                     cursor.execute(
                         """
                         INSERT INTO tool_invocations
-                        (message_id, name, input, result, status, start_time, end_time)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        (message_id, name, input, result, status, start_time, end_time, source_type, invocation_message)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             message_id,
@@ -250,6 +287,8 @@ class Database:
                             tool.status,
                             tool.start_time,
                             tool.end_time,
+                            tool.source_type,
+                            tool.invocation_message,
                         ),
                     )
 
@@ -295,14 +334,15 @@ class Database:
                     cursor.execute(
                         """
                         INSERT INTO content_blocks
-                        (message_id, block_index, kind, content)
-                        VALUES (?, ?, ?, ?)
+                        (message_id, block_index, kind, content, description)
+                        VALUES (?, ?, ?, ?, ?)
                         """,
                         (
                             message_id,
                             block_idx,
                             block.kind,
                             block.content,
+                            block.description,
                         ),
                     )
 
@@ -388,7 +428,7 @@ class Database:
             # Get messages with their IDs for fetching related data
             cursor.execute(
                 """
-                SELECT id, role, content, timestamp 
+                SELECT id, role, content, timestamp, cached_markdown 
                 FROM messages 
                 WHERE session_id = ? 
                 ORDER BY message_index
@@ -400,23 +440,28 @@ class Database:
             messages = []
             for msg_row in message_rows:
                 message_id = msg_row["id"]
+                # Safely get cached_markdown (may be NULL in older databases)
+                cached_md = msg_row["cached_markdown"] if "cached_markdown" in msg_row.keys() else None
 
                 # Get tool invocations for this message
                 cursor.execute(
                     "SELECT * FROM tool_invocations WHERE message_id = ?",
                     (message_id,),
                 )
-                tool_invocations = [
-                    ToolInvocation(
+                tool_invocations = []
+                for t in cursor.fetchall():
+                    # Handle columns that may not exist in older databases
+                    t_keys = t.keys()
+                    tool_invocations.append(ToolInvocation(
                         name=t["name"],
                         input=t["input"],
                         result=t["result"],
                         status=t["status"],
                         start_time=t["start_time"],
                         end_time=t["end_time"],
-                    )
-                    for t in cursor.fetchall()
-                ]
+                        source_type=t["source_type"] if "source_type" in t_keys else None,
+                        invocation_message=t["invocation_message"] if "invocation_message" in t_keys else None,
+                    ))
 
                 # Get file changes for this message
                 cursor.execute(
@@ -460,6 +505,7 @@ class Database:
                     ContentBlock(
                         kind=b["kind"],
                         content=b["content"],
+                        description=b["description"] if "description" in b.keys() else None,
                     )
                     for b in cursor.fetchall()
                 ]
@@ -472,6 +518,7 @@ class Database:
                     file_changes=file_changes,
                     command_runs=command_runs,
                     content_blocks=content_blocks,
+                    cached_markdown=cached_md,
                 ))
 
             # Helper to safely get optional fields from sqlite3.Row
@@ -496,6 +543,161 @@ class Database:
                 source_file_mtime=safe_get("source_file_mtime"),
                 source_file_size=safe_get("source_file_size"),
             )
+
+    def get_messages_markdown(
+        self,
+        session_id: str,
+        start: int | None = None,
+        end: int | None = None,
+        include_diffs: bool = True,
+        include_tool_inputs: bool = True,
+    ) -> str:
+        """Get markdown for specific messages or all messages in a session.
+
+        Args:
+            session_id: The session ID to get messages from.
+            start: Optional 1-based start message index (inclusive).
+            end: Optional 1-based end message index (inclusive).
+            include_diffs: Whether to include file diffs in the markdown.
+            include_tool_inputs: Whether to include tool inputs in the markdown.
+
+        Returns:
+            Combined markdown string for the selected messages.
+        """
+        from .markdown_exporter import message_to_markdown
+        
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Build query based on range
+            if start is not None or end is not None:
+                # Convert to 0-based indices
+                start_idx = (start - 1) if start else 0
+                end_idx = (end - 1) if end else 999999  # Large number for "no limit"
+                
+                cursor.execute(
+                    """
+                    SELECT id, role, content, timestamp, cached_markdown, message_index
+                    FROM messages 
+                    WHERE session_id = ? AND message_index >= ? AND message_index <= ?
+                    ORDER BY message_index
+                    """,
+                    (session_id, start_idx, end_idx),
+                )
+            else:
+                cursor.execute(
+                    """
+                    SELECT id, role, content, timestamp, cached_markdown, message_index
+                    FROM messages 
+                    WHERE session_id = ? 
+                    ORDER BY message_index
+                    """,
+                    (session_id,),
+                )
+
+            rows = cursor.fetchall()
+            markdown_parts = []
+            
+            # If both options are enabled, use cached markdown
+            if include_diffs and include_tool_inputs:
+                for row in rows:
+                    md = row["cached_markdown"]
+                    if md:
+                        markdown_parts.append(md)
+            else:
+                # Need to regenerate markdown with specific options
+                for row in rows:
+                    message_id = row["id"]
+                    message_index = row["message_index"] + 1  # Convert to 1-based
+                    
+                    # Get tool invocations for this message
+                    cursor.execute(
+                        "SELECT * FROM tool_invocations WHERE message_id = ?",
+                        (message_id,),
+                    )
+                    tool_invocations = []
+                    for t in cursor.fetchall():
+                        # Handle columns that may not exist in older databases
+                        t_keys = t.keys()
+                        tool_invocations.append(ToolInvocation(
+                            name=t["name"],
+                            input=t["input"],
+                            result=t["result"],
+                            status=t["status"],
+                            start_time=t["start_time"],
+                            end_time=t["end_time"],
+                            source_type=t["source_type"] if "source_type" in t_keys else None,
+                            invocation_message=t["invocation_message"] if "invocation_message" in t_keys else None,
+                        ))
+                    
+                    # Get file changes for this message
+                    cursor.execute(
+                        "SELECT * FROM file_changes WHERE message_id = ?",
+                        (message_id,),
+                    )
+                    file_changes = [
+                        FileChange(
+                            path=f["path"],
+                            diff=f["diff"],
+                            content=f["content"],
+                            explanation=f["explanation"],
+                            language_id=f["language_id"],
+                        )
+                        for f in cursor.fetchall()
+                    ]
+                    
+                    # Get command runs for this message
+                    cursor.execute(
+                        "SELECT * FROM command_runs WHERE message_id = ?",
+                        (message_id,),
+                    )
+                    command_runs = [
+                        CommandRun(
+                            command=c["command"],
+                            title=c["title"],
+                            result=c["result"],
+                            status=c["status"],
+                            output=c["output"],
+                            timestamp=c["timestamp"],
+                        )
+                        for c in cursor.fetchall()
+                    ]
+                    
+                    # Get content blocks for this message
+                    cursor.execute(
+                        "SELECT * FROM content_blocks WHERE message_id = ? ORDER BY block_index",
+                        (message_id,),
+                    )
+                    content_blocks = [
+                        ContentBlock(
+                            kind=b["kind"],
+                            content=b["content"],
+                            description=b["description"] if "description" in b.keys() else None,
+                        )
+                        for b in cursor.fetchall()
+                    ]
+                    
+                    # Create message object
+                    message = ChatMessage(
+                        role=row["role"],
+                        content=row["content"],
+                        timestamp=row["timestamp"],
+                        tool_invocations=tool_invocations,
+                        file_changes=file_changes,
+                        command_runs=command_runs,
+                        content_blocks=content_blocks,
+                    )
+                    
+                    # Generate markdown with specified options
+                    md = message_to_markdown(
+                        message,
+                        message_number=message_index,
+                        include_diffs=include_diffs,
+                        include_tool_inputs=include_tool_inputs,
+                    )
+                    markdown_parts.append(md)
+            
+            return "\n".join(markdown_parts)
 
     def list_sessions(
         self,

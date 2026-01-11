@@ -350,6 +350,149 @@ class TestFormatToolSummary:
         assert "tool1" in result
         assert "tool2" in result
 
+    def test_tool_with_input_included(self):
+        """Test that tool inputs are included when flag is set."""
+        message = ChatMessage(
+            role="assistant",
+            content="Hello",
+            tool_invocations=[
+                ToolInvocation(name="run_in_terminal", input="npm run test"),
+            ],
+        )
+        result = _format_tool_summary(message, include_inputs=True)
+        assert "*Used tool: run_in_terminal*" in result
+        assert "**run_in_terminal input:**" in result
+        assert "```" in result
+        assert "npm run test" in result
+
+    def test_tool_without_input_when_not_included(self):
+        """Test that tool inputs are not included when flag is False."""
+        message = ChatMessage(
+            role="assistant",
+            content="Hello",
+            tool_invocations=[
+                ToolInvocation(name="run_in_terminal", input="npm run test"),
+            ],
+        )
+        result = _format_tool_summary(message, include_inputs=False)
+        assert "*Used tool: run_in_terminal*" in result
+        assert "npm run test" not in result
+        assert "```" not in result
+
+
+class TestFormatFileChangesSummary:
+    """Tests for _format_file_changes_summary helper with diffs."""
+
+    def test_no_file_changes(self):
+        """Test message with no file changes."""
+        from copilot_chat_archive.markdown_exporter import _format_file_changes_summary
+        message = ChatMessage(role="assistant", content="Hello")
+        assert _format_file_changes_summary(message) == ""
+
+    def test_file_changes_with_diff_included(self):
+        """Test that file diffs are included when flag is set."""
+        from copilot_chat_archive.markdown_exporter import _format_file_changes_summary
+        message = ChatMessage(
+            role="assistant",
+            content="Hello",
+            file_changes=[
+                FileChange(path="test.py", diff="+ def test():\n+     pass"),
+            ],
+        )
+        result = _format_file_changes_summary(message, include_diffs=True)
+        assert "*Changed file: test.py*" in result
+        assert "**test.py:**" in result
+        assert "```diff" in result
+        assert "+ def test():" in result
+
+    def test_file_changes_without_diff_when_not_included(self):
+        """Test that file diffs are not included when flag is False."""
+        from copilot_chat_archive.markdown_exporter import _format_file_changes_summary
+        message = ChatMessage(
+            role="assistant",
+            content="Hello",
+            file_changes=[
+                FileChange(path="test.py", diff="+ def test():\n+     pass"),
+            ],
+        )
+        result = _format_file_changes_summary(message, include_diffs=False)
+        assert "*Changed file: test.py*" in result
+        assert "```diff" not in result
+        assert "def test():" not in result
+
+
+class TestSessionToMarkdownWithOptions:
+    """Tests for session_to_markdown with include_diffs and include_tool_inputs options."""
+
+    def test_with_tool_inputs(self):
+        """Test markdown export with tool inputs included."""
+        session = ChatSession(
+            session_id="test-session",
+            workspace_name="test",
+            workspace_path="/test",
+            messages=[
+                ChatMessage(role="user", content="Run tests"),
+                ChatMessage(
+                    role="assistant",
+                    content="Running tests...",
+                    tool_invocations=[
+                        ToolInvocation(name="run_in_terminal", input="pytest"),
+                    ],
+                ),
+            ],
+        )
+        markdown = session_to_markdown(session, include_tool_inputs=True)
+        assert "pytest" in markdown
+        assert "```" in markdown
+
+    def test_with_file_diffs(self):
+        """Test markdown export with file diffs included."""
+        session = ChatSession(
+            session_id="test-session",
+            workspace_name="test",
+            workspace_path="/test",
+            messages=[
+                ChatMessage(role="user", content="Create a file"),
+                ChatMessage(
+                    role="assistant",
+                    content="Creating file...",
+                    file_changes=[
+                        FileChange(path="new_file.py", diff="+ # New file\n+ print('hello')"),
+                    ],
+                ),
+            ],
+        )
+        markdown = session_to_markdown(session, include_diffs=True)
+        assert "```diff" in markdown
+        assert "print('hello')" in markdown
+
+    def test_without_options_no_details(self):
+        """Test markdown export without options doesn't include details."""
+        session = ChatSession(
+            session_id="test-session",
+            workspace_name="test",
+            workspace_path="/test",
+            messages=[
+                ChatMessage(role="user", content="Do something"),
+                ChatMessage(
+                    role="assistant",
+                    content="Done!",
+                    tool_invocations=[
+                        ToolInvocation(name="run_in_terminal", input="ls -la"),
+                    ],
+                    file_changes=[
+                        FileChange(path="file.py", diff="+ new content"),
+                    ],
+                ),
+            ],
+        )
+        markdown = session_to_markdown(session, include_diffs=False, include_tool_inputs=False)
+        assert "ls -la" not in markdown
+        assert "new content" not in markdown
+        # But summaries should still be there
+        assert "*Used tool:" in markdown
+        assert "*Changed file:" in markdown
+
 
 class TestSanitizeFilename:
     """Tests for _sanitize_filename helper."""

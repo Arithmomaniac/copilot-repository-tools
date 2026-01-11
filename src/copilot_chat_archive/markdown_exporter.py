@@ -46,8 +46,13 @@ def _urldecode(text: str) -> str:
     return unquote(text)
 
 
-def _format_tool_summary(message: ChatMessage) -> str:
-    """Format tool invocations as an italicized summary line."""
+def _format_tool_summary(message: ChatMessage, include_inputs: bool = False) -> str:
+    """Format tool invocations as an italicized summary line.
+    
+    Args:
+        message: The message containing tool invocations.
+        include_inputs: If True, include tool inputs as code blocks.
+    """
     if not message.tool_invocations:
         return ""
     
@@ -55,15 +60,27 @@ def _format_tool_summary(message: ChatMessage) -> str:
     count = len(tool_names)
     
     if count == 1:
-        return f"\n\n*Used tool: {tool_names[0]}*"
+        summary = f"\n\n*Used tool: {tool_names[0]}*"
     elif count <= 3:
-        return f"\n\n*Used tools: {', '.join(tool_names)}*"
+        summary = f"\n\n*Used tools: {', '.join(tool_names)}*"
     else:
-        return f"\n\n*Used {count} tools: {', '.join(tool_names[:3])}, ...*"
+        summary = f"\n\n*Used {count} tools: {', '.join(tool_names[:3])}, ...*"
+    
+    if include_inputs:
+        for tool in message.tool_invocations:
+            if tool.input:
+                summary += f"\n\n**{tool.name} input:**\n```\n{tool.input}\n```"
+    
+    return summary
 
 
-def _format_file_changes_summary(message: ChatMessage) -> str:
-    """Format file changes as an italicized summary line."""
+def _format_file_changes_summary(message: ChatMessage, include_diffs: bool = False) -> str:
+    """Format file changes as an italicized summary line.
+    
+    Args:
+        message: The message containing file changes.
+        include_diffs: If True, include file diffs as code blocks.
+    """
     if not message.file_changes:
         return ""
     
@@ -71,11 +88,18 @@ def _format_file_changes_summary(message: ChatMessage) -> str:
     count = len(paths)
     
     if count == 1:
-        return f"\n\n*Changed file: {paths[0]}*"
+        summary = f"\n\n*Changed file: {paths[0]}*"
     elif count <= 3:
-        return f"\n\n*Changed files: {', '.join(paths)}*"
+        summary = f"\n\n*Changed files: {', '.join(paths)}*"
     else:
-        return f"\n\n*Changed {count} files: {', '.join(paths[:3])}, ...*"
+        summary = f"\n\n*Changed {count} files: {', '.join(paths[:3])}, ...*"
+    
+    if include_diffs:
+        for change in message.file_changes:
+            if change.diff:
+                summary += f"\n\n**{change.path}:**\n```diff\n{change.diff}\n```"
+    
+    return summary
 
 
 def _format_command_runs_summary(message: ChatMessage) -> str:
@@ -171,11 +195,18 @@ def _format_message_content(message: ChatMessage, include_thinking: bool = False
     return content
 
 
-def session_to_markdown(session: ChatSession, include_thinking: bool = False) -> str:
+def session_to_markdown(
+    session: ChatSession,
+    include_diffs: bool = False,
+    include_tool_inputs: bool = False,
+    include_thinking: bool = False,
+) -> str:
     """Convert a chat session to markdown format.
     
     Args:
         session: The ChatSession to convert.
+        include_diffs: If True, include file diffs as code blocks.
+        include_tool_inputs: If True, include tool inputs as code blocks.
         include_thinking: If True, include thinking block content. If False (default),
                          show a notice that thinking occurred but omit the content.
         
@@ -231,51 +262,98 @@ def session_to_markdown(session: ChatSession, include_thinking: bool = False) ->
     
     # Messages
     for i, message in enumerate(session.messages, 1):
-        # Message header: number and role
-        role_display = message.role.upper()
-        lines.append(f"## Message {i}: **{role_display}**")
-        lines.append("")
-        
-        # Timestamp if available
-        if message.timestamp:
-            lines.append(f"*{_format_timestamp(message.timestamp)}*")
-            lines.append("")
-        
-        # Content (optionally including thinking blocks)
-        content = _format_message_content(message, include_thinking=include_thinking)
-        lines.append(content)
-        
-        # Tool invocations summary (in italics)
-        tool_summary = _format_tool_summary(message)
-        if tool_summary:
-            lines.append(tool_summary)
-        
-        # File changes summary (in italics)
-        file_summary = _format_file_changes_summary(message)
-        if file_summary:
-            lines.append(file_summary)
-        
-        # Command runs summary (in italics)
-        cmd_summary = _format_command_runs_summary(message)
-        if cmd_summary:
-            lines.append(cmd_summary)
-        
-        lines.append("")
-        lines.append("---")
-        lines.append("")
+        msg_md = message_to_markdown(
+            message,
+            message_number=i,
+            include_diffs=include_diffs,
+            include_tool_inputs=include_tool_inputs,
+            include_thinking=include_thinking,
+        )
+        lines.append(msg_md)
     
     return "\n".join(lines)
 
 
-def export_session_to_file(session: ChatSession, output_path: Path | str, include_thinking: bool = False) -> None:
+def message_to_markdown(
+    message: ChatMessage,
+    message_number: int = 0,
+    include_diffs: bool = False,
+    include_tool_inputs: bool = False,
+    include_thinking: bool = False,
+) -> str:
+    """Convert a single message to markdown format.
+    
+    Args:
+        message: The ChatMessage to convert.
+        message_number: The 1-based message number (0 means don't include header).
+        include_diffs: If True, include file diffs as code blocks.
+        include_tool_inputs: If True, include tool inputs as code blocks.
+        include_thinking: If True, include thinking block content.
+        
+    Returns:
+        Markdown string representation of the message.
+    """
+    lines = []
+    
+    # Message header: number and role (if message_number > 0)
+    if message_number > 0:
+        role_display = message.role.upper()
+        lines.append(f"## Message {message_number}: **{role_display}**")
+        lines.append("")
+    
+    # Timestamp if available
+    if message.timestamp:
+        lines.append(f"*{_format_timestamp(message.timestamp)}*")
+        lines.append("")
+    
+    # Content (optionally including thinking blocks)
+    content = _format_message_content(message, include_thinking=include_thinking)
+    lines.append(content)
+    
+    # Tool invocations summary (in italics, with optional inputs)
+    tool_summary = _format_tool_summary(message, include_inputs=include_tool_inputs)
+    if tool_summary:
+        lines.append(tool_summary)
+    
+    # File changes summary (in italics, with optional diffs)
+    file_summary = _format_file_changes_summary(message, include_diffs=include_diffs)
+    if file_summary:
+        lines.append(file_summary)
+    
+    # Command runs summary (in italics)
+    cmd_summary = _format_command_runs_summary(message)
+    if cmd_summary:
+        lines.append(cmd_summary)
+    
+    lines.append("")
+    lines.append("---")
+    lines.append("")
+    
+    return "\n".join(lines)
+
+
+def export_session_to_file(
+    session: ChatSession,
+    output_path: Path | str,
+    include_diffs: bool = False,
+    include_tool_inputs: bool = False,
+    include_thinking: bool = False,
+) -> None:
     """Export a single session to a markdown file.
     
     Args:
         session: The ChatSession to export.
         output_path: Path to the output markdown file.
+        include_diffs: If True, include file diffs as code blocks.
+        include_tool_inputs: If True, include tool inputs as code blocks.
         include_thinking: If True, include thinking block content in the export.
     """
-    markdown = session_to_markdown(session, include_thinking=include_thinking)
+    markdown = session_to_markdown(
+        session,
+        include_diffs=include_diffs,
+        include_tool_inputs=include_tool_inputs,
+        include_thinking=include_thinking,
+    )
     Path(output_path).write_text(markdown, encoding="utf-8")
 
 

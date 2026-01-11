@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ session.workspace_name or session.session_id }} - {{ title }}</title>
+    <!-- Font Awesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" integrity="sha512-DTOQO9RWCH3ppGqcWaEA1BIZOC6xxalwEsw9c2QQeAIftl+Vegovlnee1c9QX4TctnWMn13TZye+giMm8e2LwA==" crossorigin="anonymous" referrerpolicy="no-referrer" />
     <style>
 :root {
     --bg-primary: #ffffff;
@@ -276,6 +278,25 @@ header h1 {
 
 .thinking-icon {
     font-size: 1em;
+    color: #9b59b6;
+}
+
+.thinking-label {
+    font-weight: 600;
+    color: #9b59b6;
+}
+
+@media (prefers-color-scheme: dark) {
+    .thinking-icon, .thinking-label {
+        color: #bb8fce;
+    }
+}
+
+.thinking-description {
+    color: var(--text-secondary);
+    font-weight: 400;
+    font-size: 0.9em;
+    margin-left: 4px;
 }
 
 .thinking-content {
@@ -308,11 +329,79 @@ header h1 {
     }
 }
 
+/* Inline tool invocation blocks */
+.tool-invocation-inline {
+    margin: 8px 0;
+}
+
+.tool-invocation-inline .tool-invocation-message {
+    color: var(--text-secondary);
+    font-style: italic;
+    margin-bottom: 4px;
+}
+
+.tool-invocation-inline .tool-invocation-message p {
+    margin: 0;
+}
+
+.tool-invocation-inline .tool-invocation-wrapper {
+    margin-top: 4px;
+    margin-left: 0;
+}
+
 /* Tool invocations */
 .tool-summary {
     margin: 8px 0;
     color: var(--text-secondary);
     font-size: 0.9em;
+}
+
+/* Individual tool collapsible container */
+.tool-invocation-wrapper {
+    margin: 8px 0;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background-color: var(--bg-tertiary);
+}
+
+.tool-invocation-wrapper summary {
+    padding: 10px 14px;
+    cursor: pointer;
+    font-size: 0.9em;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    user-select: none;
+    flex-wrap: wrap;
+}
+
+.tool-invocation-wrapper summary:hover {
+    background-color: var(--border-color);
+}
+
+/* Tool invocation message in summary - render inline */
+.tool-invocation-wrapper summary .tool-invocation-message {
+    flex: 1;
+}
+
+.tool-invocation-wrapper summary .tool-invocation-message p {
+    margin: 0;
+    display: inline;
+}
+
+.tool-invocation-wrapper .tool-name {
+    font-weight: 600;
+}
+
+.tool-invocation-wrapper .collapsible-icon {
+    font-size: 0.7em;
+    transition: transform 0.2s;
+}
+
+.tool-invocation-content {
+    padding: 12px 14px;
+    border-top: 1px solid var(--border-color);
 }
 
 .tool-invocation {
@@ -341,6 +430,7 @@ header h1 {
 .tool-label {
     display: block;
     font-size: 0.8em;
+    font-weight: 500;
     color: var(--text-secondary);
     margin-bottom: 4px;
 }
@@ -349,8 +439,17 @@ header h1 {
     margin: 0;
     padding: 10px;
     font-size: 0.85em;
-    max-height: 200px;
+    max-height: 300px;
     overflow: auto;
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    word-break: break-word;
+}
+
+.tool-section code {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    word-break: break-word;
 }
 
 /* Status badges */
@@ -361,7 +460,7 @@ header h1 {
     font-weight: 500;
 }
 
-.status-badge.success {
+.status-badge.success, .status-badge.completed {
     background-color: #dafbe1;
     color: #1a7f37;
 }
@@ -377,7 +476,7 @@ header h1 {
 }
 
 @media (prefers-color-scheme: dark) {
-    .status-badge.success {
+    .status-badge.success, .status-badge.completed {
         background-color: #238636;
         color: #dafbe1;
     }
@@ -496,7 +595,7 @@ pre.command-output {
     font-size: 1.1em;
 }
 
-.terminal-icon.success {
+.terminal-icon.success, .terminal-icon.completed {
     color: #1a7f37;
 }
 
@@ -509,7 +608,7 @@ pre.command-output {
 }
 
 @media (prefers-color-scheme: dark) {
-    .terminal-icon.success {
+    .terminal-icon.success, .terminal-icon.completed {
         color: #3fb950;
     }
     .terminal-icon.error, .terminal-icon.failed {
@@ -624,6 +723,124 @@ pre.command-output {
     background-color: var(--border-color);
 }
 
+/* Copy Markdown toolbar */
+.copy-markdown-toolbar {
+    background-color: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.copy-markdown-toolbar label {
+    color: var(--text-secondary);
+    font-size: 0.9em;
+}
+
+.copy-markdown-toolbar input[type="number"] {
+    padding: 6px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 0.9em;
+    width: 60px;
+}
+
+.copy-markdown-toolbar input[type="number"]:focus {
+    outline: 2px solid var(--link-color);
+    outline-offset: -1px;
+}
+
+.range-separator {
+    color: var(--text-secondary);
+    font-size: 0.9em;
+}
+
+.toolbar-options {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-left: 8px;
+    padding-left: 16px;
+    border-left: 1px solid var(--border-color);
+}
+
+.toolbar-options label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    font-size: 0.85em;
+}
+
+.toolbar-options input[type="checkbox"] {
+    accent-color: var(--link-color);
+}
+
+.copy-markdown-btn {
+    background-color: var(--link-color);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 8px 16px;
+    cursor: pointer;
+    font-size: 0.9em;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.copy-markdown-btn:hover {
+    opacity: 0.9;
+}
+
+.copy-markdown-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.copy-status {
+    font-size: 0.85em;
+    color: var(--text-secondary);
+}
+
+.copy-status.success {
+    color: #1a7f37;
+}
+
+.copy-status.error {
+    color: #cf222e;
+}
+
+/* Per-message copy button */
+.message-copy-btn {
+    background: none;
+    border: none;
+    color: var(--text-secondary);
+    cursor: pointer;
+    padding: 4px 8px;
+    font-size: 0.85em;
+    opacity: 0.4;
+    transition: opacity 0.2s, color 0.2s;
+    margin-left: 8px;
+}
+
+.message-copy-btn:hover {
+    opacity: 1;
+    color: var(--link-color);
+}
+
+.message-copy-btn.copied {
+    color: #1a7f37;
+    opacity: 1;
+}
+
 /* Tables */
 .message-content table {
     border-collapse: collapse;
@@ -701,6 +918,30 @@ footer a {
             </div>
         </div>
 
+        <!-- Copy Markdown Toolbar -->
+        <div class="copy-markdown-toolbar">
+            <label>Messages:</label>
+            <input type="number" id="range-start" min="1" max="{{ message_count }}" placeholder="1" title="Start message (leave empty for first)">
+            <span class="range-separator">to</span>
+            <input type="number" id="range-end" min="1" max="{{ message_count }}" placeholder="{{ message_count }}" title="End message (leave empty for last)">
+            
+            <div class="toolbar-options">
+                <label title="Include file change diffs in the markdown">
+                    <input type="checkbox" id="include-diffs" checked>
+                    Diffs
+                </label>
+                <label title="Include tool inputs in the markdown">
+                    <input type="checkbox" id="include-tool-inputs" checked>
+                    Tool inputs
+                </label>
+            </div>
+            
+            <button type="button" class="copy-markdown-btn" id="copy-markdown-btn" data-session-id="{{ session.session_id }}" data-message-count="{{ message_count }}">
+                <i class="fa-regular fa-copy"></i> Copy Markdown
+            </button>
+            <span class="copy-status" id="copy-status"></span>
+        </div>
+
         <div class="messages">
             {% for message in session.messages %}
             <div class="message {{ message.role }}" id="msg-{{ loop.index }}">
@@ -710,6 +951,9 @@ footer a {
                     <span class="message-timestamp">{{ message.timestamp | format_timestamp }}</span>
                     {% endif %}
                     <a href="#msg-{{ loop.index }}" class="message-anchor" title="Link to this message">#{{ loop.index }}</a>
+                    <button type="button" class="message-copy-btn" data-message-index="{{ loop.index }}" data-session-id="{{ session.session_id }}" title="Copy this message as markdown">
+                        <i class="fa-regular fa-copy"></i>
+                    </button>
                 </div>
                 <div class="message-content">
                     {% if message.content_blocks %}
@@ -718,12 +962,68 @@ footer a {
                             {% if block.kind == 'thinking' %}
                             <details class="thinking-block">
                                 <summary>
-                                    <span class="thinking-icon">💭</span> Thinking
+                                    <span class="thinking-icon">💭</span>
+                                    <span class="thinking-label">Thinking</span>
+                                    {% if block.description %}
+                                    <span class="thinking-description">— {{ block.description }}</span>
+                                    {% endif %}
                                 </summary>
                                 <div class="thinking-content">
                                     {{ block.content | markdown | safe }}
                                 </div>
                             </details>
+                            {% elif block.kind == 'toolInvocation' %}
+                            {# Use pre-computed tool matching from route handler #}
+                            {% set matched_tool = message._block_tool_map.get(loop.index0) %}
+                            
+                            {# Show collapsible details for tools with input/output: #}
+                            {# - MCP tools (source_type == 'mcp') #}
+                            {# - run_in_terminal (has command input and terminal output) #}
+                            {# Internal file tools (copilot_readFile, etc.) just show pretty invocation message #}
+                            {% set is_mcp_tool = matched_tool and matched_tool.source_type == 'mcp' %}
+                            {% set is_terminal_tool = matched_tool and matched_tool.name == 'run_in_terminal' %}
+                            {% set has_tool_details = matched_tool and (matched_tool.input or matched_tool.result) %}
+                            {% set show_collapsible = (is_mcp_tool or is_terminal_tool) and has_tool_details %}
+                            
+                            {# Determine the pretty header text - use invocation_message if available, else block content #}
+                            {% set pretty_header = matched_tool.invocation_message if matched_tool and matched_tool.invocation_message else block.content %}
+                            
+                            {% if show_collapsible %}
+                            <div class="content-block content-block-toolInvocation tool-invocation-inline">
+                                <details class="tool-invocation-wrapper">
+                                    <summary>
+                                        <span class="collapsible-icon" aria-hidden="true">▶</span>
+                                        <span class="tool-invocation-message">{{ pretty_header | markdown | safe }}</span>
+                                        {% if matched_tool.status %}
+                                        <span class="status-badge {{ matched_tool.status }}">{{ matched_tool.status }}</span>
+                                        {% endif %}
+                                    </summary>
+                                    <div class="tool-invocation-content">
+                                        <div class="tool-section">
+                                            <span class="tool-label">Tool:</span>
+                                            <code>{{ matched_tool.name }}</code>
+                                        </div>
+                                        {% if matched_tool.input %}
+                                        <div class="tool-section">
+                                            <span class="tool-label">Input:</span>
+                                            <pre><code>{{ matched_tool.input }}</code></pre>
+                                        </div>
+                                        {% endif %}
+                                        {% if matched_tool.result %}
+                                        <div class="tool-section">
+                                            <span class="tool-label">Output:</span>
+                                            <pre><code>{{ matched_tool.result }}</code></pre>
+                                        </div>
+                                        {% endif %}
+                                    </div>
+                                </details>
+                            </div>
+                            {% else %}
+                            {# Internal tools or tools without input/output - just show the pretty message #}
+                            <div class="content-block content-block-toolInvocation">
+                                {{ block.content | markdown | safe }}
+                            </div>
+                            {% endif %}
                             {% elif block.kind == 'text' %}
                             <div class="content-block content-block-text result-block">
                                 {{ block.content | markdown | safe }}
@@ -740,35 +1040,56 @@ footer a {
                     {% endif %}
                 </div>
 
-                {% if message.tool_invocations %}
-                <p class="tool-summary"><em>Used {{ message.tool_invocations | length }} tool{{ 's' if message.tool_invocations | length > 1 else '' }}: {{ message.tool_invocations | map(attribute='name') | list | join(', ') | truncate(100) }}</em></p>
-                <details class="collapsible tool-invocations">
+                {# Only show unmatched tool invocations at the bottom #}
+                {# Include MCP tools and run_in_terminal with input/output #}
+                {% set unmatched_tools = [] %}
+                {% for tool in message.tool_invocations %}
+                    {% set is_collapsible_tool = (tool.source_type == 'mcp' or tool.name == 'run_in_terminal') and (tool.input or tool.result) %}
+                    {% if tool.name not in message._matched_tool_names and is_collapsible_tool %}
+                        {% set _ = unmatched_tools.append(tool) %}
+                    {% endif %}
+                {% endfor %}
+                
+                {% if unmatched_tools %}
+                <p class="tool-summary"><em>Used {{ unmatched_tools | length }} tool{{ 's' if unmatched_tools | length > 1 else '' }}: {{ unmatched_tools | map(attribute='name') | list | join(', ') | truncate(100) }}</em></p>
+                <details class="collapsible tool-invocations-header" open>
                     <summary aria-label="Toggle tool invocations section">
-                        <span class="collapsible-icon" aria-hidden="true">▶</span>
-                        Tool Invocations ({{ message.tool_invocations | length }})
+                        <span class="collapsible-icon" aria-hidden="true">▼</span>
+                        Tool Invocations ({{ unmatched_tools | length }})
                     </summary>
                     <div class="collapsible-content">
-                        {% for tool in message.tool_invocations %}
-                        <div class="tool-invocation">
-                            <div class="tool-header">
-                                <strong>{{ tool.name }}</strong>
+                        {% for tool in unmatched_tools %}
+                        <details class="tool-invocation-wrapper">
+                            <summary>
+                                <span class="collapsible-icon" aria-hidden="true">▶</span>
+                                {% if tool.invocation_message %}
+                                <span class="tool-invocation-message">{{ tool.invocation_message | markdown | safe }}</span>
+                                {% else %}
+                                <span class="tool-name">{{ tool.name }}</span>
+                                {% endif %}
                                 {% if tool.status %}
                                 <span class="status-badge {{ tool.status }}">{{ tool.status }}</span>
                                 {% endif %}
+                            </summary>
+                            <div class="tool-invocation-content">
+                                <div class="tool-section">
+                                    <span class="tool-label">Tool:</span>
+                                    <code>{{ tool.name }}</code>
+                                </div>
+                                {% if tool.input %}
+                                <div class="tool-section">
+                                    <span class="tool-label">Input:</span>
+                                    <pre><code>{{ tool.input }}</code></pre>
+                                </div>
+                                {% endif %}
+                                {% if tool.result %}
+                                <div class="tool-section">
+                                    <span class="tool-label">Output:</span>
+                                    <pre><code>{{ tool.result }}</code></pre>
+                                </div>
+                                {% endif %}
                             </div>
-                            {% if tool.input %}
-                            <div class="tool-section">
-                                <span class="tool-label">Input:</span>
-                                <pre><code>{{ tool.input }}</code></pre>
-                            </div>
-                            {% endif %}
-                            {% if tool.result %}
-                            <div class="tool-section">
-                                <span class="tool-label">Result:</span>
-                                <pre><code>{{ tool.result }}</code></pre>
-                            </div>
-                            {% endif %}
-                        </div>
+                        </details>
                         {% endfor %}
                     </div>
                 </details>
@@ -871,9 +1192,9 @@ footer a {
             }
 
             // Toggle collapsible icon on details open/close
-            document.querySelectorAll('details.collapsible, details.terminal-output-toggle').forEach(details => {
+            document.querySelectorAll('details.collapsible, details.tool-invocations-header, details.terminal-output-toggle, details.tool-invocation-wrapper').forEach(details => {
                 details.addEventListener('toggle', function() {
-                    const icon = this.querySelector('.collapsible-icon');
+                    const icon = this.querySelector(':scope > summary > .collapsible-icon');
                     if (icon) {
                         icon.textContent = this.open ? '▼' : '▶';
                     }
@@ -909,6 +1230,109 @@ footer a {
                             : 'Show less';
                     });
                 }
+            });
+
+            // Copy Markdown functionality (toolbar)
+            const copyBtn = document.getElementById('copy-markdown-btn');
+            const rangeStart = document.getElementById('range-start');
+            const rangeEnd = document.getElementById('range-end');
+            const includeDiffs = document.getElementById('include-diffs');
+            const includeToolInputs = document.getElementById('include-tool-inputs');
+            const copyStatus = document.getElementById('copy-status');
+
+            if (copyBtn) {
+                copyBtn.addEventListener('click', async function() {
+                    const sessionId = this.dataset.sessionId;
+                    const messageCount = parseInt(this.dataset.messageCount, 10);
+                    
+                    // Get range values (default to full range)
+                    const start = rangeStart.value ? parseInt(rangeStart.value, 10) : 1;
+                    const end = rangeEnd.value ? parseInt(rangeEnd.value, 10) : messageCount;
+                    
+                    // Validate range
+                    if (start < 1 || start > messageCount || end < 1 || end > messageCount || start > end) {
+                        copyStatus.textContent = '✗ Invalid range';
+                        copyStatus.className = 'copy-status error';
+                        return;
+                    }
+                    
+                    // Build query parameters
+                    const params = new URLSearchParams();
+                    
+                    // Only add range if not full range
+                    if (start !== 1 || end !== messageCount) {
+                        params.set('start', start);
+                        params.set('end', end);
+                    }
+                    
+                    // Add options
+                    params.set('include_diffs', includeDiffs.checked);
+                    params.set('include_tool_inputs', includeToolInputs.checked);
+                    
+                    const queryString = params.toString() ? '?' + params.toString() : '';
+                    
+                    // Disable button during fetch
+                    copyBtn.disabled = true;
+                    copyStatus.textContent = 'Fetching...';
+                    copyStatus.className = 'copy-status';
+                    
+                    try {
+                        const response = await fetch('/api/markdown/' + sessionId + queryString);
+                        const data = await response.json();
+                        
+                        if (response.ok && data.markdown) {
+                            // Copy to clipboard
+                            await navigator.clipboard.writeText(data.markdown);
+                            copyStatus.textContent = '✓ Copied to clipboard!';
+                            copyStatus.className = 'copy-status success';
+                            
+                            // Clear status after 3 seconds
+                            setTimeout(() => {
+                                copyStatus.textContent = '';
+                            }, 3000);
+                        } else {
+                            copyStatus.textContent = '✗ ' + (data.error || 'Failed to get markdown');
+                            copyStatus.className = 'copy-status error';
+                        }
+                    } catch (err) {
+                        copyStatus.textContent = '✗ Error: ' + err.message;
+                        copyStatus.className = 'copy-status error';
+                    } finally {
+                        copyBtn.disabled = false;
+                    }
+                });
+            }
+
+            // Per-message copy buttons
+            document.querySelectorAll('.message-copy-btn').forEach(btn => {
+                btn.addEventListener('click', async function() {
+                    const sessionId = this.dataset.sessionId;
+                    const messageIndex = this.dataset.messageIndex;
+                    const icon = this.querySelector('i');
+                    
+                    try {
+                        const response = await fetch('/api/markdown/' + sessionId + '?start=' + messageIndex + '&end=' + messageIndex);
+                        const data = await response.json();
+                        
+                        if (response.ok && data.markdown) {
+                            await navigator.clipboard.writeText(data.markdown);
+                            
+                            // Show success feedback
+                            this.classList.add('copied');
+                            icon.classList.remove('fa-copy');
+                            icon.classList.add('fa-check');
+                            
+                            // Reset after 2 seconds
+                            setTimeout(() => {
+                                this.classList.remove('copied');
+                                icon.classList.remove('fa-check');
+                                icon.classList.add('fa-copy');
+                            }, 2000);
+                        }
+                    } catch (err) {
+                        console.error('Failed to copy message:', err);
+                    }
+                });
             });
         });
     </script>
