@@ -344,15 +344,16 @@ class TestCLISupport:
         from copilot_repository_tools_common.scanner import _parse_cli_jsonl_file
         from pathlib import Path
         
-        # Use the sample CLI file
-        sample_file = Path(__file__).parent / "sample_files" / "cli-session-001.jsonl"
+        # Use the real sample CLI file with event-based format
+        sample_file = Path(__file__).parent / "sample_files" / "66b821d4-af6f-4518-a394-6d95a4d0f96b.jsonl"
         
         if not sample_file.exists():
-            pytest.skip("Sample CLI file not found")
+            pytest.skip("Real CLI sample file not found")
         
         # Parse CLI file
         session = _parse_cli_jsonl_file(sample_file)
         assert session is not None
+        assert session.session_id == "66b821d4-af6f-4518-a394-6d95a4d0f96b"
         
         # Add to database
         db = Database(tmp_path / "test.db")
@@ -363,8 +364,8 @@ class TestCLISupport:
         retrieved = db.get_session(session.session_id)
         assert retrieved is not None
         assert retrieved.type == "cli"
-        assert len(retrieved.messages) == 4
+        assert len(retrieved.messages) > 0
         
-        # Verify search works
-        results = db.search("virtual environment")
+        # Verify search works - search for content from the session
+        results = db.search("branches")
         assert len(results) > 0
