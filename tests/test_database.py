@@ -369,3 +369,83 @@ class TestCLISupport:
         # Verify search works - search for content from the session
         results = db.search("branches")
         assert len(results) > 0
+
+
+class TestSortingBehavior:
+    """Tests for session sorting behavior."""
+
+    def test_list_sessions_sorted_by_recent_message(self, tmp_path):
+        """Test that sessions are sorted by most recent message timestamp."""
+        from datetime import datetime, timedelta
+        
+        db = Database(tmp_path / "test.db")
+        
+        # Create base time
+        base_time = datetime(2024, 1, 1, 12, 0, 0)
+        
+        # Session 1: Created first, but has most recent message
+        session1 = ChatSession(
+            session_id="session-1",
+            workspace_name="test",
+            workspace_path="/test",
+            messages=[
+                ChatMessage(
+                    role="user",
+                    content="Old message",
+                    timestamp=(base_time + timedelta(hours=1)).isoformat()
+                ),
+                ChatMessage(
+                    role="assistant",
+                    content="Recent message",
+                    timestamp=(base_time + timedelta(hours=10)).isoformat()  # Most recent
+                ),
+            ],
+            created_at=(base_time + timedelta(hours=0)).isoformat(),
+        )
+        
+        # Session 2: Created second, older messages
+        session2 = ChatSession(
+            session_id="session-2",
+            workspace_name="test",
+            workspace_path="/test",
+            messages=[
+                ChatMessage(
+                    role="user",
+                    content="Older message",
+                    timestamp=(base_time + timedelta(hours=2)).isoformat()
+                ),
+            ],
+            created_at=(base_time + timedelta(hours=5)).isoformat(),
+        )
+        
+        # Session 3: Created last, has middle-aged messages
+        session3 = ChatSession(
+            session_id="session-3",
+            workspace_name="test",
+            workspace_path="/test",
+            messages=[
+                ChatMessage(
+                    role="user",
+                    content="Middle message",
+                    timestamp=(base_time + timedelta(hours=5)).isoformat()
+                ),
+            ],
+            created_at=(base_time + timedelta(hours=8)).isoformat(),
+        )
+        
+        # Add sessions
+        db.add_session(session1)
+        db.add_session(session2)
+        db.add_session(session3)
+        
+        # List sessions - should be sorted by most recent message
+        sessions = db.list_sessions()
+        
+        # Verify order: session-1 (hour 10), session-3 (hour 5), session-2 (hour 2)
+        assert len(sessions) == 3
+        assert sessions[0]['session_id'] == "session-1"
+        assert sessions[1]['session_id'] == "session-3"
+        assert sessions[2]['session_id'] == "session-2"
+        
+        # Verify last_message_at is included
+        assert 'last_message_at' in sessions[0]

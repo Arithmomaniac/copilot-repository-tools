@@ -732,7 +732,8 @@ class Database:
                     s.updated_at,
                     s.vscode_edition,
                     s.custom_title,
-                    COUNT(m.id) as message_count
+                    COUNT(m.id) as message_count,
+                    MAX(m.timestamp) as last_message_at
                 FROM sessions s
                 LEFT JOIN messages m ON s.session_id = m.session_id
             """
@@ -742,7 +743,7 @@ class Database:
                 query += " WHERE s.workspace_name = ?"
                 params.append(workspace_name)
 
-            query += " GROUP BY s.session_id ORDER BY s.created_at DESC"
+            query += " GROUP BY s.session_id ORDER BY last_message_at DESC, s.created_at DESC"
 
             if limit:
                 query += " LIMIT ? OFFSET ?"
