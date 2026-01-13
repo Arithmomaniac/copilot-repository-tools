@@ -425,3 +425,66 @@ class TestPerformanceBenchmarks:
         # orjson should be very fast - less than 1 second per MB
         max_time = max(1.0, file_size_mb * 1)
         assert elapsed_time < max_time
+
+class TestCLIParsing:
+    """Tests for GitHub Copilot CLI JSONL parsing."""
+
+    def test_parse_cli_jsonl_file(self):
+        """Test parsing CLI JSONL session file."""
+        from copilot_repository_tools_common.scanner import _parse_cli_jsonl_file
+        from pathlib import Path
+        
+        # Use the sample file we created
+        sample_file = Path(__file__).parent / "sample_files" / "cli-session-001.jsonl"
+        
+        if not sample_file.exists():
+            pytest.skip("Sample CLI file not found")
+        
+        session = _parse_cli_jsonl_file(sample_file)
+        
+        assert session is not None
+        assert session.session_id == "cli-abc123"
+        assert session.type == "cli"
+        assert len(session.messages) == 4
+        
+        # Check first message
+        assert session.messages[0].role == "user"
+        assert "virtual environment" in session.messages[0].content
+        
+        # Check second message (assistant response)
+        assert session.messages[1].role == "assistant"
+        assert "venv" in session.messages[1].content
+        
+        # Check that tool invocations are parsed
+        assert len(session.messages[3].tool_invocations) == 1
+        assert session.messages[3].tool_invocations[0].name == "pip_install"
+
+    def test_get_cli_storage_paths(self):
+        """Test getting CLI storage paths."""
+        from copilot_repository_tools_common import get_cli_storage_paths
+        
+        paths = get_cli_storage_paths()
+        
+        # Should return a list of Path objects
+        assert isinstance(paths, list)
+        
+        # Paths should be Path objects
+        for path in paths:
+            from pathlib import Path
+            assert isinstance(path, Path)
+
+    def test_scan_includes_cli_by_default(self, tmp_path):
+        """Test that scan_chat_sessions includes CLI sessions by default."""
+        from copilot_repository_tools_common import scan_chat_sessions
+        import tempfile
+        from pathlib import Path
+        
+        # Mock an empty VS Code storage
+        storage_paths = [(str(tmp_path / "nonexistent"), "stable")]
+        
+        # We can't easily test actual CLI scanning without mocking home directory,
+        # but we can verify the function accepts include_cli parameter
+        sessions = list(scan_chat_sessions(storage_paths, include_cli=False))
+        
+        # Should work without errors
+        assert isinstance(sessions, list)

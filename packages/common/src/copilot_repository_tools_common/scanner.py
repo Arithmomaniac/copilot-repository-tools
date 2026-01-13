@@ -115,6 +115,7 @@ class ChatSession:
     responder_username: str | None = None
     source_file_mtime: float | None = None  # File modification time for incremental refresh
     source_file_size: int | None = None  # File size in bytes for incremental refresh
+    type: str = "vscode"  # 'vscode' or 'cli'
 
 
 def get_vscode_storage_paths() -> list[tuple[str, str]]:
@@ -1383,17 +1384,143 @@ def _extract_session_from_dict(
     )
 
 
+def get_cli_storage_paths() -> list[Path]:
+    """Get the paths to GitHub Copilot CLI session storage directories.
+    
+    Returns a list of Path objects for CLI session directories.
+    """
+    home = Path.home()
+    copilot_dir = home / ".copilot"
+    
+    paths = []
+    
+    # Current format (v0.0.342+)
+    session_state_dir = copilot_dir / "session-state"
+    if session_state_dir.exists():
+        paths.append(session_state_dir)
+    
+    # Legacy format (pre-v0.0.342)
+    history_state_dir = copilot_dir / "history-session-state"
+    if history_state_dir.exists():
+        paths.append(history_state_dir)
+    
+    return paths
+
+
+def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
+    """Parse a GitHub Copilot CLI JSONL session file.
+    
+    CLI sessions are stored as JSONL (JSON Lines) where each line is a JSON object
+    representing either a message, tool invocation, or session metadata.
+    
+    Args:
+        file_path: Path to the JSONL file.
+        
+    Returns:
+        ChatSession object or None if parsing fails.
+    """
+    try:
+        messages = []
+        session_id = None
+        session_metadata = {}
+        tool_invocations_map = {}  # Map message_id to tool invocations
+        
+        with open(file_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                    
+                try:
+                    data = orjson.loads(line)
+                except orjson.JSONDecodeError:
+                    continue
+                
+                # Extract session ID from any line that has it
+                if data.get("session_id") and not session_id:
+                    session_id = str(data["session_id"])
+                
+                # Handle message entries
+                role = data.get("role")
+                if role in ("user", "assistant"):
+                    message_id = data.get("message_id")
+                    content = data.get("content", "")
+                    timestamp = data.get("timestamp")
+                    
+                    # Handle tool invocations in the message
+                    tool_invocations = []
+                    if data.get("tool_invocations"):
+                        for tool in data["tool_invocations"]:
+                            if isinstance(tool, dict):
+                                tool_invocations.append(ToolInvocation(
+                                    name=tool.get("name", "unknown"),
+                                    input=tool.get("input"),
+                                    result=tool.get("result"),
+                                    status=tool.get("status"),
+                                ))
+                    
+                    messages.append(ChatMessage(
+                        role=role,
+                        content=content,
+                        timestamp=timestamp,
+                        tool_invocations=tool_invocations,
+                    ))
+                
+                # Handle session metadata entries (usage, etc.)
+                elif data.get("usage") or data.get("message_count"):
+                    session_metadata.update(data)
+        
+        if not messages or not session_id:
+            return None
+        
+        # Use file stem as fallback session ID
+        if not session_id:
+            session_id = file_path.stem
+        
+        # Get file metadata for incremental refresh
+        source_file_mtime, source_file_size = _get_file_metadata(file_path)
+        
+        # Extract timestamps from metadata or first/last messages
+        created_at = None
+        updated_at = None
+        if messages:
+            created_at = messages[0].timestamp
+            updated_at = messages[-1].timestamp or session_metadata.get("last_activity")
+        
+        return ChatSession(
+            session_id=session_id,
+            workspace_name=None,  # CLI sessions don't have workspace context
+            workspace_path=None,
+            messages=messages,
+            created_at=created_at,
+            updated_at=updated_at,
+            source_file=str(file_path),
+            vscode_edition="",  # Not applicable for CLI
+            custom_title=None,
+            requester_username=None,
+            responder_username=None,
+            source_file_mtime=source_file_mtime,
+            source_file_size=source_file_size,
+            type="cli",
+        )
+    except (OSError, Exception):
+        return None
+
+
 def scan_chat_sessions(
     storage_paths: list[tuple[str, str]] | None = None,
+    include_cli: bool = True,
 ) -> Iterator[ChatSession]:
     """Scan for and parse all Copilot chat sessions.
 
     Args:
-        storage_paths: Optional list of (path, edition) tuples to search.
+        storage_paths: Optional list of (path, edition) tuples to search for VS Code sessions.
+        include_cli: Whether to also scan for CLI sessions (default: True).
 
     Yields:
         ChatSession objects for each found session.
     """
+    # Scan VS Code chat sessions
     for chat_dir, workspace_id, edition in find_copilot_chat_dirs(storage_paths):
         # Get workspace info
         workspace_name, workspace_path = _parse_workspace_json(chat_dir.parent)
@@ -1423,3 +1550,16 @@ def scan_chat_sessions(
             )
             for session in sessions:
                 yield session
+    
+    # Scan CLI chat sessions
+    if include_cli:
+        for cli_dir in get_cli_storage_paths():
+            if not cli_dir.exists() or not cli_dir.is_dir():
+                continue
+            
+            # Process JSONL files in the CLI storage directory
+            for item in cli_dir.iterdir():
+                if item.is_file() and item.suffix == ".jsonl":
+                    session = _parse_cli_jsonl_file(item)
+                    if session:
+                        yield session

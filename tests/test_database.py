@@ -281,3 +281,60 @@ class TestNeedsUpdate:
         retrieved = temp_db.get_session("metadata-session")
         assert retrieved.source_file_mtime == 1234567890.123
         assert retrieved.source_file_size == 2048
+
+
+class TestCLISupport:
+    """Tests for CLI session support in database."""
+
+    def test_add_cli_session(self, tmp_path):
+        """Test adding a CLI session to database."""
+        from copilot_repository_tools_common import Database, ChatSession, ChatMessage
+        
+        db = Database(tmp_path / "test.db")
+        
+        # Create a CLI session
+        session = ChatSession(
+            session_id="cli-test-123",
+            workspace_name=None,
+            workspace_path=None,
+            messages=[
+                ChatMessage(role="user", content="Hello from CLI"),
+                ChatMessage(role="assistant", content="Hi there!"),
+            ],
+            type="cli",
+        )
+        
+        # Add session
+        result = db.add_session(session)
+        assert result is True
+        
+        # Retrieve session
+        retrieved = db.get_session("cli-test-123")
+        assert retrieved is not None
+        assert retrieved.type == "cli"
+        assert retrieved.session_id == "cli-test-123"
+        assert len(retrieved.messages) == 2
+
+    def test_vscode_session_type_default(self, tmp_path):
+        """Test that VS Code sessions default to 'vscode' type."""
+        from copilot_repository_tools_common import Database, ChatSession, ChatMessage
+        
+        db = Database(tmp_path / "test.db")
+        
+        # Create a session without explicit type (should default to vscode)
+        session = ChatSession(
+            session_id="vscode-test-456",
+            workspace_name="test-workspace",
+            workspace_path="/path/to/workspace",
+            messages=[
+                ChatMessage(role="user", content="Hello from VS Code"),
+            ],
+        )
+        
+        # Add session
+        db.add_session(session)
+        
+        # Retrieve session
+        retrieved = db.get_session("vscode-test-456")
+        assert retrieved is not None
+        assert retrieved.type == "vscode"

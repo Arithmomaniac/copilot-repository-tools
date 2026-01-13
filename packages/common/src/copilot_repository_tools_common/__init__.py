@@ -23,6 +23,7 @@ from .scanner import (
     ToolInvocation,
     find_copilot_chat_dirs,
     get_vscode_storage_paths,
+    get_cli_storage_paths,
     scan_chat_sessions,
 )
 from .database import Database
@@ -44,6 +45,7 @@ __all__ = [
     "ToolInvocation",
     "find_copilot_chat_dirs",
     "get_vscode_storage_paths",
+    "get_cli_storage_paths",
     "scan_chat_sessions",
     # Database
     "Database",
