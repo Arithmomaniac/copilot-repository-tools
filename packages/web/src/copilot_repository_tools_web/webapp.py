@@ -325,25 +325,42 @@ def create_app(db_path: str, title: str = "Copilot Chat Archive", storage_paths:
                 message=f"No session found with ID: {session_id}",
             ), 404
         
-        # Pre-process messages to match tool invocations with content blocks
+        # Pre-process messages to match tool invocations and command runs with content blocks
         # This creates a mapping that the template can use directly
         for message in session.messages:
-            if message.tool_invocations and message.content_blocks:
-                used_indices = set()
-                block_tool_map = {}
-                for i, block in enumerate(message.content_blocks):
-                    if block.kind == 'toolInvocation':
-                        matched_tool, used_indices = _match_tool_for_block(
-                            block.content, message.tool_invocations, used_indices
+            block_tool_map = {}
+            block_cmd_map = {}
+            used_tool_indices = set()
+            used_cmd_indices = set()
+            
+            for i, block in enumerate(message.content_blocks):
+                if block.kind == 'toolInvocation':
+                    # First try to match against command runs (for CLI shell commands)
+                    # CLI commands have content like "$ git fetch --prune"
+                    if message.command_runs and block.content.startswith('$'):
+                        cmd_text = block.content[1:].strip()  # Remove leading $
+                        for j, cmd in enumerate(message.command_runs):
+                            if j in used_cmd_indices:
+                                continue
+                            # Match if the command starts with or contains the block text
+                            if cmd.command and (cmd.command.startswith(cmd_text[:30]) or cmd_text[:30] in cmd.command):
+                                block_cmd_map[i] = cmd
+                                used_cmd_indices.add(j)
+                                break
+                    
+                    # If no command match, try matching against tool invocations
+                    if i not in block_cmd_map and message.tool_invocations:
+                        matched_tool, used_tool_indices = _match_tool_for_block(
+                            block.content, message.tool_invocations, used_tool_indices
                         )
                         if matched_tool:
                             block_tool_map[i] = matched_tool
-                # Store the mapping on the message for template access
-                message._block_tool_map = block_tool_map
-                message._matched_tool_names = {t.name for t in block_tool_map.values()}
-            else:
-                message._block_tool_map = {}
-                message._matched_tool_names = set()
+            
+            # Store the mappings on the message for template access
+            message._block_tool_map = block_tool_map
+            message._block_cmd_map = block_cmd_map
+            message._matched_tool_names = {t.name for t in block_tool_map.values()}
+            message._matched_cmd_indices = used_cmd_indices
         
         return render_template(
             "session.html",

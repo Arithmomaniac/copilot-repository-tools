@@ -124,6 +124,17 @@ def _had_thinking_content(message: ChatMessage) -> bool:
     return any(block.kind == "thinking" for block in message.content_blocks)
 
 
+def _has_inline_tool_blocks(message: ChatMessage) -> bool:
+    """Check if the message has inline tool invocation blocks.
+    
+    When tools are rendered inline (VSCode-style), we don't need to add
+    a separate tool summary at the end of the message.
+    """
+    if not message.content_blocks:
+        return False
+    return any(block.kind == "toolInvocation" for block in message.content_blocks)
+
+
 def _format_message_content(message: ChatMessage, include_thinking: bool = False) -> str:
     """Format message content, optionally including thinking blocks.
     
@@ -310,20 +321,25 @@ def message_to_markdown(
     content = _format_message_content(message, include_thinking=include_thinking)
     lines.append(content)
     
-    # Tool invocations summary (in italics, with optional inputs)
-    tool_summary = _format_tool_summary(message, include_inputs=include_tool_inputs)
-    if tool_summary:
-        lines.append(tool_summary)
+    # Check if tools are rendered inline via content blocks
+    # If so, skip the separate tool/command summaries to avoid duplication
+    has_inline_tools = _has_inline_tool_blocks(message)
     
-    # File changes summary (in italics, with optional diffs)
+    if not has_inline_tools:
+        # Tool invocations summary (in italics, with optional inputs)
+        tool_summary = _format_tool_summary(message, include_inputs=include_tool_inputs)
+        if tool_summary:
+            lines.append(tool_summary)
+        
+        # Command runs summary (in italics)
+        cmd_summary = _format_command_runs_summary(message)
+        if cmd_summary:
+            lines.append(cmd_summary)
+    
+    # File changes summary (in italics, with optional diffs) - always include
     file_summary = _format_file_changes_summary(message, include_diffs=include_diffs)
     if file_summary:
         lines.append(file_summary)
-    
-    # Command runs summary (in italics)
-    cmd_summary = _format_command_runs_summary(message)
-    if cmd_summary:
-        lines.append(cmd_summary)
     
     lines.append("")
     lines.append("---")

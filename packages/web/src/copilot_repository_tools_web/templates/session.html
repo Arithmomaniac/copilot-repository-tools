@@ -106,6 +106,11 @@ header h1 {
     color: #0969da;
 }
 
+.edition-badge.cli {
+    background-color: #fff8c5;
+    color: #9a6700;
+}
+
 @media (prefers-color-scheme: dark) {
     .edition-badge.stable {
         background-color: #238636;
@@ -114,6 +119,10 @@ header h1 {
     .edition-badge.insider {
         background-color: #1f6feb;
         color: #ddf4ff;
+    }
+    .edition-badge.cli {
+        background-color: #9e6a03;
+        color: #fff8c5;
     }
 }
 
@@ -251,6 +260,90 @@ header h1 {
     border-top: 1px solid var(--border-color);
 }
 
+/* Intent badge */
+.intent-badge {
+    display: inline-block;
+    padding: 2px 10px;
+    margin: 4px 0;
+    border-radius: 10px;
+    font-size: 0.8em;
+    font-style: italic;
+    background-color: #f3e8ff;
+    color: #7c3aed;
+}
+
+@media (prefers-color-scheme: dark) {
+    .intent-badge {
+        background-color: rgba(139, 92, 246, 0.2);
+        color: #c4b5fd;
+    }
+}
+
+/* Skill badge */
+.skill-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 10px;
+    margin: 4px 0;
+    border-radius: 10px;
+    font-size: 0.8em;
+    background-color: #e0e7ff;
+    color: #4338ca;
+}
+
+.skill-badge code {
+    font-size: 0.95em;
+    background: transparent;
+    padding: 0;
+}
+
+@media (prefers-color-scheme: dark) {
+    .skill-badge {
+        background-color: rgba(99, 102, 241, 0.2);
+        color: #a5b4fc;
+    }
+}
+
+/* Status badges for session events */
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 0.85em;
+    font-weight: 500;
+    margin: 4px 0;
+}
+
+.status-badge.model-change {
+    background-color: rgba(107, 114, 128, 0.15);
+    color: #6b7280;
+}
+
+.status-badge.abort {
+    background-color: rgba(239, 68, 68, 0.15);
+    color: #dc2626;
+}
+
+.status-badge.error {
+    background-color: rgba(239, 68, 68, 0.15);
+    color: #dc2626;
+}
+
+@media (prefers-color-scheme: dark) {
+    .status-badge.model-change {
+        background-color: rgba(156, 163, 175, 0.2);
+        color: #9ca3af;
+    }
+    .status-badge.abort,
+    .status-badge.error {
+        background-color: rgba(248, 113, 113, 0.2);
+        color: #f87171;
+    }
+}
+
 /* Thinking blocks */
 .thinking-block {
     margin: 12px 0;
@@ -383,6 +476,13 @@ header h1 {
 /* Tool invocation message in summary - render inline */
 .tool-invocation-wrapper summary .tool-invocation-message {
     flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.tool-invocation-wrapper summary .tool-invocation-message code {
+    white-space: nowrap;
 }
 
 .tool-invocation-wrapper summary .tool-invocation-message p {
@@ -959,10 +1059,16 @@ footer a {
                     {% if message.content_blocks %}
                         {# Render structured content blocks with kind differentiation #}
                         {% for block in message.content_blocks %}
-                            {% if block.kind == 'thinking' %}
+                            {% if block.kind == 'intent' %}
+                            <span class="intent-badge">{{ block.content }}</span>
+                            {% elif block.kind == 'skill' %}
+                            <span class="skill-badge">skill: <code>{{ block.content }}</code></span>
+                            {% elif block.kind == 'status' %}
+                            <span class="status-badge {{ block.description or '' }}">{{ block.content }}</span>
+                            {% elif block.kind == 'thinking' %}
                             <details class="thinking-block">
                                 <summary>
-                                    <span class="thinking-icon">💭</span>
+                                    <span class="collapsible-icon" aria-hidden="true">▶</span>
                                     <span class="thinking-label">Thinking</span>
                                     {% if block.description %}
                                     <span class="thinking-description">— {{ block.description }}</span>
@@ -973,20 +1079,49 @@ footer a {
                                 </div>
                             </details>
                             {% elif block.kind == 'toolInvocation' %}
-                            {# Use pre-computed tool matching from route handler #}
-                            {% set matched_tool = message._block_tool_map.get(loop.index0) %}
+                            {# Check for matched command run first (for CLI shell commands) #}
+                            {% set matched_cmd = message._block_cmd_map.get(loop.index0) if message._block_cmd_map else None %}
                             
+                            {# Then check for matched tool invocation #}
+                            {% set matched_tool = message._block_tool_map.get(loop.index0) if message._block_tool_map else None %}
+                            
+                            {% if matched_cmd %}
+                            {# CLI command run - show as collapsible command block with Input/Output like VSCode logs #}
+                            <div class="content-block content-block-toolInvocation tool-invocation-inline">
+                                <details class="tool-invocation-wrapper">
+                                    <summary>
+                                        <span class="collapsible-icon" aria-hidden="true">▶</span>
+                                        <span class="tool-invocation-message"><code>{{ matched_cmd.command | truncate(80, True) }}</code></span>
+                                        {% if matched_cmd.status %}
+                                        <span class="status-badge {{ matched_cmd.status }}">{{ matched_cmd.status }}</span>
+                                        {% endif %}
+                                    </summary>
+                                    <div class="tool-invocation-content">
+                                        <div class="tool-section">
+                                            <span class="tool-label">Input:</span>
+                                            <pre><code>{{ matched_cmd.command }}</code></pre>
+                                        </div>
+                                        {% if matched_cmd.output or matched_cmd.result %}
+                                        <div class="tool-section">
+                                            <span class="tool-label">Output:</span>
+                                            <pre><code>{{ matched_cmd.output or matched_cmd.result }}</code></pre>
+                                        </div>
+                                        {% endif %}
+                                    </div>
+                                </details>
+                            </div>
+                            {% elif matched_tool %}
                             {# Show collapsible details for tools with input/output: #}
                             {# - MCP tools (source_type == 'mcp') #}
                             {# - run_in_terminal (has command input and terminal output) #}
                             {# Internal file tools (copilot_readFile, etc.) just show pretty invocation message #}
-                            {% set is_mcp_tool = matched_tool and matched_tool.source_type == 'mcp' %}
-                            {% set is_terminal_tool = matched_tool and matched_tool.name == 'run_in_terminal' %}
-                            {% set has_tool_details = matched_tool and (matched_tool.input or matched_tool.result) %}
+                            {% set is_mcp_tool = matched_tool.source_type == 'mcp' %}
+                            {% set is_terminal_tool = matched_tool.name == 'run_in_terminal' %}
+                            {% set has_tool_details = matched_tool.input or matched_tool.result %}
                             {% set show_collapsible = (is_mcp_tool or is_terminal_tool) and has_tool_details %}
                             
                             {# Determine the pretty header text - use invocation_message if available, else block content #}
-                            {% set pretty_header = matched_tool.invocation_message if matched_tool and matched_tool.invocation_message else block.content %}
+                            {% set pretty_header = matched_tool.invocation_message if matched_tool.invocation_message else block.content %}
                             
                             {% if show_collapsible %}
                             <div class="content-block content-block-toolInvocation tool-invocation-inline">
@@ -1019,7 +1154,13 @@ footer a {
                                 </details>
                             </div>
                             {% else %}
-                            {# Internal tools or tools without input/output - just show the pretty message #}
+                            {# Tool without collapsible details - just show the pretty message #}
+                            <div class="content-block content-block-toolInvocation">
+                                {{ pretty_header | markdown | safe }}
+                            </div>
+                            {% endif %}
+                            {% else %}
+                            {# Unmatched tool invocation - just show the content #}
                             <div class="content-block content-block-toolInvocation">
                                 {{ block.content | markdown | safe }}
                             </div>
@@ -1130,15 +1271,19 @@ footer a {
                 </details>
                 {% endif %}
 
-                {% if message.command_runs %}
-                <p class="tool-summary"><em>Ran {{ message.command_runs | length }} command{{ 's' if message.command_runs | length > 1 else '' }}</em></p>
+                {# Only show Command Runs section for commands not already rendered inline #}
+                {% set unmatched_cmd_count = (message.command_runs | length) - (message._matched_cmd_indices | length if message._matched_cmd_indices else 0) %}
+                {% if message.command_runs and unmatched_cmd_count > 0 %}
+                <p class="tool-summary"><em>Ran {{ unmatched_cmd_count }} command{{ 's' if unmatched_cmd_count > 1 else '' }}</em></p>
                 <details class="collapsible command-runs" open>
                     <summary aria-label="Toggle command runs section">
                         <span class="collapsible-icon" aria-hidden="true">▼</span>
-                        Command Runs ({{ message.command_runs | length }})
+                        Command Runs ({{ unmatched_cmd_count }})
                     </summary>
                     <div class="collapsible-content">
                         {% for cmd in message.command_runs %}
+                        {# Skip commands already rendered inline #}
+                        {% if loop.index0 not in (message._matched_cmd_indices or []) %}
                         <div class="terminal-command">
                             <div class="terminal-header">
                                 <span class="terminal-icon {{ cmd.status or 'pending' }}" aria-hidden="true">
@@ -1165,6 +1310,7 @@ footer a {
                             </details>
                             {% endif %}
                         </div>
+                        {% endif %}
                         {% endfor %}
                     </div>
                 </details>

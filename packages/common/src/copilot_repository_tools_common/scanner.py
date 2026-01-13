@@ -1425,6 +1425,11 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
     - tool.user_requested: User-requested tool executions
     - abort: Session/turn abort events
     
+    This function renders CLI sessions similarly to how vscode-copilot-chat renders
+    background chats:
+    - Consecutive assistant messages are combined into one
+    - Tool calls are displayed inline within the assistant message content
+    
     Args:
         file_path: Path to the JSONL file.
         
@@ -1498,7 +1503,7 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                         requester_username = message.split("as user: ")[-1].strip()
         
         # Build tool execution map: toolCallId -> (start_data, complete_data, user_requested)
-        tool_executions = {}
+        tool_executions: dict = {}
         for event in events:
             event_type = event.get("type", "")
             event_data = event.get("data", {})
@@ -1526,10 +1531,204 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                         tool_executions[tool_call_id] = {"start": None, "complete": None, "user_requested": False}
                     tool_executions[tool_call_id]["complete"] = event
         
-        # Build messages from user.message, system.message, and assistant.message events
-        messages = []
-        session_aborted = False
-        session_error = None
+        # Build messages using VSCode-style rendering:
+        # - Process events in order
+        # - Combine consecutive assistant messages
+        # - Interleave tool invocations inline with content
+        messages: list[ChatMessage] = []
+        
+        # State for building the current assistant message
+        current_assistant_content_blocks: list[ContentBlock] = []
+        current_assistant_tool_invocations: list[ToolInvocation] = []
+        current_assistant_command_runs: list[CommandRun] = []
+        current_assistant_timestamp: str | None = None
+        pending_tool_requests: dict[str, dict] = {}  # toolCallId -> request data
+        
+        def _flush_pending_assistant_message():
+            """Flush accumulated assistant content blocks into a single message."""
+            nonlocal current_assistant_content_blocks, current_assistant_tool_invocations
+            nonlocal current_assistant_command_runs, current_assistant_timestamp
+            
+            if not current_assistant_content_blocks and not current_assistant_tool_invocations and not current_assistant_command_runs:
+                return
+            
+            # Build flat content from content blocks
+            text_parts = []
+            for block in current_assistant_content_blocks:
+                if block.kind == "text" and block.content.strip():
+                    text_parts.append(block.content)
+            flat_content = "\n\n".join(text_parts)
+            
+            messages.append(ChatMessage(
+                role="assistant",
+                content=flat_content,
+                timestamp=current_assistant_timestamp,
+                tool_invocations=current_assistant_tool_invocations.copy(),
+                command_runs=current_assistant_command_runs.copy(),
+                content_blocks=current_assistant_content_blocks.copy(),
+            ))
+            
+            # Reset state
+            current_assistant_content_blocks = []
+            current_assistant_tool_invocations = []
+            current_assistant_command_runs = []
+            current_assistant_timestamp = None
+        
+        def _build_tool_invocation(tool_call_id: str, tool_name: str, arguments: dict) -> tuple[ToolInvocation | None, CommandRun | None]:
+            """Build a ToolInvocation or CommandRun from tool request data."""
+            # Get execution result if available
+            execution = tool_executions.get(tool_call_id, {})
+            complete_event = execution.get("complete")
+            start_event = execution.get("start")
+            
+            result = None
+            status = None
+            if complete_event:
+                complete_data = complete_event.get("data", {})
+                status = "success" if complete_data.get("success") else "error"
+                result_obj = complete_data.get("result", {})
+                if isinstance(result_obj, dict):
+                    result = result_obj.get("content", "")
+                else:
+                    result = str(result_obj) if result_obj else None
+            
+            # Get description from start event or arguments
+            description = None
+            if start_event:
+                start_data = start_event.get("data", {})
+                start_args = start_data.get("arguments", {})
+                description = start_args.get("description")
+            if not description:
+                description = arguments.get("description")
+            
+            # Check if this is a shell/powershell command
+            if tool_name in ("powershell", "bash", "shell", "run_command"):
+                command = arguments.get("command", "")
+                return None, CommandRun(
+                    command=command,
+                    title=description,
+                    result=result,
+                    status=status,
+                    output=result,
+                )
+            else:
+                # Regular tool invocation
+                input_str = None
+                if arguments:
+                    try:
+                        input_str = json.dumps(arguments)
+                    except (TypeError, ValueError):
+                        input_str = str(arguments)
+                
+                # Build invocation message for inline display
+                invocation_message = None
+                
+                # Generate pretty messages for known tools
+                if tool_name == "view":
+                    path = arguments.get("path", "")
+                    # Shorten path for display
+                    short_path = path.split("\\")[-1] if "\\" in path else path.split("/")[-1] if "/" in path else path
+                    invocation_message = f"Viewing `{short_path}`"
+                
+                elif tool_name == "edit":
+                    path = arguments.get("path", "")
+                    short_path = path.split("\\")[-1] if "\\" in path else path.split("/")[-1] if "/" in path else path
+                    invocation_message = f"Edited `{short_path}`"
+                
+                elif tool_name == "str_replace_editor":
+                    cmd = arguments.get("command", "view")
+                    path = arguments.get("path", "")
+                    short_path = path.split("\\")[-1] if "\\" in path else path.split("/")[-1] if "/" in path else path
+                    if cmd == "create":
+                        invocation_message = f"Created `{short_path}`"
+                    elif cmd == "str_replace":
+                        invocation_message = f"Edited `{short_path}`"
+                    else:
+                        invocation_message = f"Viewing `{short_path}`"
+                
+                elif tool_name == "grep":
+                    pattern = arguments.get("pattern", "")
+                    path = arguments.get("path", "")
+                    short_path = path.split("\\")[-1] if "\\" in path else path.split("/")[-1] if "/" in path else path
+                    invocation_message = f"Searching for `{pattern}` in `{short_path}`"
+                
+                elif tool_name == "glob":
+                    pattern = arguments.get("pattern", "")
+                    path = arguments.get("path", "")
+                    short_path = path.split("\\")[-1] if "\\" in path else path.split("/")[-1] if "/" in path else path
+                    invocation_message = f"Finding `{pattern}` in `{short_path}`"
+                
+                elif tool_name == "update_todo":
+                    invocation_message = "Updated TODO list"
+                
+                elif description:
+                    invocation_message = description
+                else:
+                    invocation_message = tool_name
+                
+                return ToolInvocation(
+                    name=tool_name,
+                    input=input_str,
+                    result=result,
+                    status=status,
+                    invocation_message=invocation_message,
+                ), None
+        
+        def _add_tool_inline(tool_call_id: str, tool_name: str, arguments: dict):
+            """Add a tool invocation inline in the current assistant message."""
+            # Handle special meta-tools with pretty formatting
+            if tool_name == "report_intent":
+                # Intent block - shows what the agent is planning
+                intent_text = arguments.get("intent", arguments.get("description", ""))
+                if intent_text:
+                    current_assistant_content_blocks.append(ContentBlock(
+                        kind="intent",
+                        content=intent_text,
+                    ))
+                return
+            
+            if tool_name == "skill":
+                # Skill block - shows which skill was loaded
+                skill_name = arguments.get("name", arguments.get("skill", ""))
+                if skill_name:
+                    current_assistant_content_blocks.append(ContentBlock(
+                        kind="skill",
+                        content=skill_name,
+                    ))
+                return
+            
+            # Skip truly internal tools with no user-visible output
+            internal_tools = {
+                # Terminal output reading - internal helper, not user-facing action
+                "read_powershell",
+                "read_bash",
+            }
+            if tool_name in internal_tools:
+                return
+            
+            tool_inv, cmd_run = _build_tool_invocation(tool_call_id, tool_name, arguments)
+            
+            if cmd_run:
+                # Add command run inline as a content block
+                cmd_display = cmd_run.title or cmd_run.command
+                if len(cmd_display) > 60:
+                    cmd_display = cmd_display[:57] + "..."
+                current_assistant_content_blocks.append(ContentBlock(
+                    kind="toolInvocation",
+                    content=f"$ {cmd_run.command}" if cmd_run.command else cmd_display,
+                    description=cmd_run.title,
+                ))
+                current_assistant_command_runs.append(cmd_run)
+            
+            elif tool_inv:
+                # Add tool invocation inline as a content block
+                display_text = tool_inv.invocation_message or tool_inv.name
+                current_assistant_content_blocks.append(ContentBlock(
+                    kind="toolInvocation",
+                    content=display_text,
+                    description=tool_inv.name,
+                ))
+                current_assistant_tool_invocations.append(tool_inv)
         
         for event in events:
             event_type = event.get("type", "")
@@ -1537,6 +1736,10 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
             timestamp = event.get("timestamp")
             
             if event_type == "user.message":
+                # Flush any pending assistant content before user message
+                _flush_pending_assistant_message()
+                pending_tool_requests.clear()
+                
                 content = event_data.get("content", "")
                 messages.append(ChatMessage(
                     role="user",
@@ -1545,7 +1748,10 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                 ))
             
             elif event_type == "system.message":
-                # System-level messages (rare)
+                # Flush pending assistant content
+                _flush_pending_assistant_message()
+                pending_tool_requests.clear()
+                
                 content = event_data.get("content", "")
                 if content:
                     messages.append(ChatMessage(
@@ -1554,80 +1760,79 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                         timestamp=timestamp,
                     ))
             
-            elif event_type == "abort":
-                # Session or turn was aborted
-                session_aborted = True
-                abort_reason = event_data.get("reason", "unknown")
-                # Could add as a system message or just track as metadata
-            
-            elif event_type == "session.error":
-                # Session encountered an error
-                error_type = event_data.get("errorType", "unknown")
-                error_message = event_data.get("message", "")
-                session_error = f"{error_type}: {error_message}"
+            elif event_type in ("assistant.turn_start", "assistant.turn_end"):
+                # Turn boundaries are internal to a single user interaction.
+                # Do NOT flush or create separate messages - all assistant turns
+                # between user messages should be combined into a single message.
+                # Just continue accumulating content.
+                pass
             
             elif event_type == "assistant.message":
+                # Set timestamp from first assistant message in the sequence
+                if current_assistant_timestamp is None:
+                    current_assistant_timestamp = timestamp
+                
                 content = event_data.get("content", "")
                 tool_requests = event_data.get("toolRequests", [])
                 
-                # Build tool invocations and command runs from tool requests
-                tool_invocations = []
-                command_runs = []
+                # Add any text content first
+                if content and content.strip():
+                    current_assistant_content_blocks.append(ContentBlock(
+                        kind="text",
+                        content=content.strip(),
+                    ))
                 
+                # Store tool requests for processing when execution starts/completes
                 for req in tool_requests:
                     tool_call_id = req.get("toolCallId")
-                    tool_name = req.get("name", "unknown")
-                    arguments = req.get("arguments", {})
-                    
-                    # Get execution result if available
-                    execution = tool_executions.get(tool_call_id, {})
-                    complete_event = execution.get("complete")
-                    
-                    result = None
-                    status = None
-                    if complete_event:
-                        complete_data = complete_event.get("data", {})
-                        status = "success" if complete_data.get("success") else "error"
-                        result_obj = complete_data.get("result", {})
-                        if isinstance(result_obj, dict):
-                            result = result_obj.get("content", "")
-                        else:
-                            result = str(result_obj) if result_obj else None
-                    
-                    # Check if this is a shell/powershell command
-                    if tool_name in ("powershell", "bash", "shell", "run_command"):
-                        command = arguments.get("command", "")
-                        description = arguments.get("description", "")
-                        command_runs.append(CommandRun(
-                            command=command,
-                            title=description,
-                            result=result,
-                            status=status,
-                            output=result,
-                        ))
-                    else:
-                        # Regular tool invocation
-                        input_str = None
-                        if arguments:
-                            try:
-                                input_str = json.dumps(arguments)
-                            except (TypeError, ValueError):
-                                input_str = str(arguments)
-                        
-                        tool_invocations.append(ToolInvocation(
-                            name=tool_name,
-                            input=input_str,
-                            result=result,
-                            status=status,
-                        ))
+                    if tool_call_id:
+                        pending_tool_requests[tool_call_id] = req
+            
+            elif event_type == "tool.execution_start":
+                # Add the tool invocation inline when execution starts
+                tool_call_id = event_data.get("toolCallId")
+                tool_name = event_data.get("toolName", "unknown")
+                arguments = event_data.get("arguments", {})
                 
-                messages.append(ChatMessage(
-                    role="assistant",
-                    content=content,
-                    timestamp=timestamp,
-                    tool_invocations=tool_invocations,
-                    command_runs=command_runs,
+                # Use stored request data if available, otherwise use start event data
+                req = pending_tool_requests.get(tool_call_id, {})
+                if not arguments and req:
+                    arguments = req.get("arguments", {})
+                if tool_name == "unknown" and req:
+                    tool_name = req.get("name", tool_name)
+                
+                _add_tool_inline(tool_call_id, tool_name, arguments)
+            
+            elif event_type == "abort":
+                # Session or turn was aborted - add as status block
+                abort_reason = event_data.get("reason", "unknown")
+                current_assistant_content_blocks.append(ContentBlock(
+                    kind="status",
+                    content=f"Aborted: {abort_reason}",
+                    description="abort",
                 ))
+            
+            elif event_type == "session.error":
+                # Session encountered an error - add as status block
+                error_type = event_data.get("errorType", "unknown")
+                error_message = event_data.get("message", "")
+                current_assistant_content_blocks.append(ContentBlock(
+                    kind="status",
+                    content=f"Error: {error_message}" if error_message else f"Error: {error_type}",
+                    description="error",
+                ))
+            
+            elif event_type == "session.model_change":
+                # Model was changed during session
+                new_model = event_data.get("newModel", "unknown")
+                current_assistant_content_blocks.append(ContentBlock(
+                    kind="status",
+                    content=f"Switched to {new_model}",
+                    description="model-change",  # hyphenated for CSS class
+                ))
+        
+        # Flush any remaining assistant content
+        _flush_pending_assistant_message()
         
         if not messages:
             return None
@@ -1646,7 +1851,7 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
             created_at=created_at,
             updated_at=updated_at,
             source_file=str(file_path),
-            vscode_edition="",  # Not applicable for CLI
+            vscode_edition="cli",  # CLI edition badge
             custom_title=None,
             requester_username=requester_username,
             responder_username=None,
