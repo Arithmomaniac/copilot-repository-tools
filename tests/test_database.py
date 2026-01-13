@@ -338,3 +338,33 @@ class TestCLISupport:
         retrieved = db.get_session("vscode-test-456")
         assert retrieved is not None
         assert retrieved.type == "vscode"
+
+    def test_cli_session_full_workflow(self, tmp_path):
+        """Test the full workflow: parse CLI file, add to DB, retrieve."""
+        from copilot_repository_tools_common.scanner import _parse_cli_jsonl_file
+        from pathlib import Path
+        
+        # Use the sample CLI file
+        sample_file = Path(__file__).parent / "sample_files" / "cli-session-001.jsonl"
+        
+        if not sample_file.exists():
+            pytest.skip("Sample CLI file not found")
+        
+        # Parse CLI file
+        session = _parse_cli_jsonl_file(sample_file)
+        assert session is not None
+        
+        # Add to database
+        db = Database(tmp_path / "test.db")
+        added = db.add_session(session)
+        assert added is True
+        
+        # Retrieve and verify
+        retrieved = db.get_session(session.session_id)
+        assert retrieved is not None
+        assert retrieved.type == "cli"
+        assert len(retrieved.messages) == 4
+        
+        # Verify search works
+        results = db.search("virtual environment")
+        assert len(results) > 0
