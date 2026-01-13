@@ -36,7 +36,8 @@ class Database:
         responder_username TEXT,
         imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         source_file_mtime REAL,
-        source_file_size INTEGER
+        source_file_size INTEGER,
+        type TEXT DEFAULT 'vscode'
     );
 
     CREATE TABLE IF NOT EXISTS messages (
@@ -176,6 +177,8 @@ class Database:
             cursor.execute("ALTER TABLE sessions ADD COLUMN source_file_mtime REAL")
         if "source_file_size" not in session_columns:
             cursor.execute("ALTER TABLE sessions ADD COLUMN source_file_size INTEGER")
+        if "type" not in session_columns:
+            cursor.execute("ALTER TABLE sessions ADD COLUMN type TEXT DEFAULT 'vscode'")
         
         # Check if the cached_markdown column exists in messages
         cursor.execute("PRAGMA table_info(messages)")
@@ -225,8 +228,8 @@ class Database:
                 INSERT INTO sessions 
                 (session_id, workspace_name, workspace_path, created_at, updated_at, 
                  source_file, vscode_edition, custom_title, requester_username, responder_username,
-                 source_file_mtime, source_file_size)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 source_file_mtime, source_file_size, type)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session.session_id,
@@ -241,6 +244,7 @@ class Database:
                     session.responder_username,
                     session.source_file_mtime,
                     session.source_file_size,
+                    session.type,
                 ),
             )
 
@@ -542,6 +546,7 @@ class Database:
                 responder_username=safe_get("responder_username"),
                 source_file_mtime=safe_get("source_file_mtime"),
                 source_file_size=safe_get("source_file_size"),
+                type=safe_get("type") or "vscode",
             )
 
     def get_messages_markdown(
@@ -727,7 +732,8 @@ class Database:
                     s.updated_at,
                     s.vscode_edition,
                     s.custom_title,
-                    COUNT(m.id) as message_count
+                    COUNT(m.id) as message_count,
+                    MAX(m.timestamp) as last_message_at
                 FROM sessions s
                 LEFT JOIN messages m ON s.session_id = m.session_id
             """
@@ -737,7 +743,7 @@ class Database:
                 query += " WHERE s.workspace_name = ?"
                 params.append(workspace_name)
 
-            query += " GROUP BY s.session_id ORDER BY s.created_at DESC"
+            query += " GROUP BY s.session_id ORDER BY last_message_at DESC, s.created_at DESC"
 
             if limit:
                 query += " LIMIT ? OFFSET ?"

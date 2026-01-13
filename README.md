@@ -1,6 +1,6 @@
 # Copilot Repository Tools
 
-Create a searchable archive of your VS Code GitHub Copilot chat history, with a web viewer similar to [simonw/claude-code-transcripts](https://github.com/simonw/claude-code-transcripts).
+Create a searchable archive of your VS Code and GitHub Copilot CLI chat history, with a web viewer similar to [simonw/claude-code-transcripts](https://github.com/simonw/claude-code-transcripts).
 
 This project was informed by and borrows patterns from several excellent open-source projects:
 
@@ -15,6 +15,7 @@ This project was informed by and borrows patterns from several excellent open-so
 
 - **Scan** VS Code workspace storage to find Copilot chat sessions (format based on [Arbuzov/copilot-chat-history](https://github.com/Arbuzov/copilot-chat-history))
 - **Support** for both VS Code Stable and Insiders editions
+- **GitHub Copilot CLI** chat history support (JSONL format from `~/.copilot/session-state`)
 - **Store** chat history in a SQLite database with FTS5 full-text search (inspired by [tad-hq/universal-session-viewer](https://github.com/tad-hq/universal-session-viewer))
 - **Browse** your archive with a web interface (similar to [simonw/claude-code-transcripts](https://github.com/simonw/claude-code-transcripts))
 - **Export/Import** sessions as JSON or Markdown for backup or migration
@@ -84,10 +85,10 @@ uv sync
 
 ### 1. Scan for Chat Sessions
 
-Scan your VS Code workspace storage to import chat sessions into the database:
+Scan your VS Code workspace storage and GitHub Copilot CLI sessions to import into the database:
 
 ```bash
-# Scan both VS Code Stable and Insiders
+# Scan both VS Code (Stable and Insiders) and CLI sessions
 copilot-chat-archive scan
 
 # Scan only VS Code Stable
@@ -110,6 +111,8 @@ copilot-chat-archive scan --full
 ```
 
 **Incremental Updates**: By default, the `scan` command only adds new sessions and updates changed ones based on file modification time. Use `--full` to re-import all sessions.
+
+**CLI Support**: The scanner automatically detects and imports GitHub Copilot CLI chat sessions from `~/.copilot/session-state/` by default.
 
 ### 2. Start the Web Server
 
@@ -176,6 +179,8 @@ copilot-chat-archive import-json chats.json
 
 ## Chat Storage Locations
 
+### VS Code
+
 VS Code stores Copilot chat history in workspace-specific storage:
 
 | OS | Path |
@@ -185,6 +190,17 @@ VS Code stores Copilot chat history in workspace-specific storage:
 | Linux | `~/.config/Code/User/workspaceStorage/{hash}/` |
 
 For VS Code Insiders, replace `Code` with `Code - Insiders`.
+
+### GitHub Copilot CLI
+
+The GitHub Copilot CLI stores chat history in JSONL format:
+
+| OS | Path |
+|----|------|
+| All | `~/.copilot/session-state/` (current format, v0.0.342+) |
+| All | `~/.copilot/history-session-state/` (legacy format) |
+
+The scanner automatically detects and imports both VS Code and CLI sessions by default.
 
 ## Database Schema
 
@@ -202,7 +218,8 @@ CREATE TABLE sessions (
     source_file TEXT,
     vscode_edition TEXT,
     custom_title TEXT,
-    imported_at TIMESTAMP
+    imported_at TIMESTAMP,
+    type TEXT DEFAULT 'vscode'  -- 'vscode' or 'cli'
 );
 
 -- Messages table
@@ -226,7 +243,7 @@ CREATE VIRTUAL TABLE messages_fts USING fts5(content);
 
 The web interface includes:
 
-- **Session list** with workspace names and message counts
+- **Session list** with workspace names and message counts, sorted by most recent message
 - **Workspace filtering** to focus on specific projects
 - **Full-text search** with highlighting
 - **Dark mode support** via CSS `prefers-color-scheme`

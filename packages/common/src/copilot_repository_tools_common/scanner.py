@@ -115,6 +115,7 @@ class ChatSession:
     responder_username: str | None = None
     source_file_mtime: float | None = None  # File modification time for incremental refresh
     source_file_size: int | None = None  # File size in bytes for incremental refresh
+    type: str = "vscode"  # 'vscode' or 'cli'
 
 
 def get_vscode_storage_paths() -> list[tuple[str, str]]:
@@ -1383,17 +1384,294 @@ def _extract_session_from_dict(
     )
 
 
+def get_cli_storage_paths() -> list[Path]:
+    """Get the paths to GitHub Copilot CLI session storage directories.
+    
+    Returns a list of Path objects for CLI session directories.
+    """
+    home = Path.home()
+    copilot_dir = home / ".copilot"
+    
+    paths = []
+    
+    # Current format (v0.0.342+)
+    session_state_dir = copilot_dir / "session-state"
+    if session_state_dir.exists():
+        paths.append(session_state_dir)
+    
+    # Legacy format (pre-v0.0.342)
+    history_state_dir = copilot_dir / "history-session-state"
+    if history_state_dir.exists():
+        paths.append(history_state_dir)
+    
+    return paths
+
+
+def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
+    """Parse a GitHub Copilot CLI JSONL session file.
+    
+    CLI sessions are stored as JSONL (JSON Lines) where each line is a JSON object
+    representing an event. The event-based format uses types like:
+    - session.start: Session initialization with sessionId, copilotVersion, etc.
+    - session.info: Info messages (authentication, mcp, folder_trust)
+    - session.model_change: Model switching (newModel)
+    - session.error: Error events (errorType, message)
+    - session.truncation: Context window management events
+    - user.message: User prompts with content and attachments
+    - system.message: System-level messages
+    - assistant.message: Assistant responses with content and toolRequests
+    - assistant.turn_start/end: Turn boundaries
+    - tool.execution_start/complete: Tool invocation lifecycle
+    - tool.user_requested: User-requested tool executions
+    - abort: Session/turn abort events
+    
+    Args:
+        file_path: Path to the JSONL file.
+        
+    Returns:
+        ChatSession object or None if parsing fails.
+    """
+    try:
+        events = []
+        
+        with open(file_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                    
+                try:
+                    data = orjson.loads(line)
+                    events.append(data)
+                except orjson.JSONDecodeError:
+                    continue
+        
+        if not events:
+            return None
+        
+        # Extract session metadata from session.start event
+        session_id = None
+        created_at = None
+        copilot_version = None
+        producer = None
+        current_model = None
+        
+        for event in events:
+            event_type = event.get("type", "")
+            event_data = event.get("data", {})
+            
+            if event_type == "session.start":
+                session_id = event_data.get("sessionId")
+                created_at = event_data.get("startTime") or event.get("timestamp")
+                copilot_version = event_data.get("copilotVersion")
+                producer = event_data.get("producer")
+            
+            # Track model changes - use the last model set
+            elif event_type == "session.model_change":
+                current_model = event_data.get("newModel")
+        
+        # If no session.start, use file stem as session ID
+        if not session_id:
+            session_id = file_path.stem
+        
+        # Extract workspace from first folder_trust event
+        workspace_path = None
+        workspace_name = None
+        requester_username = None
+        
+        for event in events:
+            if event.get("type") == "session.info":
+                event_data = event.get("data", {})
+                info_type = event_data.get("infoType")
+                message = event_data.get("message", "")
+                
+                if info_type == "folder_trust" and not workspace_path:
+                    # Parse "Folder C:\_SRC\ZTS has been added to trusted folders."
+                    if message.startswith("Folder ") and " has been added" in message:
+                        folder_path = message[7:message.find(" has been added")]
+                        workspace_path = folder_path
+                        workspace_name = Path(folder_path).name
+                
+                elif info_type == "authentication" and not requester_username:
+                    # Parse "Logged in with gh as user: Arithmomaniac"
+                    if "as user: " in message:
+                        requester_username = message.split("as user: ")[-1].strip()
+        
+        # Build tool execution map: toolCallId -> (start_data, complete_data, user_requested)
+        tool_executions = {}
+        for event in events:
+            event_type = event.get("type", "")
+            event_data = event.get("data", {})
+            
+            if event_type == "tool.execution_start":
+                tool_call_id = event_data.get("toolCallId")
+                if tool_call_id:
+                    if tool_call_id not in tool_executions:
+                        tool_executions[tool_call_id] = {"start": None, "complete": None, "user_requested": False}
+                    tool_executions[tool_call_id]["start"] = event
+            
+            elif event_type == "tool.user_requested":
+                # User explicitly requested this tool execution
+                tool_call_id = event_data.get("toolCallId")
+                if tool_call_id:
+                    if tool_call_id not in tool_executions:
+                        tool_executions[tool_call_id] = {"start": None, "complete": None, "user_requested": True}
+                    else:
+                        tool_executions[tool_call_id]["user_requested"] = True
+                    
+            elif event_type == "tool.execution_complete":
+                tool_call_id = event_data.get("toolCallId")
+                if tool_call_id:
+                    if tool_call_id not in tool_executions:
+                        tool_executions[tool_call_id] = {"start": None, "complete": None, "user_requested": False}
+                    tool_executions[tool_call_id]["complete"] = event
+        
+        # Build messages from user.message, system.message, and assistant.message events
+        messages = []
+        session_aborted = False
+        session_error = None
+        
+        for event in events:
+            event_type = event.get("type", "")
+            event_data = event.get("data", {})
+            timestamp = event.get("timestamp")
+            
+            if event_type == "user.message":
+                content = event_data.get("content", "")
+                messages.append(ChatMessage(
+                    role="user",
+                    content=content,
+                    timestamp=timestamp,
+                ))
+            
+            elif event_type == "system.message":
+                # System-level messages (rare)
+                content = event_data.get("content", "")
+                if content:
+                    messages.append(ChatMessage(
+                        role="system",
+                        content=content,
+                        timestamp=timestamp,
+                    ))
+            
+            elif event_type == "abort":
+                # Session or turn was aborted
+                session_aborted = True
+                abort_reason = event_data.get("reason", "unknown")
+                # Could add as a system message or just track as metadata
+            
+            elif event_type == "session.error":
+                # Session encountered an error
+                error_type = event_data.get("errorType", "unknown")
+                error_message = event_data.get("message", "")
+                session_error = f"{error_type}: {error_message}"
+            
+            elif event_type == "assistant.message":
+                content = event_data.get("content", "")
+                tool_requests = event_data.get("toolRequests", [])
+                
+                # Build tool invocations and command runs from tool requests
+                tool_invocations = []
+                command_runs = []
+                
+                for req in tool_requests:
+                    tool_call_id = req.get("toolCallId")
+                    tool_name = req.get("name", "unknown")
+                    arguments = req.get("arguments", {})
+                    
+                    # Get execution result if available
+                    execution = tool_executions.get(tool_call_id, {})
+                    complete_event = execution.get("complete")
+                    
+                    result = None
+                    status = None
+                    if complete_event:
+                        complete_data = complete_event.get("data", {})
+                        status = "success" if complete_data.get("success") else "error"
+                        result_obj = complete_data.get("result", {})
+                        if isinstance(result_obj, dict):
+                            result = result_obj.get("content", "")
+                        else:
+                            result = str(result_obj) if result_obj else None
+                    
+                    # Check if this is a shell/powershell command
+                    if tool_name in ("powershell", "bash", "shell", "run_command"):
+                        command = arguments.get("command", "")
+                        description = arguments.get("description", "")
+                        command_runs.append(CommandRun(
+                            command=command,
+                            title=description,
+                            result=result,
+                            status=status,
+                            output=result,
+                        ))
+                    else:
+                        # Regular tool invocation
+                        input_str = None
+                        if arguments:
+                            try:
+                                input_str = json.dumps(arguments)
+                            except (TypeError, ValueError):
+                                input_str = str(arguments)
+                        
+                        tool_invocations.append(ToolInvocation(
+                            name=tool_name,
+                            input=input_str,
+                            result=result,
+                            status=status,
+                        ))
+                
+                messages.append(ChatMessage(
+                    role="assistant",
+                    content=content,
+                    timestamp=timestamp,
+                    tool_invocations=tool_invocations,
+                    command_runs=command_runs,
+                ))
+        
+        if not messages:
+            return None
+        
+        # Get file metadata for incremental refresh
+        source_file_mtime, source_file_size = _get_file_metadata(file_path)
+        
+        # Get updated_at from last event timestamp
+        updated_at = events[-1].get("timestamp") if events else None
+        
+        return ChatSession(
+            session_id=session_id,
+            workspace_name=workspace_name,
+            workspace_path=workspace_path,
+            messages=messages,
+            created_at=created_at,
+            updated_at=updated_at,
+            source_file=str(file_path),
+            vscode_edition="",  # Not applicable for CLI
+            custom_title=None,
+            requester_username=requester_username,
+            responder_username=None,
+            source_file_mtime=source_file_mtime,
+            source_file_size=source_file_size,
+            type="cli",
+        )
+    except (OSError, Exception):
+        return None
+
+
 def scan_chat_sessions(
     storage_paths: list[tuple[str, str]] | None = None,
+    include_cli: bool = True,
 ) -> Iterator[ChatSession]:
     """Scan for and parse all Copilot chat sessions.
 
     Args:
-        storage_paths: Optional list of (path, edition) tuples to search.
+        storage_paths: Optional list of (path, edition) tuples to search for VS Code sessions.
+        include_cli: Whether to also scan for CLI sessions (default: True).
 
     Yields:
         ChatSession objects for each found session.
     """
+    # Scan VS Code chat sessions
     for chat_dir, workspace_id, edition in find_copilot_chat_dirs(storage_paths):
         # Get workspace info
         workspace_name, workspace_path = _parse_workspace_json(chat_dir.parent)
@@ -1423,3 +1701,16 @@ def scan_chat_sessions(
             )
             for session in sessions:
                 yield session
+    
+    # Scan CLI chat sessions
+    if include_cli:
+        for cli_dir in get_cli_storage_paths():
+            if not cli_dir.exists() or not cli_dir.is_dir():
+                continue
+            
+            # Process JSONL files in the CLI storage directory
+            for item in cli_dir.iterdir():
+                if item.is_file() and item.suffix == ".jsonl":
+                    session = _parse_cli_jsonl_file(item)
+                    if session:
+                        yield session

@@ -281,3 +281,171 @@ class TestNeedsUpdate:
         retrieved = temp_db.get_session("metadata-session")
         assert retrieved.source_file_mtime == 1234567890.123
         assert retrieved.source_file_size == 2048
+
+
+class TestCLISupport:
+    """Tests for CLI session support in database."""
+
+    def test_add_cli_session(self, tmp_path):
+        """Test adding a CLI session to database."""
+        from copilot_repository_tools_common import Database, ChatSession, ChatMessage
+        
+        db = Database(tmp_path / "test.db")
+        
+        # Create a CLI session
+        session = ChatSession(
+            session_id="cli-test-123",
+            workspace_name=None,
+            workspace_path=None,
+            messages=[
+                ChatMessage(role="user", content="Hello from CLI"),
+                ChatMessage(role="assistant", content="Hi there!"),
+            ],
+            type="cli",
+        )
+        
+        # Add session
+        result = db.add_session(session)
+        assert result is True
+        
+        # Retrieve session
+        retrieved = db.get_session("cli-test-123")
+        assert retrieved is not None
+        assert retrieved.type == "cli"
+        assert retrieved.session_id == "cli-test-123"
+        assert len(retrieved.messages) == 2
+
+    def test_vscode_session_type_default(self, tmp_path):
+        """Test that VS Code sessions default to 'vscode' type."""
+        from copilot_repository_tools_common import Database, ChatSession, ChatMessage
+        
+        db = Database(tmp_path / "test.db")
+        
+        # Create a session without explicit type (should default to vscode)
+        session = ChatSession(
+            session_id="vscode-test-456",
+            workspace_name="test-workspace",
+            workspace_path="/path/to/workspace",
+            messages=[
+                ChatMessage(role="user", content="Hello from VS Code"),
+            ],
+        )
+        
+        # Add session
+        db.add_session(session)
+        
+        # Retrieve session
+        retrieved = db.get_session("vscode-test-456")
+        assert retrieved is not None
+        assert retrieved.type == "vscode"
+
+    def test_cli_session_full_workflow(self, tmp_path):
+        """Test the full workflow: parse CLI file, add to DB, retrieve."""
+        from copilot_repository_tools_common.scanner import _parse_cli_jsonl_file
+        from pathlib import Path
+        
+        # Use the real sample CLI file with event-based format
+        sample_file = Path(__file__).parent / "sample_files" / "66b821d4-af6f-4518-a394-6d95a4d0f96b.jsonl"
+        
+        if not sample_file.exists():
+            pytest.skip("Real CLI sample file not found")
+        
+        # Parse CLI file
+        session = _parse_cli_jsonl_file(sample_file)
+        assert session is not None
+        assert session.session_id == "66b821d4-af6f-4518-a394-6d95a4d0f96b"
+        
+        # Add to database
+        db = Database(tmp_path / "test.db")
+        added = db.add_session(session)
+        assert added is True
+        
+        # Retrieve and verify
+        retrieved = db.get_session(session.session_id)
+        assert retrieved is not None
+        assert retrieved.type == "cli"
+        assert len(retrieved.messages) > 0
+        
+        # Verify search works - search for content from the session
+        results = db.search("branches")
+        assert len(results) > 0
+
+
+class TestSortingBehavior:
+    """Tests for session sorting behavior."""
+
+    def test_list_sessions_sorted_by_recent_message(self, tmp_path):
+        """Test that sessions are sorted by most recent message timestamp."""
+        from datetime import datetime, timedelta
+        
+        db = Database(tmp_path / "test.db")
+        
+        # Create base time
+        base_time = datetime(2024, 1, 1, 12, 0, 0)
+        
+        # Session 1: Created first, but has most recent message
+        session1 = ChatSession(
+            session_id="session-1",
+            workspace_name="test",
+            workspace_path="/test",
+            messages=[
+                ChatMessage(
+                    role="user",
+                    content="Old message",
+                    timestamp=(base_time + timedelta(hours=1)).isoformat()
+                ),
+                ChatMessage(
+                    role="assistant",
+                    content="Recent message",
+                    timestamp=(base_time + timedelta(hours=10)).isoformat()  # Most recent
+                ),
+            ],
+            created_at=(base_time + timedelta(hours=0)).isoformat(),
+        )
+        
+        # Session 2: Created second, older messages
+        session2 = ChatSession(
+            session_id="session-2",
+            workspace_name="test",
+            workspace_path="/test",
+            messages=[
+                ChatMessage(
+                    role="user",
+                    content="Older message",
+                    timestamp=(base_time + timedelta(hours=2)).isoformat()
+                ),
+            ],
+            created_at=(base_time + timedelta(hours=5)).isoformat(),
+        )
+        
+        # Session 3: Created last, has middle-aged messages
+        session3 = ChatSession(
+            session_id="session-3",
+            workspace_name="test",
+            workspace_path="/test",
+            messages=[
+                ChatMessage(
+                    role="user",
+                    content="Middle message",
+                    timestamp=(base_time + timedelta(hours=5)).isoformat()
+                ),
+            ],
+            created_at=(base_time + timedelta(hours=8)).isoformat(),
+        )
+        
+        # Add sessions
+        db.add_session(session1)
+        db.add_session(session2)
+        db.add_session(session3)
+        
+        # List sessions - should be sorted by most recent message
+        sessions = db.list_sessions()
+        
+        # Verify order: session-1 (hour 10), session-3 (hour 5), session-2 (hour 2)
+        assert len(sessions) == 3
+        assert sessions[0]['session_id'] == "session-1"
+        assert sessions[1]['session_id'] == "session-3"
+        assert sessions[2]['session_id'] == "session-2"
+        
+        # Verify last_message_at is included
+        assert 'last_message_at' in sessions[0]
