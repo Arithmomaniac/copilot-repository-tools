@@ -15,6 +15,7 @@ This project was informed by and borrows patterns from several excellent open-so
 
 - **Scan** VS Code workspace storage to find Copilot chat sessions (format based on [Arbuzov/copilot-chat-history](https://github.com/Arbuzov/copilot-chat-history))
 - **Support** for both VS Code Stable and Insiders editions
+- **GitHub Copilot CLI** chat history support (JSONL format from `~/.copilot/session-state`)
 - **Store** chat history in a SQLite database with FTS5 full-text search (inspired by [tad-hq/universal-session-viewer](https://github.com/tad-hq/universal-session-viewer))
 - **Browse** your archive with a web interface (similar to [simonw/claude-code-transcripts](https://github.com/simonw/claude-code-transcripts))
 - **Export/Import** sessions as JSON or Markdown for backup or migration
@@ -176,6 +177,8 @@ copilot-chat-archive import-json chats.json
 
 ## Chat Storage Locations
 
+### VS Code
+
 VS Code stores Copilot chat history in workspace-specific storage:
 
 | OS | Path |
@@ -185,6 +188,17 @@ VS Code stores Copilot chat history in workspace-specific storage:
 | Linux | `~/.config/Code/User/workspaceStorage/{hash}/` |
 
 For VS Code Insiders, replace `Code` with `Code - Insiders`.
+
+### GitHub Copilot CLI
+
+The GitHub Copilot CLI stores chat history in JSONL format:
+
+| OS | Path |
+|----|------|
+| All | `~/.copilot/session-state/` (current format, v0.0.342+) |
+| All | `~/.copilot/history-session-state/` (legacy format) |
+
+The scanner automatically detects and imports both VS Code and CLI sessions by default.
 
 ## Database Schema
 
@@ -202,7 +216,8 @@ CREATE TABLE sessions (
     source_file TEXT,
     vscode_edition TEXT,
     custom_title TEXT,
-    imported_at TIMESTAMP
+    imported_at TIMESTAMP,
+    type TEXT DEFAULT 'vscode'  -- 'vscode' or 'cli'
 );
 
 -- Messages table
