@@ -224,3 +224,76 @@ class TestCLI:
         )
         assert result.exit_code == 1
         assert "not found" in result.output
+
+
+class TestRebuildCommand:
+    """Tests for the rebuild CLI command."""
+
+    def test_rebuild_command_success(self, runner, tmp_path):
+        """Test rebuild command with valid database."""
+        db_path = tmp_path / "rebuild_test.db"
+        db = Database(db_path)
+        
+        # Add a session with raw JSON
+        raw_json = b'{"sessionId": "rebuild-cli-test", "requests": [{"message": {"text": "Hello"}, "response": [{"kind": "text", "value": "Hi"}]}]}'
+        session = ChatSession(
+            session_id="rebuild-cli-test",
+            workspace_name="rebuild-workspace",
+            workspace_path="/rebuild/path",
+            messages=[
+                ChatMessage(role="user", content="Hello"),
+                ChatMessage(role="assistant", content="Hi"),
+            ],
+            raw_json=raw_json,
+        )
+        db.add_session(session)
+        
+        result = runner.invoke(app, ["rebuild", "--db", str(db_path)])
+        assert result.exit_code == 0
+        assert "Rebuilding" in result.output
+        assert "Rebuild complete" in result.output
+        assert "Processed: 1" in result.output
+
+    def test_rebuild_command_missing_db(self, runner, tmp_path):
+        """Test rebuild command with non-existent database."""
+        result = runner.invoke(app, ["rebuild", "--db", str(tmp_path / "nonexistent.db")])
+        # Click returns exit code 2 for bad parameter (missing required file)
+        assert result.exit_code != 0
+        # The error could be from Click or our code depending on the check
+        error_patterns = ["not found", "does not exist", "no such file", "Invalid value"]
+        is_expected_error = (
+            result.exit_code == 2 or
+            any(pattern in result.output.lower() for pattern in error_patterns)
+        )
+        assert is_expected_error
+
+    def test_rebuild_command_empty_db(self, runner, tmp_path):
+        """Test rebuild command with empty database (no raw sessions)."""
+        db_path = tmp_path / "empty.db"
+        # Create an empty database
+        Database(db_path)
+        
+        result = runner.invoke(app, ["rebuild", "--db", str(db_path)])
+        assert result.exit_code == 1
+        assert "No raw sessions found" in result.output
+
+    def test_rebuild_command_verbose(self, runner, tmp_path):
+        """Test rebuild command with verbose flag."""
+        db_path = tmp_path / "verbose_test.db"
+        db = Database(db_path)
+        
+        raw_json = b'{"sessionId": "verbose-test", "requests": [{"message": {"text": "Test"}, "response": []}]}'
+        session = ChatSession(
+            session_id="verbose-test",
+            workspace_name="test",
+            workspace_path="/test",
+            messages=[ChatMessage(role="user", content="Test")],
+            raw_json=raw_json,
+        )
+        db.add_session(session)
+        
+        result = runner.invoke(app, ["rebuild", "--db", str(db_path), "--verbose"])
+        assert result.exit_code == 0
+        # Verbose output shows progress - check for expected patterns
+        assert "Processed:" in result.output
+        assert "Rebuild complete" in result.output

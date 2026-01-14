@@ -449,3 +449,122 @@ class TestSortingBehavior:
         
         # Verify last_message_at is included
         assert 'last_message_at' in sessions[0]
+
+
+class TestRawJsonStorage:
+    """Tests for raw JSON storage and rebuild functionality."""
+
+    def test_raw_json_stored_compressed(self, temp_db):
+        """Test that raw JSON is stored in compressed form."""
+        import zlib
+        
+        raw_json = b'{"sessionId": "raw-test", "requests": [{"message": {"text": "Hello"}, "response": [{"kind": "text", "value": "Hi"}]}]}'
+        session = ChatSession(
+            session_id="raw-test",
+            workspace_name="test-workspace",
+            workspace_path="/test/path",
+            messages=[ChatMessage(role="user", content="Hello")],
+            source_file="/test/session.json",
+            raw_json=raw_json,
+        )
+        temp_db.add_session(session)
+
+        # Retrieve raw JSON
+        retrieved_raw = temp_db.get_raw_json("raw-test")
+        assert retrieved_raw is not None
+        assert retrieved_raw == raw_json
+
+    def test_raw_session_count(self, temp_db, sample_session):
+        """Test getting raw session count."""
+        assert temp_db.get_raw_session_count() == 0
+        temp_db.add_session(sample_session)
+        assert temp_db.get_raw_session_count() == 1
+
+    def test_rebuild_derived_tables(self, temp_db):
+        """Test rebuilding derived tables from raw JSON."""
+        # Create a session with raw JSON that has the VS Code format
+        raw_json = b'{"sessionId": "rebuild-test", "createdAt": "2025-01-15", "requests": [{"message": {"text": "What is Python?"}, "response": [{"kind": "text", "value": "Python is a programming language."}]}]}'
+        session = ChatSession(
+            session_id="rebuild-test",
+            workspace_name="rebuild-workspace",
+            workspace_path="/rebuild/path",
+            messages=[
+                ChatMessage(role="user", content="What is Python?"),
+                ChatMessage(role="assistant", content="Python is a programming language."),
+            ],
+            source_file="/rebuild/session.json",
+            raw_json=raw_json,
+        )
+        temp_db.add_session(session)
+
+        # Verify session exists
+        assert temp_db.get_stats()["session_count"] == 1
+        assert temp_db.get_stats()["message_count"] == 2
+
+        # Rebuild derived tables
+        result = temp_db.rebuild_derived_tables()
+        assert result["total"] == 1
+        assert result["processed"] == 1
+        assert result["errors"] == 0
+
+        # Verify session still exists after rebuild
+        stats = temp_db.get_stats()
+        assert stats["session_count"] == 1
+        # Message count depends on parsing - the raw JSON has requests format
+
+    def test_rebuild_preserves_raw_sessions(self, temp_db, sample_session):
+        """Test that rebuild does not affect raw_sessions table."""
+        temp_db.add_session(sample_session)
+        
+        initial_raw_count = temp_db.get_raw_session_count()
+        assert initial_raw_count == 1
+
+        # Rebuild
+        temp_db.rebuild_derived_tables()
+
+        # Raw sessions should still be there
+        assert temp_db.get_raw_session_count() == initial_raw_count
+
+    def test_update_session_updates_raw_json(self, temp_db):
+        """Test that update_session also updates raw_sessions."""
+        raw_json_v1 = b'{"sessionId": "update-raw-test", "requests": [{"message": {"text": "V1"}, "response": []}]}'
+        session_v1 = ChatSession(
+            session_id="update-raw-test",
+            workspace_name="test",
+            workspace_path="/test",
+            messages=[ChatMessage(role="user", content="V1")],
+            raw_json=raw_json_v1,
+        )
+        temp_db.add_session(session_v1)
+
+        # Verify V1 is stored
+        retrieved_v1 = temp_db.get_raw_json("update-raw-test")
+        assert retrieved_v1 == raw_json_v1
+
+        # Update with V2
+        raw_json_v2 = b'{"sessionId": "update-raw-test", "requests": [{"message": {"text": "V2"}, "response": []}]}'
+        session_v2 = ChatSession(
+            session_id="update-raw-test",
+            workspace_name="test",
+            workspace_path="/test",
+            messages=[ChatMessage(role="user", content="V2")],
+            raw_json=raw_json_v2,
+        )
+        temp_db.update_session(session_v2)
+
+        # Verify V2 is now stored
+        retrieved_v2 = temp_db.get_raw_json("update-raw-test")
+        assert retrieved_v2 == raw_json_v2
+
+    def test_session_without_raw_json(self, temp_db, sample_session):
+        """Test that sessions without raw_json still work (stores empty compressed JSON)."""
+        # sample_session doesn't have raw_json set
+        assert sample_session.raw_json is None
+        
+        result = temp_db.add_session(sample_session)
+        assert result is True
+
+        # Session should still be added and queryable
+        retrieved = temp_db.get_session(sample_session.session_id)
+        assert retrieved is not None
+        assert len(retrieved.messages) == len(sample_session.messages)

@@ -204,10 +204,27 @@ The scanner automatically detects and imports both VS Code and CLI sessions by d
 
 ## Database Schema
 
-The SQLite database uses FTS5 for full-text search (inspired by [tad-hq/universal-session-viewer](https://github.com/tad-hq/universal-session-viewer)):
+The SQLite database uses a two-layer design:
+
+1. **`raw_sessions` table** - Stores compressed raw JSON as the source of truth
+2. **Derived tables** - Can be dropped and recreated from raw_sessions without migrations
 
 ```sql
--- Sessions table
+-- Raw sessions table (source of truth)
+CREATE TABLE raw_sessions (
+    id INTEGER PRIMARY KEY,
+    session_id TEXT UNIQUE NOT NULL,
+    raw_json_compressed BLOB NOT NULL,  -- zlib-compressed original JSON
+    workspace_name TEXT,
+    workspace_path TEXT,
+    source_file TEXT,
+    vscode_edition TEXT,
+    source_file_mtime REAL,
+    source_file_size INTEGER,
+    imported_at TIMESTAMP
+);
+
+-- Derived sessions table
 CREATE TABLE sessions (
     id INTEGER PRIMARY KEY,
     session_id TEXT UNIQUE NOT NULL,
@@ -238,6 +255,16 @@ CREATE VIRTUAL TABLE messages_fts USING fts5(content);
 
 -- Tool invocations, file changes, and command runs are also tracked
 ```
+
+### Rebuilding Derived Tables
+
+When the schema changes, you can rebuild all derived tables from the stored raw JSON:
+
+```bash
+copilot-chat-archive rebuild --db copilot_chats.db
+```
+
+This drops and recreates the sessions, messages, and related tables without needing to re-scan the original VS Code storage.
 
 ## Web Viewer Features
 

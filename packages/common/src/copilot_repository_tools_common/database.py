@@ -3,15 +3,25 @@
 Schema design inspired by:
 - tad-hq/universal-session-viewer: FTS5 full-text search
 - jazzyalex/agent-sessions: SQLite indexing patterns
+
+The schema has two parts:
+1. raw_sessions - Stores compressed raw JSON as the source of truth for rebuilding
+2. Derived tables (sessions, messages, etc.) - Can be dropped and recreated from raw_sessions
 """
 
 import json
 import sqlite3
+import zlib
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-from .scanner import ChatMessage, ChatSession, ToolInvocation, FileChange, CommandRun, ContentBlock
+import orjson
+
+from .scanner import (
+    ChatMessage, ChatSession, ToolInvocation, FileChange, CommandRun, ContentBlock,
+    _extract_session_from_dict,
+)
 from .markdown_exporter import message_to_markdown
 
 
@@ -19,9 +29,33 @@ class Database:
     """SQLite database for storing Copilot chat sessions.
     
     Uses FTS5 for full-text search (inspired by tad-hq/universal-session-viewer).
+    
+    The database has a two-layer design:
+    1. raw_sessions table stores compressed raw JSON as the source of truth
+    2. Derived tables (sessions, messages, etc.) can be dropped and rebuilt
     """
 
-    SCHEMA = """
+    # Schema for the raw data table - source of truth
+    RAW_SCHEMA = """
+    CREATE TABLE IF NOT EXISTS raw_sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT UNIQUE NOT NULL,
+        raw_json_compressed BLOB NOT NULL,
+        workspace_name TEXT,
+        workspace_path TEXT,
+        source_file TEXT,
+        vscode_edition TEXT DEFAULT 'stable',
+        source_file_mtime REAL,
+        source_file_size INTEGER,
+        imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_raw_sessions_session_id ON raw_sessions(session_id);
+    CREATE INDEX IF NOT EXISTS idx_raw_sessions_workspace ON raw_sessions(workspace_name);
+    """
+
+    # Schema for derived tables that can be dropped and recreated
+    DERIVED_SCHEMA = """
     CREATE TABLE IF NOT EXISTS sessions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         session_id TEXT UNIQUE NOT NULL,
@@ -135,6 +169,23 @@ class Database:
     END;
     """
 
+    # List of derived tables that can be dropped and recreated
+    DERIVED_TABLES = [
+        "messages_fts",  # FTS table must be dropped first
+        "content_blocks",
+        "command_runs",
+        "file_changes",
+        "tool_invocations",
+        "messages",
+        "sessions",
+    ]
+    
+    # List of triggers that need to be dropped/recreated with derived tables
+    DERIVED_TRIGGERS = ["messages_ai", "messages_ad", "messages_au"]
+    
+    # Compression level for zlib (0-9, 6 is a good balance of speed and compression)
+    COMPRESSION_LEVEL = 6
+
     def __init__(self, db_path: str | Path):
         """Initialize the database connection.
 
@@ -160,48 +211,17 @@ class Database:
             conn.close()
 
     def _ensure_schema(self):
-        """Ensure the database schema exists and migrate if necessary."""
+        """Ensure the database schema exists.
+        
+        With the new two-layer design:
+        - raw_sessions is the source of truth (never needs migration)
+        - Derived tables can be dropped and rebuilt, so no migrations needed
+        """
         with self._get_connection() as conn:
-            conn.executescript(self.SCHEMA)
-            # Migrate existing databases: add new columns if they don't exist
-            self._migrate_schema(conn)
-
-    def _migrate_schema(self, conn):
-        """Add new columns to existing databases for incremental refresh support."""
-        cursor = conn.cursor()
-        # Check if the source_file_mtime column exists
-        cursor.execute("PRAGMA table_info(sessions)")
-        session_columns = {row[1] for row in cursor.fetchall()}
-        
-        if "source_file_mtime" not in session_columns:
-            cursor.execute("ALTER TABLE sessions ADD COLUMN source_file_mtime REAL")
-        if "source_file_size" not in session_columns:
-            cursor.execute("ALTER TABLE sessions ADD COLUMN source_file_size INTEGER")
-        if "type" not in session_columns:
-            cursor.execute("ALTER TABLE sessions ADD COLUMN type TEXT DEFAULT 'vscode'")
-        
-        # Check if the cached_markdown column exists in messages
-        cursor.execute("PRAGMA table_info(messages)")
-        message_columns = {row[1] for row in cursor.fetchall()}
-        
-        if "cached_markdown" not in message_columns:
-            cursor.execute("ALTER TABLE messages ADD COLUMN cached_markdown TEXT")
-        
-        # Check if the description column exists in content_blocks
-        cursor.execute("PRAGMA table_info(content_blocks)")
-        content_block_columns = {row[1] for row in cursor.fetchall()}
-        
-        if "description" not in content_block_columns:
-            cursor.execute("ALTER TABLE content_blocks ADD COLUMN description TEXT")
-        
-        # Check if the source_type and invocation_message columns exist in tool_invocations
-        cursor.execute("PRAGMA table_info(tool_invocations)")
-        tool_columns = {row[1] for row in cursor.fetchall()}
-        
-        if "source_type" not in tool_columns:
-            cursor.execute("ALTER TABLE tool_invocations ADD COLUMN source_type TEXT")
-        if "invocation_message" not in tool_columns:
-            cursor.execute("ALTER TABLE tool_invocations ADD COLUMN invocation_message TEXT")
+            # Create raw_sessions table first (source of truth)
+            conn.executescript(self.RAW_SCHEMA)
+            # Create derived tables
+            conn.executescript(self.DERIVED_SCHEMA)
 
     def add_session(self, session: ChatSession) -> bool:
         """Add a chat session to the database.
@@ -215,14 +235,40 @@ class Database:
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
-            # Check if session already exists
+            # Check if session already exists in raw_sessions
             cursor.execute(
-                "SELECT id FROM sessions WHERE session_id = ?", (session.session_id,)
+                "SELECT id FROM raw_sessions WHERE session_id = ?", (session.session_id,)
             )
             if cursor.fetchone():
                 return False
 
-            # Insert session with new fields
+            # Store compressed raw JSON in raw_sessions table
+            if session.raw_json:
+                compressed_json = zlib.compress(session.raw_json, level=self.COMPRESSION_LEVEL)
+            else:
+                # Create minimal JSON from session data if no raw JSON available
+                compressed_json = zlib.compress(b'{}', level=self.COMPRESSION_LEVEL)
+            
+            cursor.execute(
+                """
+                INSERT INTO raw_sessions 
+                (session_id, raw_json_compressed, workspace_name, workspace_path, 
+                 source_file, vscode_edition, source_file_mtime, source_file_size)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session.session_id,
+                    compressed_json,
+                    session.workspace_name,
+                    session.workspace_path,
+                    session.source_file,
+                    session.vscode_edition,
+                    session.source_file_mtime,
+                    session.source_file_size,
+                ),
+            )
+
+            # Insert into derived sessions table
             cursor.execute(
                 """
                 INSERT INTO sessions 
@@ -361,12 +407,17 @@ class Database:
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
+            # Delete from raw_sessions first (source of truth)
+            cursor.execute(
+                "DELETE FROM raw_sessions WHERE session_id = ?", (session.session_id,)
+            )
+            
             # Delete existing session and messages (cascades)
             cursor.execute(
                 "DELETE FROM sessions WHERE session_id = ?", (session.session_id,)
             )
 
-        # Add the session
+        # Add the session (this will add to both raw_sessions and derived tables)
         self.add_session(session)
 
     def needs_update(self, session_id: str, file_mtime: float | None, file_size: int | None) -> bool:
@@ -387,8 +438,9 @@ class Database:
         """
         with self._get_connection() as conn:
             cursor = conn.cursor()
+            # Check raw_sessions table (source of truth)
             cursor.execute(
-                "SELECT source_file_mtime, source_file_size FROM sessions WHERE session_id = ?",
+                "SELECT source_file_mtime, source_file_size FROM raw_sessions WHERE session_id = ?",
                 (session_id,),
             )
             row = cursor.fetchone()
@@ -951,3 +1003,276 @@ class Database:
                     ],
                 })
         return json.dumps(sessions, indent=2)
+
+    def rebuild_derived_tables(self, progress_callback=None) -> dict:
+        """Drop and recreate all derived tables from raw_sessions.
+        
+        This method allows the schema to evolve without migrations - simply
+        drop the derived tables and rebuild them from the raw JSON source.
+        
+        Args:
+            progress_callback: Optional callable that receives (processed, total) counts.
+            
+        Returns:
+            Dictionary with rebuild statistics.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Disable foreign keys temporarily for dropping tables
+            conn.execute("PRAGMA foreign_keys = OFF")
+            
+            # Drop derived tables in order (FTS first, then dependent tables)
+            # Tables are validated against the predefined DERIVED_TABLES list
+            for table in self.DERIVED_TABLES:
+                # Validate table name is alphanumeric with underscores only
+                if not all(c.isalnum() or c == '_' for c in table):
+                    raise ValueError(f"Invalid table name: {table}")
+                try:
+                    cursor.execute(f"DROP TABLE IF EXISTS {table}")  # noqa: S608
+                except sqlite3.OperationalError:
+                    # FTS tables might need special handling
+                    pass
+            
+            # Drop triggers (validated against DERIVED_TRIGGERS list)
+            for trigger in self.DERIVED_TRIGGERS:
+                # Validate trigger name is alphanumeric with underscores only
+                if not all(c.isalnum() or c == '_' for c in trigger):
+                    raise ValueError(f"Invalid trigger name: {trigger}")
+                cursor.execute(f"DROP TRIGGER IF EXISTS {trigger}")  # noqa: S608
+            
+            conn.commit()
+            
+            # Recreate derived tables schema
+            conn.executescript(self.DERIVED_SCHEMA)
+            conn.execute("PRAGMA foreign_keys = ON")
+            
+            # Count total raw sessions
+            cursor.execute("SELECT COUNT(*) FROM raw_sessions")
+            total_count = cursor.fetchone()[0]
+            
+            # Rebuild from raw_sessions
+            cursor.execute("""
+                SELECT session_id, raw_json_compressed, workspace_name, workspace_path,
+                       source_file, vscode_edition, source_file_mtime, source_file_size
+                FROM raw_sessions
+            """)
+            
+            processed = 0
+            errors = 0
+            
+            for row in cursor.fetchall():
+                try:
+                    session_id = row[0]
+                    compressed_json = row[1]
+                    workspace_name = row[2]
+                    workspace_path = row[3]
+                    source_file = row[4]
+                    vscode_edition = row[5]
+                    source_file_mtime = row[6]
+                    source_file_size = row[7]
+                    
+                    # Decompress and parse raw JSON
+                    raw_json = zlib.decompress(compressed_json)
+                    data = orjson.loads(raw_json)
+                    
+                    # Re-parse session from raw JSON
+                    session = _extract_session_from_dict(
+                        data,
+                        workspace_name=workspace_name,
+                        workspace_path=workspace_path,
+                        edition=vscode_edition,
+                        source_file=source_file,
+                        raw_json=raw_json,  # Keep raw JSON for consistency
+                    )
+                    
+                    if session:
+                        # Override metadata from raw_sessions table
+                        session.source_file_mtime = source_file_mtime
+                        session.source_file_size = source_file_size
+                        
+                        # Insert into derived tables only (not raw_sessions)
+                        self._insert_derived_session(conn, session)
+                        
+                    processed += 1
+                    
+                    if progress_callback:
+                        progress_callback(processed, total_count)
+                        
+                except Exception:
+                    errors += 1
+                    processed += 1
+            
+            conn.commit()
+            
+        return {
+            "total": total_count,
+            "processed": processed,
+            "errors": errors,
+        }
+
+    def _insert_derived_session(self, conn, session: ChatSession):
+        """Insert a session into derived tables only (not raw_sessions).
+        
+        This is an internal method used by rebuild_derived_tables.
+        """
+        cursor = conn.cursor()
+        
+        # Insert into sessions table
+        cursor.execute(
+            """
+            INSERT INTO sessions 
+            (session_id, workspace_name, workspace_path, created_at, updated_at, 
+             source_file, vscode_edition, custom_title, requester_username, responder_username,
+             source_file_mtime, source_file_size, type)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                session.session_id,
+                session.workspace_name,
+                session.workspace_path,
+                session.created_at,
+                session.updated_at,
+                session.source_file,
+                session.vscode_edition,
+                session.custom_title,
+                session.requester_username,
+                session.responder_username,
+                session.source_file_mtime,
+                session.source_file_size,
+                session.type,
+            ),
+        )
+
+        # Insert messages and associated data
+        for idx, msg in enumerate(session.messages):
+            # Generate cached markdown for this message
+            cached_md = message_to_markdown(
+                msg,
+                message_number=idx + 1,
+                include_diffs=True,
+                include_tool_inputs=True,
+            )
+            
+            cursor.execute(
+                """
+                INSERT INTO messages 
+                (session_id, message_index, role, content, timestamp, cached_markdown)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session.session_id,
+                    idx,
+                    msg.role,
+                    msg.content,
+                    msg.timestamp,
+                    cached_md,
+                ),
+            )
+            message_id = cursor.lastrowid
+
+            # Insert tool invocations
+            for tool in msg.tool_invocations:
+                cursor.execute(
+                    """
+                    INSERT INTO tool_invocations
+                    (message_id, name, input, result, status, start_time, end_time, source_type, invocation_message)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        message_id,
+                        tool.name,
+                        tool.input,
+                        tool.result,
+                        tool.status,
+                        tool.start_time,
+                        tool.end_time,
+                        tool.source_type,
+                        tool.invocation_message,
+                    ),
+                )
+
+            # Insert file changes
+            for change in msg.file_changes:
+                cursor.execute(
+                    """
+                    INSERT INTO file_changes
+                    (message_id, path, diff, content, explanation, language_id)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        message_id,
+                        change.path,
+                        change.diff,
+                        change.content,
+                        change.explanation,
+                        change.language_id,
+                    ),
+                )
+
+            # Insert command runs
+            for cmd in msg.command_runs:
+                cursor.execute(
+                    """
+                    INSERT INTO command_runs
+                    (message_id, command, title, result, status, output, timestamp)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        message_id,
+                        cmd.command,
+                        cmd.title,
+                        cmd.result,
+                        cmd.status,
+                        cmd.output,
+                        cmd.timestamp,
+                    ),
+                )
+
+            # Insert content blocks
+            for block_idx, block in enumerate(msg.content_blocks):
+                cursor.execute(
+                    """
+                    INSERT INTO content_blocks
+                    (message_id, block_index, kind, content, description)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        message_id,
+                        block_idx,
+                        block.kind,
+                        block.content,
+                        block.description,
+                    ),
+                )
+
+    def get_raw_session_count(self) -> int:
+        """Get the count of raw sessions stored in the database.
+        
+        Returns:
+            Number of sessions in raw_sessions table.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM raw_sessions")
+            return cursor.fetchone()[0]
+
+    def get_raw_json(self, session_id: str) -> bytes | None:
+        """Get the decompressed raw JSON for a specific session.
+        
+        Args:
+            session_id: The session ID to retrieve.
+            
+        Returns:
+            Raw JSON bytes if found, None otherwise.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT raw_json_compressed FROM raw_sessions WHERE session_id = ?",
+                (session_id,),
+            )
+            row = cursor.fetchone()
+            if row:
+                return zlib.decompress(row[0])
+            return None
