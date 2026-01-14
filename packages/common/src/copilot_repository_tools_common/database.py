@@ -1023,7 +1023,8 @@ class Database:
             conn.execute("PRAGMA foreign_keys = OFF")
             
             # Drop derived tables in order (FTS first, then dependent tables)
-            # Tables are validated against the predefined DERIVED_TABLES list
+            # Note: DERIVED_TABLES is a class constant with hardcoded table names,
+            # so f-string usage is safe. Validation is additional defense-in-depth.
             for table in self.DERIVED_TABLES:
                 # Validate table name is alphanumeric with underscores only
                 if not all(c.isalnum() or c == '_' for c in table):
@@ -1035,6 +1036,8 @@ class Database:
                     pass
             
             # Drop triggers (validated against DERIVED_TRIGGERS list)
+            # Note: DERIVED_TRIGGERS is a class constant with hardcoded trigger names,
+            # so f-string usage is safe. Validation is additional defense-in-depth.
             for trigger in self.DERIVED_TRIGGERS:
                 # Validate trigger name is alphanumeric with underscores only
                 if not all(c.isalnum() or c == '_' for c in trigger):
@@ -1099,7 +1102,9 @@ class Database:
                     if progress_callback:
                         progress_callback(processed, total_count)
                         
-                except Exception:
+                except (zlib.error, orjson.JSONDecodeError, KeyError, TypeError) as e:
+                    # Log error for debugging, but continue processing other sessions
+                    # These errors can occur when raw JSON is malformed or cannot be parsed
                     errors += 1
                     processed += 1
             
