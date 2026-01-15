@@ -26,7 +26,7 @@ from .scanner import (
     get_cli_storage_paths,
     scan_chat_sessions,
 )
-from .database import Database
+from .database import Database, ParsedQuery, parse_search_query
 from .markdown_exporter import (
     export_session_to_file,
     generate_session_filename,
@@ -49,6 +49,8 @@ __all__ = [
     "scan_chat_sessions",
     # Database
     "Database",
+    "ParsedQuery",
+    "parse_search_query",
     # Markdown Exporter
     "export_session_to_file",
     "generate_session_filename",

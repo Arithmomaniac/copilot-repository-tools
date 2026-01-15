@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from copilot_repository_tools_common import Database, ChatMessage, ChatSession
+from copilot_repository_tools_common import Database, ChatMessage, ChatSession, ParsedQuery, parse_search_query
 
 
 @pytest.fixture
@@ -568,3 +568,202 @@ class TestRawJsonStorage:
         retrieved = temp_db.get_session(sample_session.session_id)
         assert retrieved is not None
         assert len(retrieved.messages) == len(sample_session.messages)
+
+
+class TestParseSearchQuery:
+    """Tests for the parse_search_query function using parametrized test cases."""
+
+    @pytest.mark.parametrize("query,expected_fts,expected_role,expected_workspace,expected_title", [
+        # Empty and simple queries
+        ("", "", None, None, None),
+        ("python", "python", None, None, None),
+        ("python function", "python function", None, None, None),
+        
+        # Quoted phrases (for exact match in FTS5)
+        ('"python function"', '"python function"', None, None, None),
+        ('create "python function" parameters', 'create "python function" parameters', None, None, None),
+        
+        # Field filters
+        ("python role:user", "python", "user", None, None),
+        ("role:assistant function", "function", "assistant", None, None),
+        ("python workspace:my-project", "python", None, "my-project", None),
+        ("function title:MySession", "function", None, None, "MySession"),
+        
+        # Quoted field values
+        ('workspace:"my project name" python', "python", None, "my project name", None),
+        
+        # Multiple filters together
+        ("python role:user workspace:myproj", "python", "user", "myproj", None),
+        ("role:user workspace:test", "", "user", "test", None),
+        
+        # Case insensitive field names
+        ("Role:user WORKSPACE:test", "", "user", "test", None),
+        
+        # Duplicate field values - last one wins
+        ("role:user role:assistant python", "python", "assistant", None, None),
+        ("workspace:first workspace:second", "", None, "second", None),
+    ])
+    def test_parse_search_query(self, query, expected_fts, expected_role, expected_workspace, expected_title):
+        """Test parsing search queries with various formats."""
+        result = parse_search_query(query)
+        assert result.fts_query == expected_fts
+        assert result.role == expected_role
+        assert result.workspace == expected_workspace
+        assert result.title == expected_title
+
+
+@pytest.fixture
+def search_test_db(tmp_path):
+    """Create a database with multiple sessions for search testing."""
+    db = Database(tmp_path / "search_test.db")
+    
+    # Session 1: Python project with user and assistant messages
+    session1 = ChatSession(
+        session_id="session-python",
+        workspace_name="python-project",
+        workspace_path="/home/user/python-project",
+        messages=[
+            ChatMessage(role="user", content="How do I create a Python function?"),
+            ChatMessage(role="assistant", content="Here's how to create a Python function with def keyword."),
+            ChatMessage(role="user", content="Thanks! Can you add parameters?"),
+            ChatMessage(role="assistant", content="Sure! Here's a function with parameters."),
+        ],
+        created_at="1704067200000",  # 2024-01-01
+        vscode_edition="stable",
+    )
+    db.add_session(session1)
+    
+    # Session 2: React project with different content
+    session2 = ChatSession(
+        session_id="session-react",
+        workspace_name="react-app",
+        workspace_path="/home/user/react-app",
+        messages=[
+            ChatMessage(role="user", content="How do I use React hooks?"),
+            ChatMessage(role="assistant", content="React hooks like useState and useEffect are used in function components."),
+        ],
+        created_at="1704153600000",  # 2024-01-02
+        vscode_edition="insider",
+    )
+    db.add_session(session2)
+    
+    # Session 3: Another Python session for testing multi-session results
+    session3 = ChatSession(
+        session_id="session-python-2",
+        workspace_name="python-project",
+        workspace_path="/home/user/python-project",
+        messages=[
+            ChatMessage(role="user", content="What is a Python decorator?"),
+            ChatMessage(role="assistant", content="A decorator is a function that modifies another function."),
+        ],
+        created_at="1704240000000",  # 2024-01-03
+        vscode_edition="stable",
+    )
+    db.add_session(session3)
+    
+    return db
+
+
+class TestAdvancedSearchIntegration:
+    """Integration tests for search functionality against actual database."""
+
+    def test_multiple_words_match_all(self, search_test_db):
+        """Test that multiple words match messages containing ALL words (AND logic)."""
+        # "Python function" should match messages with both words
+        results = search_test_db.search("Python function")
+        assert len(results) > 0
+        for r in results:
+            content_lower = r["content"].lower()
+            assert "python" in content_lower and "function" in content_lower
+
+    def test_quoted_phrase_exact_match(self, search_test_db):
+        """Test that quoted phrases match exactly (verbatim)."""
+        # '"Python function"' should match the exact phrase
+        results = search_test_db.search('"Python function"')
+        assert len(results) > 0
+        for r in results:
+            assert "Python function" in r["content"]
+
+    def test_mixed_words_and_quoted_phrase(self, search_test_db):
+        """Test search with both unquoted words and quoted phrase."""
+        # Search for 'create "Python function"' should match messages with
+        # the exact phrase "Python function" and the word "create"
+        results = search_test_db.search('create "Python function"')
+        # Should match messages containing both "create" and the exact phrase
+        for r in results:
+            content = r["content"]
+            assert "Python function" in content
+            assert "create" in content.lower()
+
+    @pytest.mark.parametrize("query,expected_role", [
+        ("role:user Python", "user"),
+        ("role:assistant function", "assistant"),
+    ])
+    def test_role_filter_integration(self, search_test_db, query, expected_role):
+        """Test that role filter correctly filters search results."""
+        results = search_test_db.search(query)
+        assert len(results) > 0
+        for r in results:
+            if r.get("match_type") == "message":
+                assert r["role"] == expected_role
+
+    @pytest.mark.parametrize("query,expected_workspace", [
+        ("workspace:python-project function", "python-project"),
+        ("workspace:react-app hooks", "react-app"),
+    ])
+    def test_workspace_filter_integration(self, search_test_db, query, expected_workspace):
+        """Test that workspace filter correctly filters search results."""
+        results = search_test_db.search(query)
+        assert len(results) > 0
+        for r in results:
+            assert r["workspace_name"] == expected_workspace
+
+    def test_duplicate_role_filter_last_wins(self, search_test_db):
+        """Test that duplicate field filters use the last value.
+        
+        Test data has assistant messages containing 'Python' (e.g., 
+        'Here's how to create a Python function with def keyword.').
+        """
+        # Both role:user and role:assistant in query - last one wins
+        results = search_test_db.search("role:user role:assistant Python")
+        assert len(results) > 0, "Expected assistant messages with 'Python' in test data"
+        for r in results:
+            if r.get("match_type") == "message":
+                assert r["role"] == "assistant"
+
+    def test_filter_only_no_fts_query(self, search_test_db):
+        """Test search with only field filters (no FTS query)."""
+        # Search with only workspace filter
+        results = search_test_db.search("workspace:python-project")
+        assert len(results) > 0
+        for r in results:
+            assert r["workspace_name"] == "python-project"
+
+    def test_combined_filters(self, search_test_db):
+        """Test search with multiple filters combined."""
+        results = search_test_db.search("workspace:python-project role:assistant")
+        assert len(results) > 0
+        for r in results:
+            assert r["workspace_name"] == "python-project"
+            assert r["role"] == "assistant"
+
+    @pytest.mark.parametrize("sort_by", ["relevance", "date"])
+    def test_sort_options(self, search_test_db, sort_by):
+        """Test that sort options work correctly."""
+        results = search_test_db.search("Python", sort_by=sort_by)
+        assert len(results) > 0
+        
+    def test_sort_by_date_order(self, search_test_db):
+        """Test that date sorting returns results in date order."""
+        results = search_test_db.search("Python", sort_by="date")
+        assert len(results) > 0
+        # Results should be ordered by created_at DESC (newest first)
+        dates = [r.get("created_at") for r in results if r.get("created_at")]
+        # All dates should be in descending order
+        for i in range(len(dates) - 1):
+            assert dates[i] >= dates[i + 1]
+
+    def test_no_results_for_non_matching_query(self, search_test_db):
+        """Test that non-matching query returns empty results."""
+        results = search_test_db.search("nonexistentword12345")
+        assert len(results) == 0
