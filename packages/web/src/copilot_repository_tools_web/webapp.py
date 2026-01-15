@@ -3,11 +3,9 @@
 from datetime import datetime
 from urllib.parse import unquote
 
-from flask import Flask, render_template, request, redirect, url_for, session, jsonify
 import markdown
-
 from copilot_repository_tools_common import Database, get_vscode_storage_paths, scan_chat_sessions
-
+from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 
 # Create a reusable markdown converter with extensions
 _md_converter = markdown.Markdown(
@@ -202,7 +200,12 @@ def _match_tool_for_block(block_content: str, tools: list, used_indices: set) ->
     return None, used_indices
 
 
-def create_app(db_path: str, title: str = "Copilot Chat Archive", storage_paths: list | None = None, include_cli: bool = True) -> Flask:
+def create_app(
+    db_path: str,
+    title: str = "Copilot Chat Archive",
+    storage_paths: list | None = None,
+    include_cli: bool = True,
+) -> Flask:
     """Create and configure the Flask application.
 
     Args:
@@ -412,7 +415,12 @@ def create_app(db_path: str, title: str = "Copilot Chat Archive", storage_paths:
                     updated += 1
             else:
                 # Incremental mode: use needs_update() to determine if session should be updated
-                if db.needs_update(chat_session.session_id, chat_session.source_file_mtime, chat_session.source_file_size):
+                needs_update = db.needs_update(
+                    chat_session.session_id,
+                    chat_session.source_file_mtime,
+                    chat_session.source_file_size,
+                )
+                if needs_update:
                     # Try to add first - if it fails (returns False), session exists and we update
                     if db.add_session(chat_session):
                         added += 1

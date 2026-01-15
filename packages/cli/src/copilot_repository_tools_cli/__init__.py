@@ -4,25 +4,22 @@ This module provides a modern CLI built with Typer for scanning, searching,
 and exporting VS Code GitHub Copilot chat history.
 """
 
-import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
-from rich.console import Console
-from rich.table import Table
-
 from copilot_repository_tools_common import (
-    __version__,
     ChatMessage,
     ChatSession,
     Database,
+    __version__,
     export_session_to_file,
     generate_session_filename,
     get_vscode_storage_paths,
     scan_chat_sessions,
 )
+from rich.console import Console
 
 app = typer.Typer(
     name="copilot-chat-archive",
@@ -45,11 +42,14 @@ def format_timestamp(ts: str | int | None) -> str:
         return "Unknown"
     try:
         # Try parsing as milliseconds (JS timestamp)
+        numeric_ts: int | float
         if isinstance(ts, str):
-            ts = int(ts)
-        if ts > 1e12:  # Milliseconds
-            ts = ts / 1000
-        return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+            numeric_ts = int(ts)
+        else:
+            numeric_ts = ts
+        if numeric_ts > 1e12:  # Milliseconds
+            numeric_ts = numeric_ts / 1000
+        return datetime.fromtimestamp(numeric_ts).strftime("%Y-%m-%d %H:%M:%S")
     except (ValueError, OSError):
         return str(ts)
 
@@ -80,7 +80,7 @@ def scan(
         ),
     ] = Path("copilot_chats.db"),
     storage_path: Annotated[
-        Optional[list[Path]],
+        list[Path] | None,
         typer.Option(
             "--storage-path", "-s",
             help="Custom VS Code storage path(s) to scan. Can be specified multiple times.",
@@ -117,7 +117,7 @@ def scan(
     re-import of all sessions.
     """
     if edition not in ("stable", "insider", "both"):
-        console.print(f"[red]Error: edition must be 'stable', 'insider', or 'both'[/red]")
+        console.print("[red]Error: edition must be 'stable', 'insider', or 'both'[/red]")
         raise typer.Exit(1)
     
     database = Database(db)
@@ -212,14 +212,14 @@ def search(
         ),
     ] = 20,
     role: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             "--role", "-r",
             help="Filter by message role (user or assistant).",
         ),
     ] = None,
     title_filter: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             "--title", "-t",
             help="Filter by session title or workspace name.",
@@ -335,9 +335,11 @@ def search(
     for i, result in enumerate(results, 1):
         console.print(f"[cyan bold]━━━ Result {i} ━━━[/cyan bold]")
         console.print(f"[bright_blue bold]Session ID:[/bright_blue bold] {result['session_id']}")
-        
+
         if result.get("workspace_name"):
-            console.print(f"[bright_blue bold]Workspace:[/bright_blue bold]  [yellow]{result['workspace_name']}[/yellow]")
+            console.print(
+                f"[bright_blue bold]Workspace:[/bright_blue bold]  [yellow]{result['workspace_name']}[/yellow]"
+            )
         
         if result.get("custom_title"):
             console.print(f"[bright_blue bold]Title:[/bright_blue bold]      {result['custom_title']}")
@@ -440,7 +442,7 @@ def export_markdown(
         ),
     ] = Path("."),
     session_id: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
             "--session-id", "-s",
             help="Export only a specific session by ID.",
@@ -630,13 +632,13 @@ def rebuild(
         progress_callback=progress_callback if verbose else None
     )
     
-    console.print(f"\n[green]Rebuild complete:[/green]")
+    console.print("\n[green]Rebuild complete:[/green]")
     console.print(f"  Processed: {result['processed']} sessions")
     if result['errors'] > 0:
         console.print(f"  Errors: {result['errors']} sessions")
     
     stats = database.get_stats()
-    console.print(f"\n[cyan]Database now contains:[/cyan]")
+    console.print("\n[cyan]Database now contains:[/cyan]")
     console.print(f"  {stats['session_count']} sessions")
     console.print(f"  {stats['message_count']} messages")
     console.print(f"  {stats['workspace_count']} workspaces")

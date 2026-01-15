@@ -19,7 +19,7 @@ import pytest
 
 # Check if playwright is available
 try:
-    from playwright.sync_api import Page
+    from playwright.sync_api import Page  # noqa: F401
     HAS_PLAYWRIGHT = True
 except ImportError:
     HAS_PLAYWRIGHT = False
@@ -30,7 +30,7 @@ pytestmark = pytest.mark.skipif(
     reason="pytest-playwright not installed"
 )
 
-from copilot_repository_tools_common import Database, ChatMessage, ChatSession
+from copilot_repository_tools_common import ChatMessage, ChatSession, Database
 from copilot_repository_tools_web import create_app
 
 
@@ -52,12 +52,20 @@ def test_db():
             ChatMessage(role="user", content="How do I debug a command line app in VS Code?"),
             ChatMessage(
                 role="assistant",
-                content="To debug a command line app in VS Code, you need to:\n\n1. Create a launch.json file\n2. Configure the program path\n3. Set breakpoints\n\n```json\n{\n  \"type\": \"python\",\n  \"request\": \"launch\"\n}\n```",
+                content=(
+                    "To debug a command line app in VS Code, you need to:\n\n"
+                    "1. Create a launch.json file\n2. Configure the program path\n"
+                    "3. Set breakpoints\n\n"
+                    '```json\n{\n  "type": "python",\n  "request": "launch"\n}\n```'
+                ),
             ),
             ChatMessage(role="user", content="What about Flask apps?"),
             ChatMessage(
                 role="assistant",
-                content="For Flask apps, you can use the following configuration:\n\n```json\n{\n  \"type\": \"python\",\n  \"module\": \"flask\"\n}\n```",
+                content=(
+                    "For Flask apps, you can use the following configuration:\n\n"
+                    '```json\n{\n  "type": "python",\n  "module": "flask"\n}\n```'
+                ),
             ),
         ],
         created_at="1737021600000",
@@ -74,7 +82,10 @@ def test_db():
             ChatMessage(role="user", content="What is Python?"),
             ChatMessage(
                 role="assistant",
-                content="Python is a high-level, interpreted programming language known for its simplicity and readability.",
+                content=(
+                    "Python is a high-level, interpreted programming language "
+                    "known for its simplicity and readability."
+                ),
             ),
         ],
         created_at="1737108000000",

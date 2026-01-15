@@ -10,10 +10,9 @@ import json
 import os
 import platform
 import sqlite3
+from collections.abc import Iterator
 from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
-from typing import Iterator
 from urllib.parse import unquote
 
 import orjson
@@ -771,10 +770,8 @@ def _parse_tool_invocation_serialized(item: dict) -> ToolInvocation | None:
     # Extract input from toolSpecificData based on tool kind
     input_data = None
     result_data = None
-    
+
     if isinstance(tool_data, dict):
-        kind = tool_data.get("kind", "")
-        
         # Terminal command data - commandLine can be string or object
         if "commandLine" in tool_data:
             cmd_line = tool_data.get("commandLine")
@@ -958,7 +955,7 @@ def _parse_chat_session_file(
                         content=user_text,
                         timestamp=str(msg.get("timestamp")) if msg.get("timestamp") else None,
                     ))
-                
+
                 # Assistant response with tool invocations, file changes, etc.
                 response_items = msg.get("response", [])
                 if response_items:
@@ -968,15 +965,15 @@ def _parse_chat_session_file(
                     file_changes = []
                     command_runs = []
                     file_contents_cache = {}  # Cache file contents from readFile tools
-                    
+
                     # First pass: collect file contents from readFile tool invocations
                     for item in response_items:
                         if isinstance(item, dict) and item.get("kind") == "toolInvocationSerialized":
                             file_content = _extract_file_content_from_tool(item)
                             if file_content:
-                                file_path, content = file_content
-                                file_contents_cache[file_path] = content
-                    
+                                cached_path, cached_content = file_content
+                                file_contents_cache[cached_path] = cached_content
+
                     # Second pass: process all response items
                     for item in response_items:
                         if isinstance(item, dict):
@@ -1152,7 +1149,7 @@ def _parse_vscdb_file(
         cursor.execute("SELECT key, value FROM ItemTable WHERE key LIKE '%copilot%chat%' OR key LIKE '%sessions%'")
         rows = cursor.fetchall()
         
-        for key, value in rows:
+        for _key, value in rows:
             if value:
                 try:
                     # Preserve raw JSON bytes for storage
@@ -1230,15 +1227,15 @@ def _extract_session_from_dict(
                     file_changes = []
                     command_runs = []
                     file_contents_cache = {}  # Cache file contents from readFile tools
-                    
+
                     # First pass: collect file contents from readFile tool invocations
                     for item in response_items:
                         if isinstance(item, dict) and item.get("kind") == "toolInvocationSerialized":
                             file_content = _extract_file_content_from_tool(item)
                             if file_content:
-                                file_path, content = file_content
-                                file_contents_cache[file_path] = content
-                    
+                                cached_path, cached_content = file_content
+                                file_contents_cache[cached_path] = cached_content
+
                     # Second pass: process all response items
                     for item in response_items:
                         if isinstance(item, dict):
@@ -1451,7 +1448,7 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
     try:
         events = []
         
-        with open(file_path, "r", encoding="utf-8") as f:
+        with open(file_path, encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:
@@ -1465,37 +1462,30 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
         
         if not events:
             return None
-        
+
         # Extract session metadata from session.start event
         session_id = None
         created_at = None
-        copilot_version = None
-        producer = None
-        current_model = None
-        
+
         for event in events:
             event_type = event.get("type", "")
             event_data = event.get("data", {})
-            
+
             if event_type == "session.start":
                 session_id = event_data.get("sessionId")
                 created_at = event_data.get("startTime") or event.get("timestamp")
-                copilot_version = event_data.get("copilotVersion")
-                producer = event_data.get("producer")
-            
-            # Track model changes - use the last model set
-            elif event_type == "session.model_change":
-                current_model = event_data.get("newModel")
-        
+                # Note: copilot_version and producer are available in event_data but not currently used
+                break  # Only need the first session.start event
+
         # If no session.start, use file stem as session ID
         if not session_id:
             session_id = file_path.stem
-        
+
         # Extract workspace from first folder_trust event
         workspace_path = None
         workspace_name = None
         requester_username = None
-        
+
         for event in events:
             if event.get("type") == "session.info":
                 event_data = event.get("data", {})
@@ -1555,13 +1545,18 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
         current_assistant_command_runs: list[CommandRun] = []
         current_assistant_timestamp: str | None = None
         pending_tool_requests: dict[str, dict] = {}  # toolCallId -> request data
-        
+
         def _flush_pending_assistant_message():
             """Flush accumulated assistant content blocks into a single message."""
             nonlocal current_assistant_content_blocks, current_assistant_tool_invocations
             nonlocal current_assistant_command_runs, current_assistant_timestamp
-            
-            if not current_assistant_content_blocks and not current_assistant_tool_invocations and not current_assistant_command_runs:
+
+            has_content = (
+                current_assistant_content_blocks
+                or current_assistant_tool_invocations
+                or current_assistant_command_runs
+            )
+            if not has_content:
                 return
             
             # Build flat content from content blocks
@@ -1586,7 +1581,9 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
             current_assistant_command_runs = []
             current_assistant_timestamp = None
         
-        def _build_tool_invocation(tool_call_id: str, tool_name: str, arguments: dict) -> tuple[ToolInvocation | None, CommandRun | None]:
+        def _build_tool_invocation(
+            tool_call_id: str, tool_name: str, arguments: dict
+        ) -> tuple[ToolInvocation | None, CommandRun | None]:
             """Build a ToolInvocation or CommandRun from tool request data."""
             # Get execution result if available
             execution = tool_executions.get(tool_call_id, {})
@@ -1889,7 +1886,7 @@ def scan_chat_sessions(
         ChatSession objects for each found session.
     """
     # Scan VS Code chat sessions
-    for chat_dir, workspace_id, edition in find_copilot_chat_dirs(storage_paths):
+    for chat_dir, _workspace_id, edition in find_copilot_chat_dirs(storage_paths):
         # Get workspace info
         workspace_name, workspace_path = _parse_workspace_json(chat_dir.parent)
 

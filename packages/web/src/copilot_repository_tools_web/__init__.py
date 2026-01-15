@@ -31,11 +31,10 @@ def main():
     
     Can be run via: uvx copilot-repository-tools-web
     """
-    import sys
-    from pathlib import Path
-    
     # Parse command line arguments
     import argparse
+    import sys
+    from pathlib import Path
     parser = argparse.ArgumentParser(
         description="Start the Copilot Chat Archive web server",
     )
@@ -82,7 +81,7 @@ def main():
     if stats["session_count"] == 0:
         print("Warning: Database is empty. Run 'copilot-chat-archive scan' first.", file=sys.stderr)
     
-    print(f"Starting web server...")
+    print("Starting web server...")
     print(f"  Database: {args.db}")
     print(f"  Sessions: {stats['session_count']}")
     print(f"  Messages: {stats['message_count']}")

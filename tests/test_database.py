@@ -5,8 +5,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
-
-from copilot_repository_tools_common import Database, ChatMessage, ChatSession, ParsedQuery, parse_search_query
+from copilot_repository_tools_common import ChatMessage, ChatSession, Database, parse_search_query
 
 
 @pytest.fixture
@@ -36,7 +35,11 @@ def sample_session():
             ChatMessage(role="user", content="Thanks! Can you add parameters?"),
             ChatMessage(
                 role="assistant",
-                content="Sure! Here's a function with parameters:\n\n```python\ndef my_function(name, age=18):\n    return f'{name} is {age} years old'\n```",
+                content=(
+                    "Sure! Here's a function with parameters:\n\n"
+                    "```python\ndef my_function(name, age=18):\n"
+                    "    return f'{name} is {age} years old'\n```"
+                ),
             ),
         ],
         created_at="2025-01-15T10:30:00Z",
@@ -288,7 +291,7 @@ class TestCLISupport:
 
     def test_add_cli_session(self, tmp_path):
         """Test adding a CLI session to database."""
-        from copilot_repository_tools_common import Database, ChatSession, ChatMessage
+        from copilot_repository_tools_common import ChatMessage, ChatSession, Database
         
         db = Database(tmp_path / "test.db")
         
@@ -317,7 +320,7 @@ class TestCLISupport:
 
     def test_vscode_session_type_default(self, tmp_path):
         """Test that VS Code sessions default to 'vscode' type."""
-        from copilot_repository_tools_common import Database, ChatSession, ChatMessage
+        from copilot_repository_tools_common import ChatMessage, ChatSession, Database
         
         db = Database(tmp_path / "test.db")
         
@@ -341,8 +344,9 @@ class TestCLISupport:
 
     def test_cli_session_full_workflow(self, tmp_path):
         """Test the full workflow: parse CLI file, add to DB, retrieve."""
-        from copilot_repository_tools_common.scanner import _parse_cli_jsonl_file
         from pathlib import Path
+
+        from copilot_repository_tools_common.scanner import _parse_cli_jsonl_file
         
         # Use the real sample CLI file with event-based format
         sample_file = Path(__file__).parent / "sample_files" / "66b821d4-af6f-4518-a394-6d95a4d0f96b.jsonl"
@@ -456,9 +460,10 @@ class TestRawJsonStorage:
 
     def test_raw_json_stored_compressed(self, temp_db):
         """Test that raw JSON is stored in compressed form."""
-        import zlib
-        
-        raw_json = b'{"sessionId": "raw-test", "requests": [{"message": {"text": "Hello"}, "response": [{"kind": "text", "value": "Hi"}]}]}'
+        raw_json = (
+            b'{"sessionId": "raw-test", "requests": '
+            b'[{"message": {"text": "Hello"}, "response": [{"kind": "text", "value": "Hi"}]}]}'
+        )
         session = ChatSession(
             session_id="raw-test",
             workspace_name="test-workspace",
@@ -483,7 +488,11 @@ class TestRawJsonStorage:
     def test_rebuild_derived_tables(self, temp_db):
         """Test rebuilding derived tables from raw JSON."""
         # Create a session with raw JSON that has the VS Code format
-        raw_json = b'{"sessionId": "rebuild-test", "createdAt": "2025-01-15", "requests": [{"message": {"text": "What is Python?"}, "response": [{"kind": "text", "value": "Python is a programming language."}]}]}'
+        raw_json = (
+            b'{"sessionId": "rebuild-test", "createdAt": "2025-01-15", '
+            b'"requests": [{"message": {"text": "What is Python?"}, '
+            b'"response": [{"kind": "text", "value": "Python is a programming language."}]}]}'
+        )
         session = ChatSession(
             session_id="rebuild-test",
             workspace_name="rebuild-workspace",
@@ -640,7 +649,10 @@ def search_test_db(tmp_path):
         workspace_path="/home/user/react-app",
         messages=[
             ChatMessage(role="user", content="How do I use React hooks?"),
-            ChatMessage(role="assistant", content="React hooks like useState and useEffect are used in function components."),
+            ChatMessage(
+                role="assistant",
+                content="React hooks like useState and useEffect are used in function components.",
+            ),
         ],
         created_at="1704153600000",  # 2024-01-02
         vscode_edition="insider",

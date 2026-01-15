@@ -16,7 +16,6 @@ import zlib
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
 
 import orjson
 
@@ -113,11 +112,16 @@ _SORT_ORDER_CLAUSES = {
     "date": "ORDER BY s.created_at DESC",
 }
 
+from .markdown_exporter import message_to_markdown
 from .scanner import (
-    ChatMessage, ChatSession, ToolInvocation, FileChange, CommandRun, ContentBlock,
+    ChatMessage,
+    ChatSession,
+    CommandRun,
+    ContentBlock,
+    FileChange,
+    ToolInvocation,
     _extract_session_from_dict,
 )
-from .markdown_exporter import message_to_markdown
 
 
 class Database:
@@ -959,7 +963,7 @@ class Database:
             if include_messages:
                 if fts_query:
                     # FTS search with optional filters
-                    message_query = f"""
+                    message_query = """
                         SELECT 
                             m.id,
                             m.session_id,
@@ -1252,13 +1256,13 @@ class Database:
                        source_file, vscode_edition, source_file_mtime, source_file_size
                 FROM raw_sessions
             """)
-            
+
             processed = 0
             errors = 0
-            
+
             for row in cursor.fetchall():
                 try:
-                    session_id = row[0]
+                    _session_id = row[0]  # Session ID from DB, used for logging if needed
                     compressed_json = row[1]
                     workspace_name = row[2]
                     workspace_path = row[3]
@@ -1294,7 +1298,7 @@ class Database:
                     if progress_callback:
                         progress_callback(processed, total_count)
                         
-                except (zlib.error, orjson.JSONDecodeError, KeyError, TypeError) as e:
+                except (zlib.error, orjson.JSONDecodeError, KeyError, TypeError):
                     # Log error for debugging, but continue processing other sessions
                     # These errors can occur when raw JSON is malformed or cannot be parsed
                     errors += 1

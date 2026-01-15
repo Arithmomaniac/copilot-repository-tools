@@ -19,6 +19,8 @@ dev = [
     "pytest-cov>=4.0.0",
     "pytest-playwright>=0.4.0",
     "pytest-benchmark>=4.0.0",
+    "ruff>=0.14.11",
+    "ty>=0.0.12",
 ]
 
 [tool.pytest.ini_options]
@@ -27,3 +29,25 @@ pythonpath = ["packages/common/src", "packages/cli/src", "packages/web/src"]
 markers = [
     "slow: marks tests as slow (scanning real user data, run with '-m slow' or all with '-m \"\"')",
 ]
+
+[tool.ruff]
+line-length = 120
+exclude = ["*.pyi"]
+
+[tool.ruff.lint]
+select = ["E", "F", "UP", "I", "B"]
+ignore = [
+    "E402",  # Module level import not at top of file (needed for circular import handling)
+]
+
+[tool.ty.environment]
+python-version = "3.12"
+
+[tool.ty.src]
+include = ["packages/*/src/**/*.py"]
+exclude = ["tests/**"]
+
+[tool.ty.rules]
+unresolved-import = "warn"
+possibly-unresolved-reference = "warn"
+unresolved-attribute = "warn"  # Allow dynamic attribute assignment on dataclasses

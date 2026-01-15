@@ -1,20 +1,16 @@
 """Tests for the markdown exporter module."""
 
-import tempfile
-from pathlib import Path
 
 import pytest
-
 from copilot_repository_tools_common import (
-    session_to_markdown,
-    export_session_to_file,
-    generate_session_filename,
     ChatMessage,
     ChatSession,
-    ToolInvocation,
-    FileChange,
-    CommandRun,
     ContentBlock,
+    FileChange,
+    ToolInvocation,
+    export_session_to_file,
+    generate_session_filename,
+    session_to_markdown,
 )
 from copilot_repository_tools_common.markdown_exporter import (
     _format_timestamp,

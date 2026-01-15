@@ -4,10 +4,9 @@ import tempfile
 from pathlib import Path
 
 import pytest
-
-from copilot_repository_tools_common import Database, ChatMessage, ChatSession
+from copilot_repository_tools_common import ChatMessage, ChatSession, Database
 from copilot_repository_tools_web import create_app
-from copilot_repository_tools_web.webapp import _markdown_to_html, _parse_diff_stats, _extract_filename
+from copilot_repository_tools_web.webapp import _extract_filename, _markdown_to_html, _parse_diff_stats
 
 
 @pytest.fixture
@@ -569,9 +568,7 @@ class TestHtmlOutputToolInvocations:
     @pytest.fixture
     def session_with_tools(self, tmp_path):
         """Create a session with various tool invocations for testing."""
-        from copilot_repository_tools_common.scanner import (
-            ChatMessage, ChatSession, ContentBlock, ToolInvocation
-        )
+        from copilot_repository_tools_common.scanner import ChatMessage, ChatSession, ContentBlock, ToolInvocation
         
         db_path = tmp_path / "test_tools.db"
         db = Database(str(db_path))

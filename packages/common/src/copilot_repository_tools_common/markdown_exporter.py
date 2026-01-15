@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import unquote
 
-from .scanner import ChatSession, ChatMessage
+from .scanner import ChatMessage, ChatSession
 
 # Threshold to distinguish between seconds and milliseconds timestamps.
 # Timestamps above this value (approximately year 2001 in milliseconds) are
@@ -26,13 +26,15 @@ def _format_timestamp(value: str | int | None) -> str:
         return "Unknown"
     try:
         # Handle both string and numeric values
+        numeric_value: float
         if isinstance(value, str):
-            value = float(value)
-        epoch_ms = float(value)
+            numeric_value = float(value)
+        else:
+            numeric_value = float(value)
         # Check if milliseconds (common for JS timestamps)
-        if epoch_ms > _MILLISECONDS_THRESHOLD:
-            epoch_ms = epoch_ms / 1000
-        dt = datetime.fromtimestamp(epoch_ms)
+        if numeric_value > _MILLISECONDS_THRESHOLD:
+            numeric_value = numeric_value / 1000
+        dt = datetime.fromtimestamp(numeric_value)
         return dt.strftime("%Y-%m-%d %H:%M:%S")
     except (ValueError, TypeError, OSError):
         # If parsing fails, return original value as string

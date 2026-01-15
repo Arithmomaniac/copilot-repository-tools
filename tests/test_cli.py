@@ -1,15 +1,12 @@
 """Tests for the CLI module."""
 
 import json
-import tempfile
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from typer.testing import CliRunner
-
 from copilot_repository_tools_cli import app
-from copilot_repository_tools_common import Database, ChatMessage, ChatSession
+from copilot_repository_tools_common import ChatMessage, ChatSession, Database
+from typer.testing import CliRunner
 
 
 @pytest.fixture
@@ -206,14 +203,19 @@ class TestCLI:
     def test_export_markdown_single_session(self, runner, temp_db_with_data, tmp_path):
         """Test export-markdown command with specific session ID."""
         output_dir = tmp_path / "markdown_output"
-        
+
         result = runner.invoke(
             app,
-            ["export-markdown", "--db", str(temp_db_with_data), "--output-dir", str(output_dir), "--session-id", "cli-test-session"]
+            [
+                "export-markdown",
+                "--db", str(temp_db_with_data),
+                "--output-dir", str(output_dir),
+                "--session-id", "cli-test-session",
+            ],
         )
         assert result.exit_code == 0
         assert "Exported:" in result.output
-        
+
         # Check that exactly one markdown file was created
         md_files = list(output_dir.glob("*.md"))
         assert len(md_files) == 1
@@ -221,10 +223,15 @@ class TestCLI:
     def test_export_markdown_missing_session(self, runner, temp_db_with_data, tmp_path):
         """Test export-markdown command with non-existent session ID."""
         output_dir = tmp_path / "markdown_output"
-        
+
         result = runner.invoke(
             app,
-            ["export-markdown", "--db", str(temp_db_with_data), "--output-dir", str(output_dir), "--session-id", "nonexistent-session"]
+            [
+                "export-markdown",
+                "--db", str(temp_db_with_data),
+                "--output-dir", str(output_dir),
+                "--session-id", "nonexistent-session",
+            ],
         )
         assert result.exit_code == 1
         assert "not found" in result.output
@@ -237,9 +244,13 @@ class TestRebuildCommand:
         """Test rebuild command with valid database."""
         db_path = tmp_path / "rebuild_test.db"
         db = Database(db_path)
-        
+
         # Add a session with raw JSON
-        raw_json = b'{"sessionId": "rebuild-cli-test", "requests": [{"message": {"text": "Hello"}, "response": [{"kind": "text", "value": "Hi"}]}]}'
+        raw_json = (
+            b'{"sessionId": "rebuild-cli-test", '
+            b'"requests": [{"message": {"text": "Hello"}, '
+            b'"response": [{"kind": "text", "value": "Hi"}]}]}'
+        )
         session = ChatSession(
             session_id="rebuild-cli-test",
             workspace_name="rebuild-workspace",

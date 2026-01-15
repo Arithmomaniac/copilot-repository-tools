@@ -1,29 +1,26 @@
 """Tests for the scanner module."""
 
 import json
-import tempfile
 import time
 from pathlib import Path
 
 import pytest
-
+from conftest import requires_sample_files
 from copilot_repository_tools_common import (
     ChatMessage,
     ChatSession,
     CommandRun,
-    ContentBlock,
     FileChange,
     ToolInvocation,
     find_copilot_chat_dirs,
     scan_chat_sessions,
 )
 from copilot_repository_tools_common.scanner import (
-    _extract_inline_reference_name,
     _extract_edit_group_text,
-    _parse_tool_invocation_serialized,
+    _extract_inline_reference_name,
     _merge_content_blocks,
+    _parse_tool_invocation_serialized,
 )
-from conftest import requires_sample_files
 
 
 @pytest.fixture
@@ -232,7 +229,11 @@ class TestResponseItemKinds:
         # codeblockUri
         ("codeblockUri", {"kind": "codeblockUri", "uri": {"fsPath": "c:\\src\\file.py"}}, str),
         # toolInvocationSerialized
-        ("toolInvocationSerialized", {"kind": "toolInvocationSerialized", "toolId": "run_command", "isComplete": True}, ToolInvocation),
+        (
+            "toolInvocationSerialized",
+            {"kind": "toolInvocationSerialized", "toolId": "run_command", "isComplete": True},
+            ToolInvocation,
+        ),
     ])
     def test_response_item_extraction(self, kind, item, expected_type):
         """Test that different response item kinds are correctly parsed."""
@@ -375,7 +376,6 @@ class TestPerformanceBenchmarks:
     @requires_sample_files
     def test_large_session_parsing_time(self, all_sample_session_paths):
         """Test that large session files parse within acceptable time limits."""
-        import orjson
         from copilot_repository_tools_common.scanner import _parse_chat_session_file
 
         for sample_path in all_sample_session_paths:
@@ -438,7 +438,6 @@ class TestCLIParsing:
         session.start, user.message, assistant.message, tool.execution_*, etc.
         """
         from copilot_repository_tools_common.scanner import _parse_cli_jsonl_file
-        from pathlib import Path
         
         # Use the real sample file from copilot-cli
         sample_file = Path(__file__).parent / "sample_files" / "66b821d4-af6f-4518-a394-6d95a4d0f96b.jsonl"
@@ -497,7 +496,6 @@ class TestCLIParsing:
     def test_parse_cli_jsonl_file_simple_format(self):
         """Test parsing CLI JSONL session file with simple format (for backwards compatibility)."""
         from copilot_repository_tools_common.scanner import _parse_cli_jsonl_file
-        from pathlib import Path
         
         # Use the simple sample file
         sample_file = Path(__file__).parent / "sample_files" / "cli-session-001.jsonl"
@@ -524,14 +522,12 @@ class TestCLIParsing:
         
         # Paths should be Path objects
         for path in paths:
-            from pathlib import Path
             assert isinstance(path, Path)
 
     def test_scan_includes_cli_by_default(self, tmp_path):
         """Test that scan_chat_sessions includes CLI sessions by default."""
+
         from copilot_repository_tools_common import scan_chat_sessions
-        import tempfile
-        from pathlib import Path
         
         # Mock an empty VS Code storage
         storage_paths = [(str(tmp_path / "nonexistent"), "stable")]
