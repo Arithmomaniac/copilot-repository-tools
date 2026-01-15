@@ -1925,9 +1925,19 @@ def scan_chat_sessions(
             if not cli_dir.exists() or not cli_dir.is_dir():
                 continue
             
-            # Process JSONL files in the CLI storage directory
+            # Process CLI storage directory - supports two formats:
+            # 1. Old format: {session-id}.jsonl files directly in the directory
+            # 2. New format: {session-id}/events.jsonl subdirectories
             for item in cli_dir.iterdir():
                 if item.is_file() and item.suffix == ".jsonl":
+                    # Old format: flat JSONL files
                     session = _parse_cli_jsonl_file(item)
                     if session:
                         yield session
+                elif item.is_dir():
+                    # New format: subdirectory with events.jsonl
+                    events_file = item / "events.jsonl"
+                    if events_file.exists():
+                        session = _parse_cli_jsonl_file(events_file)
+                        if session:
+                            yield session
