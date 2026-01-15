@@ -35,11 +35,7 @@ def sample_session():
             ChatMessage(role="user", content="Thanks! Can you add parameters?"),
             ChatMessage(
                 role="assistant",
-                content=(
-                    "Sure! Here's a function with parameters:\n\n"
-                    "```python\ndef my_function(name, age=18):\n"
-                    "    return f'{name} is {age} years old'\n```"
-                ),
+                content=("Sure! Here's a function with parameters:\n\n```python\ndef my_function(name, age=18):\n    return f'{name} is {age} years old'\n```"),
             ),
         ],
         created_at="2025-01-15T10:30:00Z",
@@ -292,9 +288,9 @@ class TestCLISupport:
     def test_add_cli_session(self, tmp_path):
         """Test adding a CLI session to database."""
         from copilot_repository_tools_common import ChatMessage, ChatSession, Database
-        
+
         db = Database(tmp_path / "test.db")
-        
+
         # Create a CLI session
         session = ChatSession(
             session_id="cli-test-123",
@@ -306,11 +302,11 @@ class TestCLISupport:
             ],
             type="cli",
         )
-        
+
         # Add session
         result = db.add_session(session)
         assert result is True
-        
+
         # Retrieve session
         retrieved = db.get_session("cli-test-123")
         assert retrieved is not None
@@ -321,9 +317,9 @@ class TestCLISupport:
     def test_vscode_session_type_default(self, tmp_path):
         """Test that VS Code sessions default to 'vscode' type."""
         from copilot_repository_tools_common import ChatMessage, ChatSession, Database
-        
+
         db = Database(tmp_path / "test.db")
-        
+
         # Create a session without explicit type (should default to vscode)
         session = ChatSession(
             session_id="vscode-test-456",
@@ -333,10 +329,10 @@ class TestCLISupport:
                 ChatMessage(role="user", content="Hello from VS Code"),
             ],
         )
-        
+
         # Add session
         db.add_session(session)
-        
+
         # Retrieve session
         retrieved = db.get_session("vscode-test-456")
         assert retrieved is not None
@@ -347,29 +343,29 @@ class TestCLISupport:
         from pathlib import Path
 
         from copilot_repository_tools_common.scanner import _parse_cli_jsonl_file
-        
+
         # Use the real sample CLI file with event-based format
         sample_file = Path(__file__).parent / "sample_files" / "66b821d4-af6f-4518-a394-6d95a4d0f96b.jsonl"
-        
+
         if not sample_file.exists():
             pytest.skip("Real CLI sample file not found")
-        
+
         # Parse CLI file
         session = _parse_cli_jsonl_file(sample_file)
         assert session is not None
         assert session.session_id == "66b821d4-af6f-4518-a394-6d95a4d0f96b"
-        
+
         # Add to database
         db = Database(tmp_path / "test.db")
         added = db.add_session(session)
         assert added is True
-        
+
         # Retrieve and verify
         retrieved = db.get_session(session.session_id)
         assert retrieved is not None
         assert retrieved.type == "cli"
         assert len(retrieved.messages) > 0
-        
+
         # Verify search works - search for content from the session
         results = db.search("branches")
         assert len(results) > 0
@@ -381,78 +377,66 @@ class TestSortingBehavior:
     def test_list_sessions_sorted_by_recent_message(self, tmp_path):
         """Test that sessions are sorted by most recent message timestamp."""
         from datetime import datetime, timedelta
-        
+
         db = Database(tmp_path / "test.db")
-        
+
         # Create base time
         base_time = datetime(2024, 1, 1, 12, 0, 0)
-        
+
         # Session 1: Created first, but has most recent message
         session1 = ChatSession(
             session_id="session-1",
             workspace_name="test",
             workspace_path="/test",
             messages=[
-                ChatMessage(
-                    role="user",
-                    content="Old message",
-                    timestamp=(base_time + timedelta(hours=1)).isoformat()
-                ),
+                ChatMessage(role="user", content="Old message", timestamp=(base_time + timedelta(hours=1)).isoformat()),
                 ChatMessage(
                     role="assistant",
                     content="Recent message",
-                    timestamp=(base_time + timedelta(hours=10)).isoformat()  # Most recent
+                    timestamp=(base_time + timedelta(hours=10)).isoformat(),  # Most recent
                 ),
             ],
             created_at=(base_time + timedelta(hours=0)).isoformat(),
         )
-        
+
         # Session 2: Created second, older messages
         session2 = ChatSession(
             session_id="session-2",
             workspace_name="test",
             workspace_path="/test",
             messages=[
-                ChatMessage(
-                    role="user",
-                    content="Older message",
-                    timestamp=(base_time + timedelta(hours=2)).isoformat()
-                ),
+                ChatMessage(role="user", content="Older message", timestamp=(base_time + timedelta(hours=2)).isoformat()),
             ],
             created_at=(base_time + timedelta(hours=5)).isoformat(),
         )
-        
+
         # Session 3: Created last, has middle-aged messages
         session3 = ChatSession(
             session_id="session-3",
             workspace_name="test",
             workspace_path="/test",
             messages=[
-                ChatMessage(
-                    role="user",
-                    content="Middle message",
-                    timestamp=(base_time + timedelta(hours=5)).isoformat()
-                ),
+                ChatMessage(role="user", content="Middle message", timestamp=(base_time + timedelta(hours=5)).isoformat()),
             ],
             created_at=(base_time + timedelta(hours=8)).isoformat(),
         )
-        
+
         # Add sessions
         db.add_session(session1)
         db.add_session(session2)
         db.add_session(session3)
-        
+
         # List sessions - should be sorted by most recent message
         sessions = db.list_sessions()
-        
+
         # Verify order: session-1 (hour 10), session-3 (hour 5), session-2 (hour 2)
         assert len(sessions) == 3
-        assert sessions[0]['session_id'] == "session-1"
-        assert sessions[1]['session_id'] == "session-3"
-        assert sessions[2]['session_id'] == "session-2"
-        
+        assert sessions[0]["session_id"] == "session-1"
+        assert sessions[1]["session_id"] == "session-3"
+        assert sessions[2]["session_id"] == "session-2"
+
         # Verify last_message_at is included
-        assert 'last_message_at' in sessions[0]
+        assert "last_message_at" in sessions[0]
 
 
 class TestRawJsonStorage:
@@ -460,10 +444,7 @@ class TestRawJsonStorage:
 
     def test_raw_json_stored_compressed(self, temp_db):
         """Test that raw JSON is stored in compressed form."""
-        raw_json = (
-            b'{"sessionId": "raw-test", "requests": '
-            b'[{"message": {"text": "Hello"}, "response": [{"kind": "text", "value": "Hi"}]}]}'
-        )
+        raw_json = b'{"sessionId": "raw-test", "requests": [{"message": {"text": "Hello"}, "response": [{"kind": "text", "value": "Hi"}]}]}'
         session = ChatSession(
             session_id="raw-test",
             workspace_name="test-workspace",
@@ -524,7 +505,7 @@ class TestRawJsonStorage:
     def test_rebuild_preserves_raw_sessions(self, temp_db, sample_session):
         """Test that rebuild does not affect raw_sessions table."""
         temp_db.add_session(sample_session)
-        
+
         initial_raw_count = temp_db.get_raw_session_count()
         assert initial_raw_count == 1
 
@@ -569,7 +550,7 @@ class TestRawJsonStorage:
         """Test that sessions without raw_json still work (stores empty compressed JSON)."""
         # sample_session doesn't have raw_json set
         assert sample_session.raw_json is None
-        
+
         result = temp_db.add_session(sample_session)
         assert result is True
 
@@ -582,36 +563,33 @@ class TestRawJsonStorage:
 class TestParseSearchQuery:
     """Tests for the parse_search_query function using parametrized test cases."""
 
-    @pytest.mark.parametrize("query,expected_fts,expected_role,expected_workspace,expected_title", [
-        # Empty and simple queries
-        ("", "", None, None, None),
-        ("python", "python", None, None, None),
-        ("python function", "python function", None, None, None),
-        
-        # Quoted phrases (for exact match in FTS5)
-        ('"python function"', '"python function"', None, None, None),
-        ('create "python function" parameters', 'create "python function" parameters', None, None, None),
-        
-        # Field filters
-        ("python role:user", "python", "user", None, None),
-        ("role:assistant function", "function", "assistant", None, None),
-        ("python workspace:my-project", "python", None, "my-project", None),
-        ("function title:MySession", "function", None, None, "MySession"),
-        
-        # Quoted field values
-        ('workspace:"my project name" python', "python", None, "my project name", None),
-        
-        # Multiple filters together
-        ("python role:user workspace:myproj", "python", "user", "myproj", None),
-        ("role:user workspace:test", "", "user", "test", None),
-        
-        # Case insensitive field names
-        ("Role:user WORKSPACE:test", "", "user", "test", None),
-        
-        # Duplicate field values - last one wins
-        ("role:user role:assistant python", "python", "assistant", None, None),
-        ("workspace:first workspace:second", "", None, "second", None),
-    ])
+    @pytest.mark.parametrize(
+        "query,expected_fts,expected_role,expected_workspace,expected_title",
+        [
+            # Empty and simple queries
+            ("", "", None, None, None),
+            ("python", "python", None, None, None),
+            ("python function", "python function", None, None, None),
+            # Quoted phrases (for exact match in FTS5)
+            ('"python function"', '"python function"', None, None, None),
+            ('create "python function" parameters', 'create "python function" parameters', None, None, None),
+            # Field filters
+            ("python role:user", "python", "user", None, None),
+            ("role:assistant function", "function", "assistant", None, None),
+            ("python workspace:my-project", "python", None, "my-project", None),
+            ("function title:MySession", "function", None, None, "MySession"),
+            # Quoted field values
+            ('workspace:"my project name" python', "python", None, "my project name", None),
+            # Multiple filters together
+            ("python role:user workspace:myproj", "python", "user", "myproj", None),
+            ("role:user workspace:test", "", "user", "test", None),
+            # Case insensitive field names
+            ("Role:user WORKSPACE:test", "", "user", "test", None),
+            # Duplicate field values - last one wins
+            ("role:user role:assistant python", "python", "assistant", None, None),
+            ("workspace:first workspace:second", "", None, "second", None),
+        ],
+    )
     def test_parse_search_query(self, query, expected_fts, expected_role, expected_workspace, expected_title):
         """Test parsing search queries with various formats."""
         result = parse_search_query(query)
@@ -625,7 +603,7 @@ class TestParseSearchQuery:
 def search_test_db(tmp_path):
     """Create a database with multiple sessions for search testing."""
     db = Database(tmp_path / "search_test.db")
-    
+
     # Session 1: Python project with user and assistant messages
     session1 = ChatSession(
         session_id="session-python",
@@ -641,7 +619,7 @@ def search_test_db(tmp_path):
         vscode_edition="stable",
     )
     db.add_session(session1)
-    
+
     # Session 2: React project with different content
     session2 = ChatSession(
         session_id="session-react",
@@ -658,7 +636,7 @@ def search_test_db(tmp_path):
         vscode_edition="insider",
     )
     db.add_session(session2)
-    
+
     # Session 3: Another Python session for testing multi-session results
     session3 = ChatSession(
         session_id="session-python-2",
@@ -672,7 +650,7 @@ def search_test_db(tmp_path):
         vscode_edition="stable",
     )
     db.add_session(session3)
-    
+
     return db
 
 
@@ -707,10 +685,13 @@ class TestAdvancedSearchIntegration:
             assert "Python function" in content
             assert "create" in content.lower()
 
-    @pytest.mark.parametrize("query,expected_role", [
-        ("role:user Python", "user"),
-        ("role:assistant function", "assistant"),
-    ])
+    @pytest.mark.parametrize(
+        "query,expected_role",
+        [
+            ("role:user Python", "user"),
+            ("role:assistant function", "assistant"),
+        ],
+    )
     def test_role_filter_integration(self, search_test_db, query, expected_role):
         """Test that role filter correctly filters search results."""
         results = search_test_db.search(query)
@@ -719,10 +700,13 @@ class TestAdvancedSearchIntegration:
             if r.get("match_type") == "message":
                 assert r["role"] == expected_role
 
-    @pytest.mark.parametrize("query,expected_workspace", [
-        ("workspace:python-project function", "python-project"),
-        ("workspace:react-app hooks", "react-app"),
-    ])
+    @pytest.mark.parametrize(
+        "query,expected_workspace",
+        [
+            ("workspace:python-project function", "python-project"),
+            ("workspace:react-app hooks", "react-app"),
+        ],
+    )
     def test_workspace_filter_integration(self, search_test_db, query, expected_workspace):
         """Test that workspace filter correctly filters search results."""
         results = search_test_db.search(query)
@@ -732,8 +716,8 @@ class TestAdvancedSearchIntegration:
 
     def test_duplicate_role_filter_last_wins(self, search_test_db):
         """Test that duplicate field filters use the last value.
-        
-        Test data has assistant messages containing 'Python' (e.g., 
+
+        Test data has assistant messages containing 'Python' (e.g.,
         'Here's how to create a Python function with def keyword.').
         """
         # Both role:user and role:assistant in query - last one wins
@@ -764,7 +748,7 @@ class TestAdvancedSearchIntegration:
         """Test that sort options work correctly."""
         results = search_test_db.search("Python", sort_by=sort_by)
         assert len(results) > 0
-        
+
     def test_sort_by_date_order(self, search_test_db):
         """Test that date sorting returns results in date order."""
         results = search_test_db.search("Python", sort_by="date")

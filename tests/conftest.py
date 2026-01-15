@@ -24,10 +24,7 @@ def sample_files_exist() -> bool:
 
 
 # Skip marker for tests requiring sample files
-requires_sample_files = pytest.mark.skipif(
-    not sample_files_exist(),
-    reason="Sample files not available (sample_files/ directory missing or empty)"
-)
+requires_sample_files = pytest.mark.skipif(not sample_files_exist(), reason="Sample files not available (sample_files/ directory missing or empty)")
 
 
 @pytest.fixture
@@ -57,5 +54,6 @@ def all_sample_session_paths():
 def sample_session_data(sample_session_path):
     """Load and return parsed JSON from first available sample session."""
     import orjson
+
     with open(sample_session_path, "rb") as f:
         return orjson.loads(f.read())

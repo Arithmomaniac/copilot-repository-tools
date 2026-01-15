@@ -265,11 +265,11 @@ class TestEmptyDatabase:
         """Test index with empty database."""
         db_path = tmp_path / "empty.db"
         _ = Database(db_path)  # Create empty database
-        
+
         app = create_app(str(db_path))
         app.config["TESTING"] = True
         client = app.test_client()
-        
+
         response = client.get("/")
         assert response.status_code == 200
         assert b"No sessions found" in response.data
@@ -313,7 +313,7 @@ class TestRefreshRoute:
         response = client.post("/refresh", data={"full": "false"}, follow_redirects=True)
         assert response.status_code == 200
         assert b"refresh complete" in response.data.lower()
-        
+
         # Navigate to index again - notification should NOT appear
         response = client.get("/")
         assert response.status_code == 200
@@ -339,55 +339,52 @@ class TestRefreshWithTestData:
     def test_refresh_adds_new_session_from_file(self, tmp_path):
         """Test that refresh correctly adds a new session from a test file."""
         import json
-        
+
         # Create a temporary database
         db_path = tmp_path / "test.db"
         db = Database(str(db_path))
-        
+
         # Create a mock chat sessions directory structure
         workspace_dir = tmp_path / "workspaceStorage" / "abc123"
         chat_dir = workspace_dir / "chatSessions"
         chat_dir.mkdir(parents=True)
-        
+
         # Create workspace.json
-        (workspace_dir / "workspace.json").write_text(json.dumps({
-            "folder": f"file://{tmp_path}/myproject"
-        }))
-        
+        (workspace_dir / "workspace.json").write_text(json.dumps({"folder": f"file://{tmp_path}/myproject"}))
+
         # Create a chat session file
         session_file = chat_dir / "session1.json"
-        session_file.write_text(json.dumps({
-            "sessionId": "test-session-1",
-            "createdAt": "1704110400000",
-            "requests": [
+        session_file.write_text(
+            json.dumps(
                 {
-                    "message": {"text": "Hello, assistant!"},
-                    "timestamp": 1704110400000,
-                    "response": [{"value": "Hello! How can I help you?"}]
+                    "sessionId": "test-session-1",
+                    "createdAt": "1704110400000",
+                    "requests": [{"message": {"text": "Hello, assistant!"}, "timestamp": 1704110400000, "response": [{"value": "Hello! How can I help you?"}]}],
                 }
-            ]
-        }))
-        
+            )
+        )
+
         # Create a Flask app with custom storage paths
         app = create_app(str(db_path), title="Test Archive")
         app.config["TESTING"] = True
-        
+
         # Verify database is initially empty
         stats = db.get_stats()
         assert stats["session_count"] == 0
-        
+
         # Manually import the session using the scanner
         from copilot_repository_tools_common.scanner import scan_chat_sessions
+
         storage_paths = [(str(tmp_path / "workspaceStorage"), "stable")]
         sessions = list(scan_chat_sessions(storage_paths, include_cli=False))
-        
+
         # Verify we found the session
         assert len(sessions) == 1
         assert sessions[0].session_id == "test-session-1"
-        
+
         # Add it to the database
         db.add_session(sessions[0])
-        
+
         # Verify it was added
         stats = db.get_stats()
         assert stats["session_count"] == 1
@@ -396,82 +393,71 @@ class TestRefreshWithTestData:
         """Test that refresh correctly updates a session when the file changes."""
         import json
         import time
-        
+
         # Create a temporary database
         db_path = tmp_path / "test.db"
         db = Database(str(db_path))
-        
+
         # Create a mock chat sessions directory structure
         workspace_dir = tmp_path / "workspaceStorage" / "abc123"
         chat_dir = workspace_dir / "chatSessions"
         chat_dir.mkdir(parents=True)
-        
+
         # Create workspace.json
-        (workspace_dir / "workspace.json").write_text(json.dumps({
-            "folder": f"file://{tmp_path}/myproject"
-        }))
-        
+        (workspace_dir / "workspace.json").write_text(json.dumps({"folder": f"file://{tmp_path}/myproject"}))
+
         # Create a chat session file
         session_file = chat_dir / "session1.json"
-        session_file.write_text(json.dumps({
-            "sessionId": "update-test-session",
-            "createdAt": "1704110400000",
-            "requests": [
+        session_file.write_text(
+            json.dumps(
                 {
-                    "message": {"text": "First message"},
-                    "timestamp": 1704110400000,
-                    "response": [{"value": "First response"}]
+                    "sessionId": "update-test-session",
+                    "createdAt": "1704110400000",
+                    "requests": [{"message": {"text": "First message"}, "timestamp": 1704110400000, "response": [{"value": "First response"}]}],
                 }
-            ]
-        }))
-        
+            )
+        )
+
         # Import initial session
         from copilot_repository_tools_common.scanner import scan_chat_sessions
+
         storage_paths = [(str(tmp_path / "workspaceStorage"), "stable")]
         sessions = list(scan_chat_sessions(storage_paths, include_cli=False))
         assert len(sessions) == 1
         db.add_session(sessions[0])
-        
+
         # Get initial session
         initial_session = db.get_session("update-test-session")
         assert initial_session is not None
         assert len(initial_session.messages) == 2  # user + assistant
-        
+
         # Modify the session file with an additional message
         time.sleep(0.1)  # Ensure mtime changes
-        session_file.write_text(json.dumps({
-            "sessionId": "update-test-session",
-            "createdAt": "1704110400000",
-            "requests": [
+        session_file.write_text(
+            json.dumps(
                 {
-                    "message": {"text": "First message"},
-                    "timestamp": 1704110400000,
-                    "response": [{"value": "First response"}]
-                },
-                {
-                    "message": {"text": "Second message"},
-                    "timestamp": 1704110500000,
-                    "response": [{"value": "Second response"}]
+                    "sessionId": "update-test-session",
+                    "createdAt": "1704110400000",
+                    "requests": [
+                        {"message": {"text": "First message"}, "timestamp": 1704110400000, "response": [{"value": "First response"}]},
+                        {"message": {"text": "Second message"}, "timestamp": 1704110500000, "response": [{"value": "Second response"}]},
+                    ],
                 }
-            ]
-        }))
-        
+            )
+        )
+
         # Re-scan and check that needs_update detects the change
         sessions = list(scan_chat_sessions(storage_paths, include_cli=False))
         assert len(sessions) == 1
         updated_session = sessions[0]
-        
+
         # Check that needs_update returns True for the modified file
-        needs_update = db.needs_update(
-            updated_session.session_id,
-            updated_session.source_file_mtime,
-            updated_session.source_file_size
-        )
+        needs_update = db.needs_update(updated_session.session_id, updated_session.source_file_mtime, updated_session.source_file_size)
         assert needs_update, "needs_update should return True for modified file"
-        
+
         # Update the session
         db.update_session(updated_session)
-        
+
         # Verify the update
         updated = db.get_session("update-test-session")
         assert updated is not None
@@ -480,53 +466,46 @@ class TestRefreshWithTestData:
     def test_refresh_skips_unchanged_session(self, tmp_path):
         """Test that refresh correctly skips unchanged sessions."""
         import json
-        
+
         # Create a temporary database
         db_path = tmp_path / "test.db"
         db = Database(str(db_path))
-        
+
         # Create a mock chat sessions directory structure
         workspace_dir = tmp_path / "workspaceStorage" / "abc123"
         chat_dir = workspace_dir / "chatSessions"
         chat_dir.mkdir(parents=True)
-        
+
         # Create workspace.json
-        (workspace_dir / "workspace.json").write_text(json.dumps({
-            "folder": f"file://{tmp_path}/myproject"
-        }))
-        
+        (workspace_dir / "workspace.json").write_text(json.dumps({"folder": f"file://{tmp_path}/myproject"}))
+
         # Create a chat session file
         session_file = chat_dir / "session1.json"
-        session_file.write_text(json.dumps({
-            "sessionId": "skip-test-session",
-            "createdAt": "1704110400000",
-            "requests": [
+        session_file.write_text(
+            json.dumps(
                 {
-                    "message": {"text": "Test message"},
-                    "timestamp": 1704110400000,
-                    "response": [{"value": "Test response"}]
+                    "sessionId": "skip-test-session",
+                    "createdAt": "1704110400000",
+                    "requests": [{"message": {"text": "Test message"}, "timestamp": 1704110400000, "response": [{"value": "Test response"}]}],
                 }
-            ]
-        }))
-        
+            )
+        )
+
         # Import session
         from copilot_repository_tools_common.scanner import scan_chat_sessions
+
         storage_paths = [(str(tmp_path / "workspaceStorage"), "stable")]
         sessions = list(scan_chat_sessions(storage_paths, include_cli=False))
         assert len(sessions) == 1
         db.add_session(sessions[0])
-        
+
         # Re-scan WITHOUT modifying the file
         sessions = list(scan_chat_sessions(storage_paths, include_cli=False))
         assert len(sessions) == 1
         same_session = sessions[0]
-        
+
         # Check that needs_update returns False for unchanged file
-        needs_update = db.needs_update(
-            same_session.session_id,
-            same_session.source_file_mtime,
-            same_session.source_file_size
-        )
+        needs_update = db.needs_update(same_session.session_id, same_session.source_file_mtime, same_session.source_file_size)
         assert not needs_update, "needs_update should return False for unchanged file"
 
 
@@ -569,10 +548,10 @@ class TestHtmlOutputToolInvocations:
     def session_with_tools(self, tmp_path):
         """Create a session with various tool invocations for testing."""
         from copilot_repository_tools_common.scanner import ChatMessage, ChatSession, ContentBlock, ToolInvocation
-        
+
         db_path = tmp_path / "test_tools.db"
         db = Database(str(db_path))
-        
+
         # Create session with tool invocations
         session = ChatSession(
             session_id="tool-test-session",
@@ -621,7 +600,7 @@ class TestHtmlOutputToolInvocations:
             vscode_edition="stable",
         )
         db.add_session(session)
-        
+
         return db_path
 
     def test_mcp_tool_renders_collapsible(self, session_with_tools):
@@ -629,10 +608,10 @@ class TestHtmlOutputToolInvocations:
         app = create_app(str(session_with_tools))
         app.config["TESTING"] = True
         client = app.test_client()
-        
+
         response = client.get("/session/tool-test-session")
         html = response.data.decode("utf-8")
-        
+
         # MCP tool should have collapsible wrapper
         assert "tool-invocation-wrapper" in html
         # Should show the tool name inside
@@ -646,10 +625,10 @@ class TestHtmlOutputToolInvocations:
         app = create_app(str(session_with_tools))
         app.config["TESTING"] = True
         client = app.test_client()
-        
+
         response = client.get("/session/tool-test-session")
         html = response.data.decode("utf-8")
-        
+
         # Should render the filename in monospace
         assert "<code>file.py</code>" in html
 
@@ -658,10 +637,10 @@ class TestHtmlOutputToolInvocations:
         app = create_app(str(session_with_tools))
         app.config["TESTING"] = True
         client = app.test_client()
-        
+
         response = client.get("/session/tool-test-session")
         html = response.data.decode("utf-8")
-        
+
         # Terminal tool should have collapsible wrapper
         assert "run_in_terminal" in html
         # Should show the command
@@ -674,13 +653,13 @@ class TestHtmlOutputToolInvocations:
         app = create_app(str(session_with_tools))
         app.config["TESTING"] = True
         client = app.test_client()
-        
+
         response = client.get("/session/tool-test-session")
         html = response.data.decode("utf-8")
-        
+
         # Status badges should appear
-        assert 'status-badge' in html
-        assert 'completed' in html
+        assert "status-badge" in html
+        assert "completed" in html
 
 
 class TestHtmlOutputThinkingBlocks:
@@ -690,10 +669,10 @@ class TestHtmlOutputThinkingBlocks:
     def session_with_thinking(self, tmp_path):
         """Create a session with thinking blocks for testing."""
         from copilot_repository_tools_common.scanner import ChatMessage, ChatSession, ContentBlock
-        
+
         db_path = tmp_path / "test_thinking.db"
         db = Database(str(db_path))
-        
+
         session = ChatSession(
             session_id="thinking-test-session",
             workspace_name="test-workspace",
@@ -717,7 +696,7 @@ class TestHtmlOutputThinkingBlocks:
             vscode_edition="stable",
         )
         db.add_session(session)
-        
+
         return db_path
 
     def test_thinking_block_renders_collapsible(self, session_with_thinking):
@@ -725,10 +704,10 @@ class TestHtmlOutputThinkingBlocks:
         app = create_app(str(session_with_thinking))
         app.config["TESTING"] = True
         client = app.test_client()
-        
+
         response = client.get("/session/thinking-test-session")
         html = response.data.decode("utf-8")
-        
+
         # Should have thinking block structure
         assert "thinking-block" in html
         assert "Thinking" in html
@@ -738,10 +717,10 @@ class TestHtmlOutputThinkingBlocks:
         app = create_app(str(session_with_thinking))
         app.config["TESTING"] = True
         client = app.test_client()
-        
+
         response = client.get("/session/thinking-test-session")
         html = response.data.decode("utf-8")
-        
+
         # Description should be in the summary
         assert "Analyzing the request" in html
 
@@ -750,10 +729,10 @@ class TestHtmlOutputThinkingBlocks:
         app = create_app(str(session_with_thinking))
         app.config["TESTING"] = True
         client = app.test_client()
-        
+
         response = client.get("/session/thinking-test-session")
         html = response.data.decode("utf-8")
-        
+
         # Content should be in thinking-content div
         assert "thinking-content" in html
         assert "analyze this carefully" in html
@@ -766,10 +745,10 @@ class TestHtmlOutputFileChanges:
     def session_with_file_changes(self, tmp_path):
         """Create a session with file changes for testing."""
         from copilot_repository_tools_common.scanner import ChatMessage, ChatSession, FileChange
-        
+
         db_path = tmp_path / "test_files.db"
         db = Database(str(db_path))
-        
+
         session = ChatSession(
             session_id="files-test-session",
             workspace_name="test-workspace",
@@ -799,7 +778,7 @@ class TestHtmlOutputFileChanges:
             vscode_edition="stable",
         )
         db.add_session(session)
-        
+
         return db_path
 
     def test_file_changes_renders_collapsible(self, session_with_file_changes):
@@ -807,10 +786,10 @@ class TestHtmlOutputFileChanges:
         app = create_app(str(session_with_file_changes))
         app.config["TESTING"] = True
         client = app.test_client()
-        
+
         response = client.get("/session/files-test-session")
         html = response.data.decode("utf-8")
-        
+
         # Should have file changes section
         assert "File Changes" in html
         assert "file-change" in html
@@ -820,10 +799,10 @@ class TestHtmlOutputFileChanges:
         app = create_app(str(session_with_file_changes))
         app.config["TESTING"] = True
         client = app.test_client()
-        
+
         response = client.get("/session/files-test-session")
         html = response.data.decode("utf-8")
-        
+
         # Filenames should appear
         assert "main.py" in html
         assert "utils.js" in html
@@ -833,10 +812,10 @@ class TestHtmlOutputFileChanges:
         app = create_app(str(session_with_file_changes))
         app.config["TESTING"] = True
         client = app.test_client()
-        
+
         response = client.get("/session/files-test-session")
         html = response.data.decode("utf-8")
-        
+
         # Language badges should appear
         assert "language-badge" in html
         assert "python" in html
@@ -847,10 +826,10 @@ class TestHtmlOutputFileChanges:
         app = create_app(str(session_with_file_changes))
         app.config["TESTING"] = True
         client = app.test_client()
-        
+
         response = client.get("/session/files-test-session")
         html = response.data.decode("utf-8")
-        
+
         # Diff stats should be shown
         assert "file-stat-add" in html or "file-stat-del" in html
 
@@ -859,10 +838,10 @@ class TestHtmlOutputFileChanges:
         app = create_app(str(session_with_file_changes))
         app.config["TESTING"] = True
         client = app.test_client()
-        
+
         response = client.get("/session/files-test-session")
         html = response.data.decode("utf-8")
-        
+
         # Explanations should appear
         assert "Added error handling" in html
         assert "Fixed bug in helper" in html
@@ -872,10 +851,10 @@ class TestHtmlOutputFileChanges:
         app = create_app(str(session_with_file_changes))
         app.config["TESTING"] = True
         client = app.test_client()
-        
+
         response = client.get("/session/files-test-session")
         html = response.data.decode("utf-8")
-        
+
         # Diff content should appear
         assert "process()" in html
         assert "log_error" in html
@@ -888,7 +867,7 @@ class TestHtmlOutputCodeBlocks:
         """Test that code blocks render with pre tag."""
         response = client.get("/session/webapp-test-session")
         html = response.data.decode("utf-8")
-        
+
         # Code block should have pre and code tags
         assert "<pre>" in html or "<pre " in html
         assert "<code" in html
@@ -906,7 +885,7 @@ class TestHtmlOutputMessageStructure:
         """Test that messages have role-based CSS classes."""
         response = client.get("/session/webapp-test-session")
         html = response.data.decode("utf-8")
-        
+
         # Should have role-based classes
         assert 'class="message user"' in html
         assert 'class="message assistant"' in html
@@ -915,7 +894,7 @@ class TestHtmlOutputMessageStructure:
         """Test that messages have anchor links."""
         response = client.get("/session/webapp-test-session")
         html = response.data.decode("utf-8")
-        
+
         # Should have message anchors
         assert 'id="msg-1"' in html
         assert 'id="msg-2"' in html
@@ -925,7 +904,7 @@ class TestHtmlOutputMessageStructure:
         """Test that session header shows metadata."""
         response = client.get("/session/webapp-test-session")
         html = response.data.decode("utf-8")
-        
+
         # Should show workspace name
         assert "test-workspace" in html
         # Should show edition badge
