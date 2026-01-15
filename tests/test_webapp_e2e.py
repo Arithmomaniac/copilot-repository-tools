@@ -286,9 +286,9 @@ class TestRefreshRebuildE2E:
         }))
         
         # Import sessions into database
-        from copilot_chat_archive.scanner import scan_chat_sessions
+        from copilot_repository_tools_common.scanner import scan_chat_sessions
         storage_paths = [(str(tmp_path / "workspaceStorage"), "stable")]
-        for session in scan_chat_sessions(storage_paths):
+        for session in scan_chat_sessions(storage_paths, include_cli=False):
             db.add_session(session)
         
         return {
@@ -307,7 +307,7 @@ class TestRefreshRebuildE2E:
         db_path = refresh_test_setup["db_path"]
         storage_paths = refresh_test_setup["storage_paths"]
         port = refresh_test_setup["port"]
-        app = create_app(str(db_path), title="Refresh Test Archive", storage_paths=storage_paths)
+        app = create_app(str(db_path), title="Refresh Test Archive", storage_paths=storage_paths, include_cli=False)
         app.config["TESTING"] = True
         
         # Run server in a thread
@@ -440,7 +440,7 @@ class TestRefreshRebuildE2E:
         port = refresh_test_setup["port"] + 50
         
         # Start a fresh server with custom storage paths
-        app = create_app(str(db_path), title="Compare Test", storage_paths=storage_paths)
+        app = create_app(str(db_path), title="Compare Test", storage_paths=storage_paths, include_cli=False)
         app.config["TESTING"] = True
         
         server_thread = threading.Thread(

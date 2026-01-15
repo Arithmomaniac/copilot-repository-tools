@@ -202,7 +202,7 @@ def _match_tool_for_block(block_content: str, tools: list, used_indices: set) ->
     return None, used_indices
 
 
-def create_app(db_path: str, title: str = "Copilot Chat Archive", storage_paths: list | None = None) -> Flask:
+def create_app(db_path: str, title: str = "Copilot Chat Archive", storage_paths: list | None = None, include_cli: bool = True) -> Flask:
     """Create and configure the Flask application.
 
     Args:
@@ -210,6 +210,7 @@ def create_app(db_path: str, title: str = "Copilot Chat Archive", storage_paths:
         title: Title for the archive.
         storage_paths: Optional list of (path, edition) tuples for scanning.
                        If None, uses default VS Code storage paths.
+        include_cli: Whether to include CLI sessions when scanning (default: True).
 
     Returns:
         Configured Flask application.
@@ -235,10 +236,11 @@ def create_app(db_path: str, title: str = "Copilot Chat Archive", storage_paths:
     # Register global function for tool matching
     app.jinja_env.globals["match_tool_for_block"] = _match_tool_for_block
     
-    # Store database path, title, and storage paths in app config
+    # Store database path, title, storage paths, and CLI inclusion in app config
     app.config["DB_PATH"] = db_path
     app.config["ARCHIVE_TITLE"] = title
     app.config["STORAGE_PATHS"] = storage_paths  # None means use default VS Code paths
+    app.config["INCLUDE_CLI"] = include_cli
     
     def _create_snippet(content: str, max_length: int = 150) -> str:
         """Create a snippet from content, normalizing whitespace."""
@@ -386,11 +388,13 @@ def create_app(db_path: str, title: str = "Copilot Chat Archive", storage_paths:
         if storage_paths is None:
             storage_paths = get_vscode_storage_paths()
         
+        include_cli = app.config.get("INCLUDE_CLI", True)
+        
         added = 0
         updated = 0
         skipped = 0
         
-        for chat_session in scan_chat_sessions(storage_paths):
+        for chat_session in scan_chat_sessions(storage_paths, include_cli=include_cli):
             if full_refresh:
                 # In full mode, update all sessions
                 # Try to add first - if it fails (returns False), session exists and we update

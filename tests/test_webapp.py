@@ -42,8 +42,8 @@ def temp_db():
 
 @pytest.fixture
 def app(temp_db):
-    """Create a Flask test app."""
-    app = create_app(temp_db, title="Test Archive")
+    """Create a Flask test app with empty storage paths for fast tests."""
+    app = create_app(temp_db, title="Test Archive", storage_paths=[], include_cli=False)
     app.config["TESTING"] = True
     return app
 
@@ -361,7 +361,7 @@ class TestRefreshWithTestData:
         # Manually import the session using the scanner
         from copilot_repository_tools_common.scanner import scan_chat_sessions
         storage_paths = [(str(tmp_path / "workspaceStorage"), "stable")]
-        sessions = list(scan_chat_sessions(storage_paths))
+        sessions = list(scan_chat_sessions(storage_paths, include_cli=False))
         
         # Verify we found the session
         assert len(sessions) == 1
@@ -410,7 +410,7 @@ class TestRefreshWithTestData:
         # Import initial session
         from copilot_repository_tools_common.scanner import scan_chat_sessions
         storage_paths = [(str(tmp_path / "workspaceStorage"), "stable")]
-        sessions = list(scan_chat_sessions(storage_paths))
+        sessions = list(scan_chat_sessions(storage_paths, include_cli=False))
         assert len(sessions) == 1
         db.add_session(sessions[0])
         
@@ -439,7 +439,7 @@ class TestRefreshWithTestData:
         }))
         
         # Re-scan and check that needs_update detects the change
-        sessions = list(scan_chat_sessions(storage_paths))
+        sessions = list(scan_chat_sessions(storage_paths, include_cli=False))
         assert len(sessions) == 1
         updated_session = sessions[0]
         
@@ -494,12 +494,12 @@ class TestRefreshWithTestData:
         # Import session
         from copilot_repository_tools_common.scanner import scan_chat_sessions
         storage_paths = [(str(tmp_path / "workspaceStorage"), "stable")]
-        sessions = list(scan_chat_sessions(storage_paths))
+        sessions = list(scan_chat_sessions(storage_paths, include_cli=False))
         assert len(sessions) == 1
         db.add_session(sessions[0])
         
         # Re-scan WITHOUT modifying the file
-        sessions = list(scan_chat_sessions(storage_paths))
+        sessions = list(scan_chat_sessions(storage_paths, include_cli=False))
         assert len(sessions) == 1
         same_session = sessions[0]
         

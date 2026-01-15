@@ -24,3 +24,6 @@ dev = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["packages/common/src", "packages/cli/src", "packages/web/src"]
+markers = [
+    "slow: marks tests as slow (scanning real user data, run with '-m slow' or all with '-m \"\"')",
+]

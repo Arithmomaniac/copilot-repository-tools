@@ -552,6 +552,64 @@ def import_json(
     console.print(f"  Skipped: {skipped} sessions")
 
 
+@app.command()
+def rebuild(
+    db: Annotated[
+        Path,
+        typer.Option(
+            "--db", "-d",
+            help="Path to SQLite database file.",
+            exists=True,
+        ),
+    ] = Path("copilot_chats.db"),
+    verbose: Annotated[
+        bool,
+        typer.Option(
+            "--verbose", "-v",
+            help="Show verbose output.",
+        ),
+    ] = False,
+):
+    """Rebuild derived tables from raw JSON data.
+    
+    This command drops all derived tables (sessions, messages, tool_invocations,
+    file_changes, command_runs, content_blocks) and recreates them from the
+    compressed raw JSON stored in raw_sessions.
+    
+    Use this after schema changes to regenerate all derived data without needing
+    to re-scan the original VS Code storage.
+    """
+    database = Database(db)
+    
+    # Check if there are any raw sessions to rebuild from
+    raw_count = database.get_raw_session_count()
+    if raw_count == 0:
+        console.print("[yellow]Warning: No raw sessions found in database.[/yellow]")
+        console.print("Run 'copilot-chat-archive scan' first to import sessions.")
+        raise typer.Exit(1)
+
+    console.print(f"Rebuilding {raw_count} sessions from raw JSON...")
+    
+    def progress_callback(processed, total):
+        if verbose:
+            console.print(f"  Processed: {processed}/{total}")
+    
+    result = database.rebuild_derived_tables(
+        progress_callback=progress_callback if verbose else None
+    )
+    
+    console.print(f"\n[green]Rebuild complete:[/green]")
+    console.print(f"  Processed: {result['processed']} sessions")
+    if result['errors'] > 0:
+        console.print(f"  Errors: {result['errors']} sessions")
+    
+    stats = database.get_stats()
+    console.print(f"\n[cyan]Database now contains:[/cyan]")
+    console.print(f"  {stats['session_count']} sessions")
+    console.print(f"  {stats['message_count']} messages")
+    console.print(f"  {stats['workspace_count']} workspaces")
+
+
 def run():
     """Entry point for the CLI."""
     app()

@@ -477,13 +477,17 @@ class TestCLIParsing:
         # Check that tool invocations and command runs are parsed
         all_tool_invocations = []
         all_command_runs = []
+        all_content_blocks = []
         for msg in assistant_messages:
             all_tool_invocations.extend(msg.tool_invocations)
             all_command_runs.extend(msg.command_runs)
+            all_content_blocks.extend(msg.content_blocks)
         
-        # Should have skill and report_intent tool invocations
-        tool_names = [t.name for t in all_tool_invocations]
-        assert "skill" in tool_names or "report_intent" in tool_names
+        # skill and report_intent are rendered as special content blocks, not tool_invocations
+        # Check for intent blocks (from report_intent) or skill blocks
+        intent_blocks = [b for b in all_content_blocks if b.kind == "intent"]
+        skill_blocks = [b for b in all_content_blocks if b.kind == "skill"]
+        assert len(intent_blocks) > 0 or len(skill_blocks) > 0, "Should have intent or skill content blocks"
         
         # Should have powershell command runs (git commands)
         assert len(all_command_runs) > 0
