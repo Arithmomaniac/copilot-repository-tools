@@ -222,7 +222,7 @@ def _parse_workspace_json(workspace_dir: Path) -> tuple[str | None, str | None]:
     workspace_json = workspace_dir / "workspace.json"
     if workspace_json.exists():
         try:
-            with open(workspace_json, "rb") as f:
+            with workspace_json.open("rb") as f:
                 data = orjson.loads(f.read())
                 folder = data.get("folder", "")
                 # folder is often a URI like file:///path/to/workspace
@@ -356,8 +356,7 @@ def _extract_edit_group_text(item: dict, edit_type: str = "Edited") -> str | Non
     if isinstance(uri, str):
         # Extract filename from URI string
         path = uri
-        if path.startswith("file://"):
-            path = path[7:]
+        path = path.removeprefix("file://")
         if "\\" in path:
             filename = path.split("\\")[-1]
         elif "/" in path:
@@ -577,10 +576,10 @@ def _parse_text_edit_group(item: dict, file_contents_cache: dict | None = None) 
             original_content = file_contents_cache.get(filename)
         
         if not original_content:
-            # Try normalized path comparison using os.path for robust matching
-            path_basename = os.path.basename(path) if path else ""
+            # Try normalized path comparison using Path for robust matching
+            path_basename = Path(path).name if path else ""
             for cached_path, content in file_contents_cache.items():
-                cached_basename = os.path.basename(cached_path) if cached_path else ""
+                cached_basename = Path(cached_path).name if cached_path else ""
                 # Match if basenames are the same (case-sensitive)
                 if path_basename and cached_basename and path_basename == cached_basename:
                     original_content = content
@@ -827,9 +826,8 @@ def _parse_tool_invocation_serialized(item: dict) -> ToolInvocation | None:
     # For terminal tools, also extract command output if available
     if isinstance(tool_data, dict) and tool_data.get("kind") == "terminal":
         terminal_output = tool_data.get("terminalCommandOutput", {})
-        if isinstance(terminal_output, dict) and terminal_output.get("text"):
-            if not result_data:
-                result_data = terminal_output.get("text")
+        if isinstance(terminal_output, dict) and terminal_output.get("text") and not result_data:
+            result_data = terminal_output.get("text")
     
     return ToolInvocation(
         name=str(tool_id) if tool_id else "unknown",
@@ -866,8 +864,7 @@ def _parse_file_changes(raw_changes: list) -> list[FileChange]:
     for change in raw_changes:
         if isinstance(change, dict):
             path = change.get("path") or change.get("uri") or ""
-            if path.startswith("file://"):
-                path = path[7:]
+            path = path.removeprefix("file://")
             changes.append(FileChange(
                 path=path,
                 diff=change.get("diff"),
@@ -897,17 +894,17 @@ def _parse_command_runs(raw_commands: list) -> list[CommandRun]:
 
 def _get_file_metadata(file_path: str | Path | None) -> tuple[float | None, int | None]:
     """Get file modification time and size for incremental refresh.
-    
+
     Args:
         file_path: Path to the file, or None.
-        
+
     Returns:
         Tuple of (mtime, size) or (None, None) if file cannot be accessed or path is None.
     """
     if file_path is None:
         return None, None
     try:
-        stat_result = os.stat(file_path)
+        stat_result = Path(file_path).stat()
         return stat_result.st_mtime, stat_result.st_size
     except OSError:
         return None, None
@@ -917,13 +914,13 @@ def _parse_chat_session_file(
     file_path: Path, workspace_name: str | None, workspace_path: str | None, edition: str
 ) -> ChatSession | None:
     """Parse a single chat session JSON file.
-    
+
     Supports multiple formats including:
     - Standard messages array format
     - VS Code Copilot Chat "requests" format (from Arbuzov/copilot-chat-history)
     """
     try:
-        with open(file_path, "rb") as f:
+        with file_path.open("rb") as f:
             raw_json_bytes = f.read()
             data = orjson.loads(raw_json_bytes)
     except (orjson.JSONDecodeError, OSError):
@@ -1441,25 +1438,25 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
     
     Args:
         file_path: Path to the JSONL file.
-        
+
     Returns:
         ChatSession object or None if parsing fails.
     """
     try:
         events = []
-        
-        with open(file_path, encoding="utf-8") as f:
+
+        with file_path.open(encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:
                     continue
-                    
+
                 try:
                     data = orjson.loads(line)
                     events.append(data)
                 except orjson.JSONDecodeError:
                     continue
-        
+
         if not events:
             return None
 
@@ -1498,11 +1495,10 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                         folder_path = message[7:message.find(" has been added")]
                         workspace_path = folder_path
                         workspace_name = Path(folder_path).name
-                
-                elif info_type == "authentication" and not requester_username:
+
+                elif info_type == "authentication" and not requester_username and "as user: " in message:
                     # Parse "Logged in with gh as user: Arithmomaniac"
-                    if "as user: " in message:
-                        requester_username = message.split("as user: ")[-1].strip()
+                    requester_username = message.split("as user: ")[-1].strip()
         
         # Build tool execution map: toolCallId -> (start_data, complete_data, user_requested)
         tool_executions: dict = {}

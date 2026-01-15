@@ -9,6 +9,7 @@ The schema has two parts:
 2. Derived tables (sessions, messages, etc.) - Can be dropped and recreated from raw_sessions
 """
 
+import contextlib
 import json
 import re
 import sqlite3
@@ -16,6 +17,7 @@ import zlib
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import ClassVar
 
 import orjson
 
@@ -269,7 +271,7 @@ class Database:
     """
 
     # List of derived tables that can be dropped and recreated
-    DERIVED_TABLES = [
+    DERIVED_TABLES: ClassVar[list[str]] = [
         "messages_fts",  # FTS table must be dropped first
         "content_blocks",
         "command_runs",
@@ -278,10 +280,10 @@ class Database:
         "messages",
         "sessions",
     ]
-    
+
     # List of triggers that need to be dropped/recreated with derived tables
-    DERIVED_TRIGGERS = ["messages_ai", "messages_ad", "messages_au"]
-    
+    DERIVED_TRIGGERS: ClassVar[list[str]] = ["messages_ai", "messages_ad", "messages_au"]
+
     # Compression level for zlib (0-9, 6 is a good balance of speed and compression)
     COMPRESSION_LEVEL = 6
 
@@ -556,10 +558,7 @@ class Database:
                 return True
 
             # Compare with provided values
-            if stored_mtime != file_mtime or stored_size != file_size:
-                return True
-
-            return False
+            return bool(stored_mtime != file_mtime or stored_size != file_size)
 
     def get_session(self, session_id: str) -> ChatSession | None:
         """Get a session by its ID.
@@ -596,7 +595,7 @@ class Database:
             for msg_row in message_rows:
                 message_id = msg_row["id"]
                 # Safely get cached_markdown (may be NULL in older databases)
-                cached_md = msg_row["cached_markdown"] if "cached_markdown" in msg_row.keys() else None
+                cached_md = msg_row["cached_markdown"] if "cached_markdown" in msg_row.keys() else None  # noqa: SIM118
 
                 # Get tool invocations for this message
                 cursor.execute(
@@ -660,7 +659,7 @@ class Database:
                     ContentBlock(
                         kind=b["kind"],
                         content=b["content"],
-                        description=b["description"] if "description" in b.keys() else None,
+                        description=b["description"] if "description" in b.keys() else None,  # noqa: SIM118
                     )
                     for b in cursor.fetchall()
                 ]
@@ -828,11 +827,11 @@ class Database:
                         ContentBlock(
                             kind=b["kind"],
                             content=b["content"],
-                            description=b["description"] if "description" in b.keys() else None,
+                            description=b["description"] if "description" in b.keys() else None,  # noqa: SIM118
                         )
                         for b in cursor.fetchall()
                     ]
-                    
+
                     # Create message object
                     message = ChatMessage(
                         role=row["role"],
@@ -997,7 +996,7 @@ class Database:
                         params.append(f"%{effective_workspace}%")
 
                     # Note: order_clause is safe because it comes from _SORT_ORDER_CLAUSES whitelist
-                    # noqa: S608 is acknowledged - f-string is safe here due to whitelist
+
                     message_query += f" {order_clause} LIMIT ?"
                     params.append(limit)
 
@@ -1225,12 +1224,10 @@ class Database:
                 # Validate table name is alphanumeric with underscores only
                 if not all(c.isalnum() or c == '_' for c in table):
                     raise ValueError(f"Invalid table name: {table}")
-                try:
-                    cursor.execute(f"DROP TABLE IF EXISTS {table}")  # noqa: S608
-                except sqlite3.OperationalError:
+                with contextlib.suppress(sqlite3.OperationalError):
                     # FTS tables might need special handling
-                    pass
-            
+                    cursor.execute(f"DROP TABLE IF EXISTS {table}")
+
             # Drop triggers (validated against DERIVED_TRIGGERS list)
             # Note: DERIVED_TRIGGERS is a class constant with hardcoded trigger names,
             # so f-string usage is safe. Validation is additional defense-in-depth.
@@ -1238,7 +1235,7 @@ class Database:
                 # Validate trigger name is alphanumeric with underscores only
                 if not all(c.isalnum() or c == '_' for c in trigger):
                     raise ValueError(f"Invalid trigger name: {trigger}")
-                cursor.execute(f"DROP TRIGGER IF EXISTS {trigger}")  # noqa: S608
+                cursor.execute(f"DROP TRIGGER IF EXISTS {trigger}")
             
             conn.commit()
             

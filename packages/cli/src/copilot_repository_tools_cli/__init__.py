@@ -436,7 +436,7 @@ def export_markdown(
             "--output-dir", "-o",
             help="Output directory for markdown files.",
         ),
-    ] = Path("."),
+    ] = Path(),
     session_id: Annotated[
         str | None,
         typer.Option(
@@ -538,7 +538,7 @@ def import_json(
 
     database = Database(db)
 
-    with open(json_file, encoding="utf-8") as f:
+    with json_file.open(encoding="utf-8") as f:
         data = json.load(f)
 
     if not isinstance(data, list):

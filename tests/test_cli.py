@@ -21,9 +21,8 @@ def mock_no_vscode_paths():
     
     We patch at the CLI module level since that's where scan_chat_sessions is imported.
     """
-    with patch("copilot_repository_tools_cli.get_vscode_storage_paths", return_value=[]):
-        with patch("copilot_repository_tools_cli.scan_chat_sessions", return_value=iter([])):
-            yield
+    with patch("copilot_repository_tools_cli.get_vscode_storage_paths", return_value=[]), patch("copilot_repository_tools_cli.scan_chat_sessions", return_value=iter([])):
+        yield
 
 
 @pytest.fixture
