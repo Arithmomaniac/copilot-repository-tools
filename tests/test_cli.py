@@ -20,9 +20,13 @@ def runner():
 
 @pytest.fixture
 def mock_no_vscode_paths():
-    """Mock get_vscode_storage_paths to return empty list for faster tests."""
-    with patch("copilot_repository_tools_common.get_vscode_storage_paths", return_value=[]):
-        yield
+    """Mock storage paths to return empty for faster tests.
+    
+    We patch at the CLI module level since that's where scan_chat_sessions is imported.
+    """
+    with patch("copilot_repository_tools_cli.get_vscode_storage_paths", return_value=[]):
+        with patch("copilot_repository_tools_cli.scan_chat_sessions", return_value=iter([])):
+            yield
 
 
 @pytest.fixture
