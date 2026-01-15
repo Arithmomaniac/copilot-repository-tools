@@ -41,12 +41,8 @@ def format_timestamp(ts: str | int | None) -> str:
     if ts is None:
         return "Unknown"
     try:
-        # Try parsing as milliseconds (JS timestamp)
-        numeric_ts: int | float
-        if isinstance(ts, str):
-            numeric_ts = int(ts)
-        else:
-            numeric_ts = ts
+        # Try parsing as milliseconds (JS timestamp) - int() accepts both strings and ints
+        numeric_ts = int(ts) if isinstance(ts, str) else ts
         if numeric_ts > 1e12:  # Milliseconds
             numeric_ts = numeric_ts / 1000
         return datetime.fromtimestamp(numeric_ts).strftime("%Y-%m-%d %H:%M:%S")

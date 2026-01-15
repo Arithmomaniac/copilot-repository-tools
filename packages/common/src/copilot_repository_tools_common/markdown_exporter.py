@@ -25,12 +25,8 @@ def _format_timestamp(value: str | int | None) -> str:
     if not value:
         return "Unknown"
     try:
-        # Handle both string and numeric values
-        numeric_value: float
-        if isinstance(value, str):
-            numeric_value = float(value)
-        else:
-            numeric_value = float(value)
+        # Handle both string and numeric values - float() accepts both
+        numeric_value = float(value)
         # Check if milliseconds (common for JS timestamps)
         if numeric_value > _MILLISECONDS_THRESHOLD:
             numeric_value = numeric_value / 1000
