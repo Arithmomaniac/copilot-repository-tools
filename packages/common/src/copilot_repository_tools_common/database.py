@@ -10,13 +10,108 @@ The schema has two parts:
 """
 
 import json
+import re
 import sqlite3
 import zlib
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
 
 import orjson
+
+
+@dataclass
+class ParsedQuery:
+    """Represents a parsed search query with extracted field filters."""
+    fts_query: str  # The FTS5 query string for content search
+    role: str | None = None  # Extracted role filter (user/assistant)
+    workspace: str | None = None  # Extracted workspace filter
+    title: str | None = None  # Extracted title filter
+
+
+def parse_search_query(query: str) -> ParsedQuery:
+    """Parse a search query to extract field prefixes and convert to FTS5 format.
+    
+    Supports:
+    - Multiple words: "python function" → matches both words (AND logic)
+    - Exact phrases: '"python function"' → matches exact phrase
+    - Field prefixes: 'role:user workspace:myproject title:something'
+    
+    Args:
+        query: The raw search query string.
+        
+    Returns:
+        ParsedQuery with extracted field filters and FTS5 query string.
+    """
+    if not query or not query.strip():
+        return ParsedQuery(fts_query="")
+    
+    query = query.strip()
+    
+    # Extract field prefixes (role:, workspace:, title:)
+    role = None
+    workspace = None
+    title = None
+    
+    # Pattern for field:value (value can be quoted or unquoted)
+    field_pattern = r'\b(role|workspace|title):(?:"([^"]*)"|(\S+))'
+    
+    def extract_field(match):
+        nonlocal role, workspace, title
+        field_name = match.group(1).lower()
+        # Value is either in group 2 (quoted) or group 3 (unquoted)
+        value = match.group(2) if match.group(2) is not None else match.group(3)
+        
+        if field_name == "role":
+            role = value.lower()
+        elif field_name == "workspace":
+            workspace = value
+        elif field_name == "title":
+            title = value
+        
+        return ""  # Remove the field prefix from the query
+    
+    # Remove field prefixes and extract their values
+    remaining_query = re.sub(field_pattern, extract_field, query, flags=re.IGNORECASE)
+    remaining_query = remaining_query.strip()
+    
+    # Now process the remaining query for FTS5
+    # FTS5 by default uses AND for multiple terms, so we just need to handle:
+    # 1. Quoted phrases (keep as-is)
+    # 2. Unquoted words (join with spaces for implicit AND)
+    
+    if not remaining_query:
+        fts_query = ""
+    else:
+        # Tokenize the query preserving quoted strings
+        tokens = []
+        # Pattern to match quoted strings or individual words
+        token_pattern = r'"[^"]*"|[^\s"]+'
+        
+        for match in re.finditer(token_pattern, remaining_query):
+            token = match.group(0)
+            # Clean up any empty quotes
+            if token == '""':
+                continue
+            tokens.append(token)
+        
+        # Join tokens with space (FTS5 uses implicit AND)
+        fts_query = " ".join(tokens)
+    
+    return ParsedQuery(
+        fts_query=fts_query,
+        role=role,
+        workspace=workspace,
+        title=title,
+    )
+
+
+# Allowed sort options with their SQL ORDER BY clauses (whitelist for security)
+_SORT_ORDER_CLAUSES = {
+    "relevance": "ORDER BY rank",
+    "date": "ORDER BY s.created_at DESC",
+}
 
 from .scanner import (
     ChatMessage, ChatSession, ToolInvocation, FileChange, CommandRun, ContentBlock,
@@ -813,67 +908,141 @@ class Database:
         include_tool_calls: bool = True,
         include_file_changes: bool = True,
         session_title: str | None = None,
+        sort_by: str = "relevance",
     ) -> list[dict]:
         """Search messages using full-text search with field filtering.
 
+        Supports advanced query syntax:
+        - Multiple words: "python function" → matches both words (AND logic)
+        - Exact phrases: '"python function"' → matches exact phrase
+        - Field prefixes: 'role:user', 'workspace:myproject', 'title:something'
+
         Args:
-            query: The search query.
+            query: The search query (supports field prefixes and quoted phrases).
             limit: Maximum number of results to return.
             role: Filter by message role ('user', 'assistant', or None for both).
+                  Can also be specified in query as 'role:user' or 'role:assistant'.
             include_messages: Whether to search message content.
             include_tool_calls: Whether to also search tool invocations.
             include_file_changes: Whether to also search file changes.
             session_title: Filter by session title/workspace name.
+                           Can also be specified in query as 'title:...' or 'workspace:...'.
+            sort_by: Sort order - 'relevance' (default) or 'date'.
 
         Returns:
             List of matching messages with session info.
         """
         results = []
 
+        # Parse the query to extract field filters and convert to FTS5 format
+        parsed = parse_search_query(query)
+        
+        # Use parsed field filters, with explicit parameters taking precedence
+        effective_role = role if role else parsed.role
+        effective_title = session_title if session_title else parsed.title
+        effective_workspace = parsed.workspace  # Only from query parsing
+        
+        # If no FTS query after parsing, we can't do FTS search
+        # But we might still have field filters to apply
+        fts_query = parsed.fts_query
+        
+        # Check if we have any filters to apply (even without FTS query)
+        has_filters = effective_role or effective_title or effective_workspace
+        
+        # Get the safe order clause from whitelist (defaults to relevance)
+        order_clause = _SORT_ORDER_CLAUSES.get(sort_by, _SORT_ORDER_CLAUSES["relevance"])
+
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
             # Search messages (only if include_messages is True)
             if include_messages:
-                message_query = """
-                    SELECT 
-                        m.id,
-                        m.session_id,
-                        m.message_index,
-                        m.role,
-                        m.content,
-                        s.workspace_name,
-                        s.custom_title,
-                        s.created_at,
-                        s.vscode_edition,
-                    highlight(messages_fts, 0, '<mark>', '</mark>') as highlighted,
-                    'message' as match_type
-                FROM messages_fts
-                JOIN messages m ON messages_fts.rowid = m.id
-                JOIN sessions s ON m.session_id = s.session_id
-                WHERE messages_fts MATCH ?
-            """
-                params = [query]
+                if fts_query:
+                    # FTS search with optional filters
+                    message_query = f"""
+                        SELECT 
+                            m.id,
+                            m.session_id,
+                            m.message_index,
+                            m.role,
+                            m.content,
+                            s.workspace_name,
+                            s.custom_title,
+                            s.created_at,
+                            s.vscode_edition,
+                            highlight(messages_fts, 0, '<mark>', '</mark>') as highlighted,
+                            'message' as match_type,
+                            rank
+                        FROM messages_fts
+                        JOIN messages m ON messages_fts.rowid = m.id
+                        JOIN sessions s ON m.session_id = s.session_id
+                        WHERE messages_fts MATCH ?
+                    """
+                    params = [fts_query]
 
-                if role:
-                    message_query += " AND m.role = ?"
-                    params.append(role)
+                    if effective_role:
+                        message_query += " AND m.role = ?"
+                        params.append(effective_role)
 
-                if session_title:
-                    message_query += " AND (s.workspace_name LIKE ? OR s.custom_title LIKE ?)"
-                    params.extend([f"%{session_title}%", f"%{session_title}%"])
+                    if effective_title:
+                        message_query += " AND (s.workspace_name LIKE ? OR s.custom_title LIKE ?)"
+                        params.extend([f"%{effective_title}%", f"%{effective_title}%"])
+                    
+                    if effective_workspace:
+                        message_query += " AND s.workspace_name LIKE ?"
+                        params.append(f"%{effective_workspace}%")
 
-                message_query += " ORDER BY rank LIMIT ?"
-                params.append(limit)
+                    message_query += f" {order_clause} LIMIT ?"
+                    params.append(limit)
 
-                cursor.execute(message_query, params)
-                results.extend([dict(row) for row in cursor.fetchall()])
+                    cursor.execute(message_query, params)
+                    results.extend([dict(row) for row in cursor.fetchall()])
+                
+                elif has_filters:
+                    # Filter-only query (no FTS, but with field filters)
+                    message_query = """
+                        SELECT 
+                            m.id,
+                            m.session_id,
+                            m.message_index,
+                            m.role,
+                            m.content,
+                            s.workspace_name,
+                            s.custom_title,
+                            s.created_at,
+                            s.vscode_edition,
+                            m.content as highlighted,
+                            'message' as match_type
+                        FROM messages m
+                        JOIN sessions s ON m.session_id = s.session_id
+                        WHERE 1=1
+                    """
+                    params = []
+                    
+                    if effective_role:
+                        message_query += " AND m.role = ?"
+                        params.append(effective_role)
+                    
+                    if effective_title:
+                        message_query += " AND (s.workspace_name LIKE ? OR s.custom_title LIKE ?)"
+                        params.extend([f"%{effective_title}%", f"%{effective_title}%"])
+                    
+                    if effective_workspace:
+                        message_query += " AND s.workspace_name LIKE ?"
+                        params.append(f"%{effective_workspace}%")
+                    
+                    message_query += " ORDER BY s.created_at DESC LIMIT ?"
+                    params.append(limit)
+                    
+                    cursor.execute(message_query, params)
+                    results.extend([dict(row) for row in cursor.fetchall()])
 
             # Search tool invocations
-            if include_tool_calls and len(results) < limit:
+            # For tool/file searches, we use the original query terms for LIKE matching
+            search_terms = fts_query if fts_query else query
+            if include_tool_calls and len(results) < limit and search_terms:
                 remaining = limit - len(results)
-                cursor.execute(
-                    """
+                tool_query = """
                     SELECT 
                         t.id,
                         m.session_id,
@@ -888,18 +1057,28 @@ class Database:
                     FROM tool_invocations t
                     JOIN messages m ON t.message_id = m.id
                     JOIN sessions s ON m.session_id = s.session_id
-                    WHERE t.name LIKE ? OR t.input LIKE ? OR t.result LIKE ?
-                    LIMIT ?
-                    """,
-                    (f"%{query}%", f"%{query}%", f"%{query}%", remaining),
-                )
+                    WHERE (t.name LIKE ? OR t.input LIKE ? OR t.result LIKE ?)
+                """
+                params = [f"%{search_terms}%", f"%{search_terms}%", f"%{search_terms}%"]
+                
+                if effective_workspace:
+                    tool_query += " AND s.workspace_name LIKE ?"
+                    params.append(f"%{effective_workspace}%")
+                
+                if effective_title:
+                    tool_query += " AND (s.workspace_name LIKE ? OR s.custom_title LIKE ?)"
+                    params.extend([f"%{effective_title}%", f"%{effective_title}%"])
+                
+                tool_query += " LIMIT ?"
+                params.append(remaining)
+                
+                cursor.execute(tool_query, params)
                 results.extend([dict(row) for row in cursor.fetchall()])
 
             # Search file changes
-            if include_file_changes and len(results) < limit:
+            if include_file_changes and len(results) < limit and search_terms:
                 remaining = limit - len(results)
-                cursor.execute(
-                    """
+                file_query = """
                     SELECT 
                         f.id,
                         m.session_id,
@@ -914,11 +1093,22 @@ class Database:
                     FROM file_changes f
                     JOIN messages m ON f.message_id = m.id
                     JOIN sessions s ON m.session_id = s.session_id
-                    WHERE f.path LIKE ? OR f.explanation LIKE ? OR f.diff LIKE ?
-                    LIMIT ?
-                    """,
-                    (f"%{query}%", f"%{query}%", f"%{query}%", remaining),
-                )
+                    WHERE (f.path LIKE ? OR f.explanation LIKE ? OR f.diff LIKE ?)
+                """
+                params = [f"%{search_terms}%", f"%{search_terms}%", f"%{search_terms}%"]
+                
+                if effective_workspace:
+                    file_query += " AND s.workspace_name LIKE ?"
+                    params.append(f"%{effective_workspace}%")
+                
+                if effective_title:
+                    file_query += " AND (s.workspace_name LIKE ? OR s.custom_title LIKE ?)"
+                    params.extend([f"%{effective_title}%", f"%{effective_title}%"])
+                
+                file_query += " LIMIT ?"
+                params.append(remaining)
+                
+                cursor.execute(file_query, params)
                 results.extend([dict(row) for row in cursor.fetchall()])
 
         return results[:limit]

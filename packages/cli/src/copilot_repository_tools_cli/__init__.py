@@ -260,13 +260,44 @@ def search(
             help="Show full content instead of truncated snippets.",
         ),
     ] = False,
+    sort_by: Annotated[
+        str,
+        typer.Option(
+            "--sort", "-s",
+            help="Sort results by relevance (default) or date.",
+        ),
+    ] = "relevance",
 ):
     """Search chat messages in the database.
     
-    By default, searches message content, tool invocations, and file changes.
+    Supports advanced query syntax:
+    
+    \b
+    - Multiple words: "python function" matches both words (AND logic)
+    - Exact phrases: Use quotes like "python function" for exact match
+    - Field filters in query: role:user, role:assistant, workspace:name, title:name
+    
+    Examples:
+    
+    \b
+      copilot-chat-archive search "python function"
+      copilot-chat-archive search "role:user python"
+      copilot-chat-archive search "workspace:my-project"
+      copilot-chat-archive search '"exact phrase"'
+    
+    Use --role to filter by user requests or assistant responses.
+    Use --title to filter by session/workspace name.
+    Use --no-tools or --no-files to exclude specific content types.
+    Use --tools-only or --files-only to search only specific content types.
+    Use --full to show complete content instead of truncated snippets.
+    Use --sort to sort by relevance (default) or date.
     """
     if role and role not in ("user", "assistant"):
         console.print("[red]Error: role must be 'user' or 'assistant'[/red]")
+        raise typer.Exit(1)
+
+    if sort_by not in ("relevance", "date"):
+        console.print("[red]Error: sort must be 'relevance' or 'date'[/red]")
         raise typer.Exit(1)
 
     # Handle search mode options
@@ -292,6 +323,7 @@ def search(
         include_tool_calls=include_tool_calls,
         include_file_changes=include_file_changes,
         session_title=title_filter,
+        sort_by=sort_by,
     )
 
     if not results:
