@@ -558,7 +558,7 @@ class Database:
                 return True
 
             # Compare with provided values
-            return bool(stored_mtime != file_mtime or stored_size != file_size)
+            return stored_mtime != file_mtime or stored_size != file_size
 
     def get_session(self, session_id: str) -> ChatSession | None:
         """Get a session by its ID.

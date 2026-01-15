@@ -822,13 +822,15 @@ def _parse_tool_invocation_serialized(item: dict) -> ToolInvocation | None:
     # Extract source type (mcp vs internal)
     source = item.get("source", {})
     source_type = source.get("type") if isinstance(source, dict) else None
-    
+
     # For terminal tools, also extract command output if available
     if isinstance(tool_data, dict) and tool_data.get("kind") == "terminal":
         terminal_output = tool_data.get("terminalCommandOutput", {})
-        if isinstance(terminal_output, dict) and terminal_output.get("text") and not result_data:
-            result_data = terminal_output.get("text")
-    
+        if isinstance(terminal_output, dict) and not result_data:
+            text = terminal_output.get("text")
+            if text:
+                result_data = text
+
     return ToolInvocation(
         name=str(tool_id) if tool_id else "unknown",
         input=input_data,

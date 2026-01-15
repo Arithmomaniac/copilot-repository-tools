@@ -50,7 +50,7 @@ select = [
     "PTH",  # flake8-use-pathlib
     "DTZ",  # flake8-datetimez
     "SLOT", # flake8-slots
-    "ASYNC",# flake8-async
+    "ASYNC", # flake8-async
     "LOG",  # flake8-logging
     "T20",  # flake8-print
     "PLE",  # pylint.Error
