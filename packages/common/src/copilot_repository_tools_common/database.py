@@ -992,6 +992,8 @@ class Database:
                         message_query += " AND s.workspace_name LIKE ?"
                         params.append(f"%{effective_workspace}%")
 
+                    # Note: order_clause is safe because it comes from _SORT_ORDER_CLAUSES whitelist
+                    # noqa: S608 is acknowledged - f-string is safe here due to whitelist
                     message_query += f" {order_clause} LIMIT ?"
                     params.append(limit)
 
