@@ -265,6 +265,7 @@ def create_app(
         db = Database(app.config["DB_PATH"])
         query = request.args.get("q", "").strip()
         selected_workspaces = request.args.getlist("workspace")
+        selected_editions = request.args.getlist("edition")
         sort_by = request.args.get("sort", "relevance")  # 'relevance' or 'date'
 
         # Get refresh results from session (set after a refresh operation)
@@ -310,6 +311,10 @@ def create_app(
         if selected_workspaces:
             sessions = [s for s in sessions if s.get("workspace_name") in selected_workspaces]
 
+        # Apply edition filter if selected
+        if selected_editions:
+            sessions = [s for s in sessions if s.get("vscode_edition") in selected_editions]
+
         workspaces = db.get_workspaces()
         stats = db.get_stats()
 
@@ -322,6 +327,7 @@ def create_app(
             query=query,
             search_snippets=search_snippets,
             selected_workspaces=selected_workspaces,
+            selected_editions=selected_editions,
             refresh_result=refresh_result,
             sort_by=sort_by,
         )

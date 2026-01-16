@@ -61,6 +61,9 @@ header {
     border-bottom: 1px solid var(--border-color);
     padding: 20px 0;
     margin-bottom: 20px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
 }
 
 header h1 {
@@ -136,6 +139,19 @@ header h1 {
     background-color: var(--code-bg);
     padding: 2px 6px;
     border-radius: 3px;
+}
+
+.source-file {
+    margin-top: 5px;
+    color: var(--text-secondary);
+}
+
+.source-file code {
+    font-size: 0.8em;
+    background-color: var(--code-bg);
+    padding: 2px 6px;
+    border-radius: 3px;
+    word-break: break-all;
 }
 
 .message {
@@ -1000,7 +1016,18 @@ footer a {
                 {% elif session.workspace_name %}
                     {{ session.workspace_name }}
                 {% else %}
-                    Session {{ session.session_id[:8] }}...
+                    {# Find first user message for display title #}
+                    {% set first_user_msg = namespace(content=None) %}
+                    {% for msg in session.messages %}
+                        {% if msg.role == 'user' and first_user_msg.content is none %}
+                            {% set first_user_msg.content = msg.content %}
+                        {% endif %}
+                    {% endfor %}
+                    {% if first_user_msg.content %}
+                        <em>{{ first_user_msg.content[:100] }}{% if first_user_msg.content | length > 100 %}...{% endif %}</em>
+                    {% else %}
+                        Session {{ session.session_id[:8] }}...
+                    {% endif %}
                 {% endif %}
             </h2>
             <div class="session-meta">
@@ -1016,6 +1043,11 @@ footer a {
             <div class="session-id">
                 <small>Session ID: <code>{{ session.session_id }}</code></small>
             </div>
+            {% if session.source_file %}
+            <div class="source-file">
+                <small>Source: <code>{{ session.source_file }}</code></small>
+            </div>
+            {% endif %}
         </div>
 
         <!-- Copy Markdown Toolbar -->

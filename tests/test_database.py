@@ -564,39 +564,46 @@ class TestParseSearchQuery:
     """Tests for the parse_search_query function using parametrized test cases."""
 
     @pytest.mark.parametrize(
-        "query,expected_fts,expected_role,expected_workspace,expected_title",
+        "query,expected_fts,expected_role,expected_workspace,expected_title,expected_edition",
         [
             # Empty and simple queries
-            ("", "", None, None, None),
-            ("python", "python", None, None, None),
-            ("python function", "python function", None, None, None),
+            ("", "", None, None, None, None),
+            ("python", "python", None, None, None, None),
+            ("python function", "python function", None, None, None, None),
             # Quoted phrases (for exact match in FTS5)
-            ('"python function"', '"python function"', None, None, None),
-            ('create "python function" parameters', 'create "python function" parameters', None, None, None),
+            ('"python function"', '"python function"', None, None, None, None),
+            ('create "python function" parameters', 'create "python function" parameters', None, None, None, None),
             # Field filters
-            ("python role:user", "python", "user", None, None),
-            ("role:assistant function", "function", "assistant", None, None),
-            ("python workspace:my-project", "python", None, "my-project", None),
-            ("function title:MySession", "function", None, None, "MySession"),
+            ("python role:user", "python", "user", None, None, None),
+            ("role:assistant function", "function", "assistant", None, None, None),
+            ("python workspace:my-project", "python", None, "my-project", None, None),
+            ("function title:MySession", "function", None, None, "MySession", None),
+            # Edition filter
+            ("python edition:cli", "python", None, None, None, "cli"),
+            ("edition:stable", "", None, None, None, "stable"),
+            ("edition:insider function", "function", None, None, None, "insider"),
             # Quoted field values
-            ('workspace:"my project name" python', "python", None, "my project name", None),
+            ('workspace:"my project name" python', "python", None, "my project name", None, None),
             # Multiple filters together
-            ("python role:user workspace:myproj", "python", "user", "myproj", None),
-            ("role:user workspace:test", "", "user", "test", None),
+            ("python role:user workspace:myproj", "python", "user", "myproj", None, None),
+            ("role:user workspace:test", "", "user", "test", None, None),
+            ("role:user edition:cli test", "test", "user", None, None, "cli"),
             # Case insensitive field names
-            ("Role:user WORKSPACE:test", "", "user", "test", None),
+            ("Role:user WORKSPACE:test", "", "user", "test", None, None),
+            ("EDITION:CLI", "", None, None, None, "cli"),
             # Duplicate field values - last one wins
-            ("role:user role:assistant python", "python", "assistant", None, None),
-            ("workspace:first workspace:second", "", None, "second", None),
+            ("role:user role:assistant python", "python", "assistant", None, None, None),
+            ("workspace:first workspace:second", "", None, "second", None, None),
         ],
     )
-    def test_parse_search_query(self, query, expected_fts, expected_role, expected_workspace, expected_title):
+    def test_parse_search_query(self, query, expected_fts, expected_role, expected_workspace, expected_title, expected_edition):
         """Test parsing search queries with various formats."""
         result = parse_search_query(query)
         assert result.fts_query == expected_fts
         assert result.role == expected_role
         assert result.workspace == expected_workspace
         assert result.title == expected_title
+        assert result.edition == expected_edition
 
 
 @pytest.fixture

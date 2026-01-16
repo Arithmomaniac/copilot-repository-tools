@@ -30,6 +30,7 @@ class ParsedQuery:
     role: str | None = None  # Extracted role filter (user/assistant)
     workspace: str | None = None  # Extracted workspace filter
     title: str | None = None  # Extracted title filter
+    edition: str | None = None  # Extracted edition filter (stable/insider/cli)
 
 
 def parse_search_query(query: str) -> ParsedQuery:
@@ -38,7 +39,7 @@ def parse_search_query(query: str) -> ParsedQuery:
     Supports:
     - Multiple words: "python function" → matches both words (AND logic)
     - Exact phrases: '"python function"' → matches exact phrase
-    - Field prefixes: 'role:user workspace:myproject title:something'
+    - Field prefixes: 'role:user workspace:myproject title:something edition:cli'
 
     Args:
         query: The raw search query string.
@@ -51,16 +52,17 @@ def parse_search_query(query: str) -> ParsedQuery:
 
     query = query.strip()
 
-    # Extract field prefixes (role:, workspace:, title:)
+    # Extract field prefixes (role:, workspace:, title:, edition:)
     role = None
     workspace = None
     title = None
+    edition = None
 
     # Pattern for field:value (value can be quoted or unquoted)
-    field_pattern = r'\b(role|workspace|title):(?:"([^"]*)"|(\S+))'
+    field_pattern = r'\b(role|workspace|title|edition):(?:"([^"]*)"|(\S+))'
 
     def extract_field(match):
-        nonlocal role, workspace, title
+        nonlocal role, workspace, title, edition
         field_name = match.group(1).lower()
         # Value is either in group 2 (quoted) or group 3 (unquoted)
         value = match.group(2) if match.group(2) is not None else match.group(3)
@@ -71,6 +73,8 @@ def parse_search_query(query: str) -> ParsedQuery:
             workspace = value
         elif field_name == "title":
             title = value
+        elif field_name == "edition":
+            edition = value.lower()
 
         return ""  # Remove the field prefix from the query
 
@@ -106,6 +110,7 @@ def parse_search_query(query: str) -> ParsedQuery:
         role=role,
         workspace=workspace,
         title=title,
+        edition=edition,
     )
 
 
@@ -882,7 +887,10 @@ class Database:
                     s.vscode_edition,
                     s.custom_title,
                     COUNT(m.id) as message_count,
-                    MAX(m.timestamp) as last_message_at
+                    MAX(m.timestamp) as last_message_at,
+                    (SELECT content FROM messages m2 
+                     WHERE m2.session_id = s.session_id AND m2.role = 'user' 
+                     ORDER BY m2.message_index LIMIT 1) as first_user_prompt
                 FROM sessions s
                 LEFT JOIN messages m ON s.session_id = m.session_id
             """
@@ -943,13 +951,14 @@ class Database:
         effective_role = role if role else parsed.role
         effective_title = session_title if session_title else parsed.title
         effective_workspace = parsed.workspace  # Only from query parsing
+        effective_edition = parsed.edition  # Only from query parsing
 
         # If no FTS query after parsing, we can't do FTS search
         # But we might still have field filters to apply
         fts_query = parsed.fts_query
 
         # Check if we have any filters to apply (even without FTS query)
-        has_filters = effective_role or effective_title or effective_workspace
+        has_filters = effective_role or effective_title or effective_workspace or effective_edition
 
         # Get the safe order clause from whitelist (defaults to relevance)
         order_clause = _SORT_ORDER_CLAUSES.get(sort_by, _SORT_ORDER_CLAUSES["relevance"])
@@ -994,6 +1003,10 @@ class Database:
                         message_query += " AND s.workspace_name LIKE ?"
                         params.append(f"%{effective_workspace}%")
 
+                    if effective_edition:
+                        message_query += " AND s.vscode_edition = ?"
+                        params.append(effective_edition)
+
                     # Note: order_clause is safe because it comes from _SORT_ORDER_CLAUSES whitelist
 
                     message_query += f" {order_clause} LIMIT ?"
@@ -1035,6 +1048,10 @@ class Database:
                         message_query += " AND s.workspace_name LIKE ?"
                         params.append(f"%{effective_workspace}%")
 
+                    if effective_edition:
+                        message_query += " AND s.vscode_edition = ?"
+                        params.append(effective_edition)
+
                     message_query += " ORDER BY s.created_at DESC LIMIT ?"
                     params.append(limit)
 
@@ -1073,6 +1090,10 @@ class Database:
                     tool_query += " AND (s.workspace_name LIKE ? OR s.custom_title LIKE ?)"
                     params.extend([f"%{effective_title}%", f"%{effective_title}%"])
 
+                if effective_edition:
+                    tool_query += " AND s.vscode_edition = ?"
+                    params.append(effective_edition)
+
                 tool_query += " LIMIT ?"
                 params.append(remaining)
 
@@ -1108,6 +1129,10 @@ class Database:
                 if effective_title:
                     file_query += " AND (s.workspace_name LIKE ? OR s.custom_title LIKE ?)"
                     params.extend([f"%{effective_title}%", f"%{effective_title}%"])
+
+                if effective_edition:
+                    file_query += " AND s.vscode_edition = ?"
+                    params.append(effective_edition)
 
                 file_query += " LIMIT ?"
                 params.append(remaining)
