@@ -348,7 +348,12 @@ def create_app(
 
         # Pre-process messages to match tool invocations and command runs with content blocks
         # This creates a mapping that the template can use directly
+        first_user_prompt = None
         for message in session.messages:
+            # Capture first user prompt for title fallback
+            if message.role == "user" and first_user_prompt is None:
+                first_user_prompt = message.content
+
             block_tool_map = {}
             block_cmd_map = {}
             used_tool_indices = set()
@@ -386,6 +391,7 @@ def create_app(
             title=app.config["ARCHIVE_TITLE"],
             session=session,
             message_count=len(session.messages),
+            first_user_prompt=first_user_prompt,
         )
 
     @app.route("/refresh", methods=["POST"])

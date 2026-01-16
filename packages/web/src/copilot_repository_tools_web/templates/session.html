@@ -1015,19 +1015,10 @@ footer a {
                     {{ session.custom_title }}
                 {% elif session.workspace_name %}
                     {{ session.workspace_name }}
+                {% elif first_user_prompt %}
+                    <em>{{ first_user_prompt | truncate(100, True) }}</em>
                 {% else %}
-                    {# Find first user message for display title #}
-                    {% set first_user_msg = namespace(content=None) %}
-                    {% for msg in session.messages %}
-                        {% if msg.role == 'user' and first_user_msg.content is none %}
-                            {% set first_user_msg.content = msg.content %}
-                        {% endif %}
-                    {% endfor %}
-                    {% if first_user_msg.content %}
-                        <em>{{ first_user_msg.content[:100] }}{% if first_user_msg.content | length > 100 %}...{% endif %}</em>
-                    {% else %}
-                        Session {{ session.session_id[:8] }}...
-                    {% endif %}
+                    Session {{ session.session_id[:8] }}...
                 {% endif %}
             </h2>
             <div class="session-meta">

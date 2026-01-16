@@ -699,7 +699,7 @@ footer a {
                     {% elif session.workspace_name %}
                         {{ session.workspace_name }}
                     {% elif session.first_user_prompt %}
-                        <em>{{ session.first_user_prompt[:100] }}{% if session.first_user_prompt | length > 100 %}...{% endif %}</em>
+                        <em>{{ session.first_user_prompt | truncate(100, True) }}</em>
                     {% else %}
                         Session {{ session.session_id[:8] }}...
                     {% endif %}
