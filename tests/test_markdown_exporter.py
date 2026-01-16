@@ -1,20 +1,15 @@
 """Tests for the markdown exporter module."""
 
-import tempfile
-from pathlib import Path
-
 import pytest
-
 from copilot_repository_tools_common import (
-    session_to_markdown,
-    export_session_to_file,
-    generate_session_filename,
     ChatMessage,
     ChatSession,
-    ToolInvocation,
-    FileChange,
-    CommandRun,
     ContentBlock,
+    FileChange,
+    ToolInvocation,
+    export_session_to_file,
+    generate_session_filename,
+    session_to_markdown,
 )
 from copilot_repository_tools_common.markdown_exporter import (
     _format_timestamp,
@@ -124,7 +119,7 @@ class TestSessionToMarkdown:
     def test_basic_export(self, sample_session):
         """Test basic markdown export."""
         markdown = session_to_markdown(sample_session)
-        
+
         assert "# Chat Session" in markdown
         assert "my-project" in markdown
         assert "test-session-123" in markdown
@@ -136,7 +131,7 @@ class TestSessionToMarkdown:
     def test_metadata_section(self, sample_session):
         """Test that metadata section is included."""
         markdown = session_to_markdown(sample_session)
-        
+
         assert "## Metadata" in markdown
         assert "**Session ID:**" in markdown
         assert "**Workspace:**" in markdown
@@ -147,7 +142,7 @@ class TestSessionToMarkdown:
     def test_horizontal_rules(self, sample_session):
         """Test that messages are separated by horizontal rules."""
         markdown = session_to_markdown(sample_session)
-        
+
         # Count horizontal rules
         rule_count = markdown.count("\n---\n")
         # Should have at least 2: after metadata, after each message
@@ -156,36 +151,36 @@ class TestSessionToMarkdown:
     def test_thinking_blocks_omitted(self, session_with_thinking):
         """Test that thinking block content is omitted but noted."""
         markdown = session_to_markdown(session_with_thinking)
-        
+
         # Thinking content should be omitted
         assert "Let me think about this" not in markdown
-        
+
         # But there should be a notice
         assert "*[Was thinking...]*" in markdown
-        
+
         # Non-thinking content should be present
         assert "Here's my answer after thinking." in markdown
 
     def test_thinking_blocks_included_when_requested(self, session_with_thinking):
         """Test that thinking blocks are included when include_thinking=True."""
         markdown = session_to_markdown(session_with_thinking, include_thinking=True)
-        
+
         # Thinking content should be included
         assert "Let me think about this" in markdown
-        
+
         # Should be in a blockquote with "Thinking:" label
         assert "> **Thinking:**" in markdown
-        
+
         # Should NOT have the "[Was thinking...]" notice
         assert "*[Was thinking...]*" not in markdown
-        
+
         # Non-thinking content should also be present
         assert "Here's my answer after thinking." in markdown
 
     def test_tool_summary_in_italics(self, session_with_tools):
         """Test that tool summaries are in italics."""
         markdown = session_to_markdown(session_with_tools)
-        
+
         # Tool summary should be in italics
         assert "*Used" in markdown
         assert "file_creator" in markdown
@@ -193,7 +188,7 @@ class TestSessionToMarkdown:
     def test_file_changes_summary(self, session_with_tools):
         """Test that file changes are summarized."""
         markdown = session_to_markdown(session_with_tools)
-        
+
         # File changes should be summarized in italics
         assert "*Changed file:" in markdown
         assert "test.py" in markdown
@@ -208,7 +203,7 @@ class TestSessionToMarkdown:
             custom_title="My Custom Title",
         )
         markdown = session_to_markdown(session)
-        
+
         assert "**Title:** My Custom Title" in markdown
 
 
@@ -219,7 +214,7 @@ class TestExportSessionToFile:
         """Test exporting to a file."""
         output_path = tmp_path / "test_export.md"
         export_session_to_file(sample_session, output_path)
-        
+
         assert output_path.exists()
         content = output_path.read_text()
         assert "# Chat Session" in content
@@ -240,7 +235,7 @@ class TestGenerateSessionFilename:
             created_at="1704067200000",
         )
         filename = generate_session_filename(session)
-        
+
         assert filename.endswith(".md")
         assert "My_Custom_Session" in filename
         assert "test-123" in filename
@@ -255,7 +250,7 @@ class TestGenerateSessionFilename:
             created_at="1704067200000",
         )
         filename = generate_session_filename(session)
-        
+
         assert filename.endswith(".md")
         assert "my-project" in filename
 
@@ -269,7 +264,7 @@ class TestGenerateSessionFilename:
             created_at="1704067200000",  # 2024-01-01
         )
         filename = generate_session_filename(session)
-        
+
         assert "20240101" in filename
 
     def test_filename_sanitization(self):
@@ -281,7 +276,7 @@ class TestGenerateSessionFilename:
             messages=[],
         )
         filename = generate_session_filename(session)
-        
+
         assert "/" not in filename
         assert ":" not in filename
         assert filename.endswith(".md")
@@ -386,12 +381,14 @@ class TestFormatFileChangesSummary:
     def test_no_file_changes(self):
         """Test message with no file changes."""
         from copilot_repository_tools_common.markdown_exporter import _format_file_changes_summary
+
         message = ChatMessage(role="assistant", content="Hello")
         assert _format_file_changes_summary(message) == ""
 
     def test_file_changes_with_diff_included(self):
         """Test that file diffs are included when flag is set."""
         from copilot_repository_tools_common.markdown_exporter import _format_file_changes_summary
+
         message = ChatMessage(
             role="assistant",
             content="Hello",
@@ -408,6 +405,7 @@ class TestFormatFileChangesSummary:
     def test_file_changes_without_diff_when_not_included(self):
         """Test that file diffs are not included when flag is False."""
         from copilot_repository_tools_common.markdown_exporter import _format_file_changes_summary
+
         message = ChatMessage(
             role="assistant",
             content="Hello",

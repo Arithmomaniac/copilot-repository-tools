@@ -19,6 +19,8 @@ dev = [
     "pytest-cov>=4.0.0",
     "pytest-playwright>=0.4.0",
     "pytest-benchmark>=4.0.0",
+    "ruff>=0.14.11",
+    "ty>=0.0.12",
 ]
 
 [tool.pytest.ini_options]
@@ -27,3 +29,123 @@ pythonpath = ["packages/common/src", "packages/cli/src", "packages/web/src"]
 markers = [
     "slow: marks tests as slow (scanning real user data, run with '-m slow' or all with '-m \"\"')",
 ]
+
+[tool.ruff]
+line-length = 180
+exclude = ["*.pyi"]
+
+[tool.ruff.lint]
+select = [
+    "F",    # Pyflakes
+    "E",    # pycodestyle.Error
+    "FURB", # refurb
+    "RUF",  # Ruff-specific rules
+    "PERF", # Perflint
+    "UP",   # pyupgrade
+    "SIM",  # flake8-simplify
+    "C4",   # flake8-comprehensions
+    "A",    # flake8-builtins
+    "S",    # flake8-bandit
+    "FBT",  # flake8-boolean-trap
+    "PTH",  # flake8-use-pathlib
+    "DTZ",  # flake8-datetimez
+    "SLOT", # flake8-slots
+    "ASYNC", # flake8-async
+    "LOG",  # flake8-logging
+    "T20",  # flake8-print
+    "PLE",  # pylint.Error
+    "PLW",  # pylint.Warning
+    "TRY",  # tryceratops
+    "PD",   # pandas-vet
+    "NPY",  # NumPy-specific rules
+    "ISC",  # flake8-implicit-str-concat
+    "I",    # isort
+    "B",    # flake8-bugbear
+]
+ignore = [
+    "E402",   # Module level import not at top of file (needed for circular import handling)
+    "FBT001", # Boolean-typed positional argument in function definition (common in callbacks)
+    "FBT002", # Boolean default positional argument in function definition (common in typer CLIs)
+    "TRY003", # Avoid specifying long messages outside the exception class (too strict)
+    "S105",   # Possible hardcoded password (false positives on regex patterns)
+    "S108",   # Probable insecure usage of temp file (false positive on '/tmp' string)
+    "SIM108", # Use ternary operator (readability preference - sometimes if/else is clearer)
+    "PERF401", # Use list comprehension (sometimes for loops are clearer)
+    "DTZ001", # datetime.datetime() called without tzinfo (timestamps are stored as naive)
+    "DTZ006", # datetime.fromtimestamp() without tz (display formatting, not timezone-aware required)
+    "TRY300", # Consider moving to else block (stylistic choice)
+    "PLW2901", # for loop variable overwritten (intentional in some parsing scenarios)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = [
+    "S101",  # Use of assert detected (expected in tests)
+    "S106",  # Possible hardcoded password (test fixtures)
+    "T201",  # print found (benchmark output)
+    "PTH123", # open() should be Path.open() (less important in tests)
+]
+"packages/cli/**/*.py" = [
+    "T201",  # print found (CLI output is expected)
+]
+"packages/web/**/__init__.py" = [
+    "T201",  # print found (startup messages)
+]
+
+[tool.ty.environment]
+python-version = "3.12"
+
+[tool.ty.src]
+include = ["packages/*/src/**/*.py", "tests/**/*.py"]
+
+[tool.ty.rules]
+# Pyright standard-equivalent strict settings, with pragmatic adjustments
+# Core type safety rules - error
+invalid-assignment = "error"
+invalid-return-type = "error"
+possibly-unbound = "error"
+unknown-argument = "error"
+missing-argument = "error"
+too-many-positional-arguments = "error"
+invalid-type-form = "error"
+invalid-base = "error"
+invalid-generic = "error"
+invalid-legacy-type-variable = "error"
+invalid-type-parameter = "error"
+invalid-type-variable-constraints = "error"
+invalid-exception-caught = "error"
+invalid-exception-raised = "error"
+invalid-overload = "error"
+invalid-parameter-default = "error"
+invalid-protocol-member = "error"
+invalid-super-argument = "error"
+subclass-of-final-class = "error"
+override-of-final-method = "error"
+invalid-metaclass = "error"
+invalid-context-manager = "error"
+invalid-declaration = "error"
+conflicting-declarations = "error"
+cyclic-class-definition = "error"
+duplicate-base = "error"
+invalid-await = "error"
+invalid-yield = "error"
+non-subscriptable = "error"
+index-out-of-bounds = "error"
+invalid-slice = "error"
+not-iterable = "error"
+invalid-operation = "error"
+invalid-raise = "error"
+invalid-assert = "error"
+static-assert-error = "error"
+type-assertion-failure = "error"
+invalid-unpacking = "error"
+call-non-callable = "error"
+unsupported-operator = "error"
+division-by-zero = "error"
+undefined-reveal = "error"
+
+# Rules that need flexibility for this codebase - warn instead of error
+unresolved-import = "warn"  # Third-party packages may not have stubs
+possibly-unresolved-reference = "warn"  # Dynamic contexts
+unresolved-attribute = "warn"  # Dynamic attribute assignment on dataclasses for templating
+invalid-argument-type = "warn"  # Some type inference may not be precise
+redundant-cast = "warn"

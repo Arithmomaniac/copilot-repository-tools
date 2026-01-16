@@ -4,25 +4,22 @@ This module provides a modern CLI built with Typer for scanning, searching,
 and exporting VS Code GitHub Copilot chat history.
 """
 
-import sys
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
-from rich.console import Console
-from rich.table import Table
-
 from copilot_repository_tools_common import (
-    __version__,
     ChatMessage,
     ChatSession,
     Database,
+    __version__,
     export_session_to_file,
     generate_session_filename,
     get_vscode_storage_paths,
     scan_chat_sessions,
 )
+from rich.console import Console
 
 app = typer.Typer(
     name="copilot-chat-archive",
@@ -44,12 +41,11 @@ def format_timestamp(ts: str | int | None) -> str:
     if ts is None:
         return "Unknown"
     try:
-        # Try parsing as milliseconds (JS timestamp)
-        if isinstance(ts, str):
-            ts = int(ts)
-        if ts > 1e12:  # Milliseconds
-            ts = ts / 1000
-        return datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+        # Try parsing as milliseconds (JS timestamp) - int() accepts both strings and ints
+        numeric_ts = int(ts) if isinstance(ts, str) else ts
+        if numeric_ts > 1e12:  # Milliseconds
+            numeric_ts = numeric_ts / 1000
+        return datetime.fromtimestamp(numeric_ts).strftime("%Y-%m-%d %H:%M:%S")
     except (ValueError, OSError):
         return str(ts)
 
@@ -59,7 +55,8 @@ def main(
     version: Annotated[
         bool,
         typer.Option(
-            "--version", "-V",
+            "--version",
+            "-V",
             callback=version_callback,
             is_eager=True,
             help="Show version and exit.",
@@ -75,14 +72,16 @@ def scan(
     db: Annotated[
         Path,
         typer.Option(
-            "--db", "-d",
+            "--db",
+            "-d",
             help="Path to SQLite database file.",
         ),
     ] = Path("copilot_chats.db"),
     storage_path: Annotated[
-        Optional[list[Path]],
+        list[Path] | None,
         typer.Option(
-            "--storage-path", "-s",
+            "--storage-path",
+            "-s",
             help="Custom VS Code storage path(s) to scan. Can be specified multiple times.",
             exists=True,
             file_okay=False,
@@ -91,35 +90,38 @@ def scan(
     edition: Annotated[
         str,
         typer.Option(
-            "--edition", "-e",
+            "--edition",
+            "-e",
             help="VS Code edition to scan.",
         ),
     ] = "both",
     verbose: Annotated[
         bool,
         typer.Option(
-            "--verbose", "-v",
+            "--verbose",
+            "-v",
             help="Show verbose output.",
         ),
     ] = False,
     full: Annotated[
         bool,
         typer.Option(
-            "--full", "-f",
+            "--full",
+            "-f",
             help="Full scan: update all sessions regardless of file changes.",
         ),
     ] = False,
 ):
     """Scan for and import Copilot chat sessions into the database.
-    
+
     By default, uses incremental refresh: only updates sessions whose source files
     have changed (based on file mtime and size). Use --full to force a complete
     re-import of all sessions.
     """
     if edition not in ("stable", "insider", "both"):
-        console.print(f"[red]Error: edition must be 'stable', 'insider', or 'both'[/red]")
+        console.print("[red]Error: edition must be 'stable', 'insider', or 'both'[/red]")
         raise typer.Exit(1)
-    
+
     database = Database(db)
 
     # Determine storage paths
@@ -199,7 +201,8 @@ def search(
     db: Annotated[
         Path,
         typer.Option(
-            "--db", "-d",
+            "--db",
+            "-d",
             help="Path to SQLite database file.",
             exists=True,
         ),
@@ -207,21 +210,24 @@ def search(
     limit: Annotated[
         int,
         typer.Option(
-            "--limit", "-l",
+            "--limit",
+            "-l",
             help="Maximum number of results to show.",
         ),
     ] = 20,
     role: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
-            "--role", "-r",
+            "--role",
+            "-r",
             help="Filter by message role (user or assistant).",
         ),
     ] = None,
     title_filter: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
-            "--title", "-t",
+            "--title",
+            "-t",
             help="Filter by session title or workspace name.",
         ),
     ] = None,
@@ -256,35 +262,37 @@ def search(
     full_content: Annotated[
         bool,
         typer.Option(
-            "--full", "-F",
+            "--full",
+            "-F",
             help="Show full content instead of truncated snippets.",
         ),
     ] = False,
     sort_by: Annotated[
         str,
         typer.Option(
-            "--sort", "-s",
+            "--sort",
+            "-s",
             help="Sort results by relevance (default) or date.",
         ),
     ] = "relevance",
 ):
     """Search chat messages in the database.
-    
+
     Supports advanced query syntax:
-    
+
     \b
     - Multiple words: "python function" matches both words (AND logic)
     - Exact phrases: Use quotes like "python function" for exact match
     - Field filters in query: role:user, role:assistant, workspace:name, title:name
-    
+
     Examples:
-    
+
     \b
       copilot-chat-archive search "python function"
       copilot-chat-archive search "role:user python"
       copilot-chat-archive search "workspace:my-project"
       copilot-chat-archive search '"exact phrase"'
-    
+
     Use --role to filter by user requests or assistant responses.
     Use --title to filter by session/workspace name.
     Use --no-tools or --no-files to exclude specific content types.
@@ -335,20 +343,20 @@ def search(
     for i, result in enumerate(results, 1):
         console.print(f"[cyan bold]━━━ Result {i} ━━━[/cyan bold]")
         console.print(f"[bright_blue bold]Session ID:[/bright_blue bold] {result['session_id']}")
-        
+
         if result.get("workspace_name"):
             console.print(f"[bright_blue bold]Workspace:[/bright_blue bold]  [yellow]{result['workspace_name']}[/yellow]")
-        
+
         if result.get("custom_title"):
             console.print(f"[bright_blue bold]Title:[/bright_blue bold]      {result['custom_title']}")
-        
+
         if result.get("created_at"):
-            formatted_date = format_timestamp(result['created_at'])
+            formatted_date = format_timestamp(result["created_at"])
             console.print(f"[bright_blue bold]Date:[/bright_blue bold]       [dim]{formatted_date}[/dim]")
-        
-        role_color = "green" if result['role'] == "user" else "magenta"
+
+        role_color = "green" if result["role"] == "user" else "magenta"
         console.print(f"[bright_blue bold]Role:[/bright_blue bold]       [{role_color}]{result['role']}[/{role_color}]")
-        
+
         if result.get("match_type") and result["match_type"] != "message":
             console.print(f"[bright_blue bold]Match Type:[/bright_blue bold] [cyan]{result['match_type']}[/cyan]")
 
@@ -364,7 +372,8 @@ def stats(
     db: Annotated[
         Path,
         typer.Option(
-            "--db", "-d",
+            "--db",
+            "-d",
             help="Path to SQLite database file.",
             exists=True,
         ),
@@ -398,7 +407,8 @@ def export(
     db: Annotated[
         Path,
         typer.Option(
-            "--db", "-d",
+            "--db",
+            "-d",
             help="Path to SQLite database file.",
             exists=True,
         ),
@@ -406,7 +416,8 @@ def export(
     output: Annotated[
         str,
         typer.Option(
-            "--output", "-o",
+            "--output",
+            "-o",
             help="Output file (- for stdout).",
         ),
     ] = "-",
@@ -427,7 +438,8 @@ def export_markdown(
     db: Annotated[
         Path,
         typer.Option(
-            "--db", "-d",
+            "--db",
+            "-d",
             help="Path to SQLite database file.",
             exists=True,
         ),
@@ -435,21 +447,24 @@ def export_markdown(
     output_dir: Annotated[
         Path,
         typer.Option(
-            "--output-dir", "-o",
+            "--output-dir",
+            "-o",
             help="Output directory for markdown files.",
         ),
-    ] = Path("."),
+    ] = Path(),
     session_id: Annotated[
-        Optional[str],
+        str | None,
         typer.Option(
-            "--session-id", "-s",
+            "--session-id",
+            "-s",
             help="Export only a specific session by ID.",
         ),
     ] = None,
     verbose: Annotated[
         bool,
         typer.Option(
-            "--verbose", "-v",
+            "--verbose",
+            "-v",
             help="Show verbose output.",
         ),
     ] = False,
@@ -469,7 +484,7 @@ def export_markdown(
     ] = False,
 ):
     """Export sessions as markdown files.
-    
+
     Each session is exported to a separate markdown file with:
     - Header block with metadata (session ID, workspace, dates)
     - Messages separated by horizontal rules
@@ -478,15 +493,15 @@ def export_markdown(
     - Thinking block notices in italics (content omitted)
     """
     database = Database(db)
-    
+
     output_dir.mkdir(parents=True, exist_ok=True)
-    
+
     if session_id:
         session = database.get_session(session_id)
         if session is None:
             console.print(f"[red]Error: Session '{session_id}' not found.[/red]")
             raise typer.Exit(1)
-        
+
         filename = generate_session_filename(session)
         file_path = output_dir / filename
         export_session_to_file(
@@ -499,7 +514,7 @@ def export_markdown(
     else:
         sessions = database.list_sessions()
         exported = 0
-        
+
         for session_info in sessions:
             session = database.get_session(session_info["session_id"])
             if session:
@@ -514,7 +529,7 @@ def export_markdown(
                 exported += 1
                 if verbose:
                     console.print(f"  Exported: {file_path}")
-        
+
         console.print(f"\n[green]Exported {exported} sessions to {output_dir}/[/green]")
 
 
@@ -530,7 +545,8 @@ def import_json(
     db: Annotated[
         Path,
         typer.Option(
-            "--db", "-d",
+            "--db",
+            "-d",
             help="Path to SQLite database file.",
         ),
     ] = Path("copilot_chats.db"),
@@ -540,7 +556,7 @@ def import_json(
 
     database = Database(db)
 
-    with open(json_file, encoding="utf-8") as f:
+    with json_file.open(encoding="utf-8") as f:
         data = json.load(f)
 
     if not isinstance(data, list):
@@ -589,7 +605,8 @@ def rebuild(
     db: Annotated[
         Path,
         typer.Option(
-            "--db", "-d",
+            "--db",
+            "-d",
             help="Path to SQLite database file.",
             exists=True,
         ),
@@ -597,22 +614,23 @@ def rebuild(
     verbose: Annotated[
         bool,
         typer.Option(
-            "--verbose", "-v",
+            "--verbose",
+            "-v",
             help="Show verbose output.",
         ),
     ] = False,
 ):
     """Rebuild derived tables from raw JSON data.
-    
+
     This command drops all derived tables (sessions, messages, tool_invocations,
     file_changes, command_runs, content_blocks) and recreates them from the
     compressed raw JSON stored in raw_sessions.
-    
+
     Use this after schema changes to regenerate all derived data without needing
     to re-scan the original VS Code storage.
     """
     database = Database(db)
-    
+
     # Check if there are any raw sessions to rebuild from
     raw_count = database.get_raw_session_count()
     if raw_count == 0:
@@ -621,22 +639,20 @@ def rebuild(
         raise typer.Exit(1)
 
     console.print(f"Rebuilding {raw_count} sessions from raw JSON...")
-    
+
     def progress_callback(processed, total):
         if verbose:
             console.print(f"  Processed: {processed}/{total}")
-    
-    result = database.rebuild_derived_tables(
-        progress_callback=progress_callback if verbose else None
-    )
-    
-    console.print(f"\n[green]Rebuild complete:[/green]")
+
+    result = database.rebuild_derived_tables(progress_callback=progress_callback if verbose else None)
+
+    console.print("\n[green]Rebuild complete:[/green]")
     console.print(f"  Processed: {result['processed']} sessions")
-    if result['errors'] > 0:
+    if result["errors"] > 0:
         console.print(f"  Errors: {result['errors']} sessions")
-    
+
     stats = database.get_stats()
-    console.print(f"\n[cyan]Database now contains:[/cyan]")
+    console.print("\n[cyan]Database now contains:[/cyan]")
     console.print(f"  {stats['session_count']} sessions")
     console.print(f"  {stats['message_count']} messages")
     console.print(f"  {stats['workspace_count']} workspaces")

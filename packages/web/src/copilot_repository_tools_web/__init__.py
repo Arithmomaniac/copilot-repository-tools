@@ -28,35 +28,39 @@ __all__ = [
 
 def main():
     """Entry point for the web application.
-    
+
     Can be run via: uvx copilot-repository-tools-web
     """
-    import sys
-    from pathlib import Path
-    
     # Parse command line arguments
     import argparse
+    import sys
+    from pathlib import Path
+
     parser = argparse.ArgumentParser(
         description="Start the Copilot Chat Archive web server",
     )
     parser.add_argument(
-        "--db", "-d",
+        "--db",
+        "-d",
         default="copilot_chats.db",
         help="Path to SQLite database file (default: copilot_chats.db)",
     )
     parser.add_argument(
-        "--host", "-H",
+        "--host",
+        "-H",
         default="127.0.0.1",
         help="Host to bind to (default: 127.0.0.1)",
     )
     parser.add_argument(
-        "--port", "-p",
+        "--port",
+        "-p",
         type=int,
         default=5000,
         help="Port to bind to (default: 5000)",
     )
     parser.add_argument(
-        "--title", "-t",
+        "--title",
+        "-t",
         default="Copilot Chat Archive",
         help="Title for the archive (default: Copilot Chat Archive)",
     )
@@ -65,30 +69,31 @@ def main():
         action="store_true",
         help="Enable debug mode",
     )
-    
+
     args = parser.parse_args()
-    
+
     # Check if database exists
     db_path = Path(args.db)
     if not db_path.exists():
         print(f"Error: Database file '{args.db}' not found.", file=sys.stderr)
         print("Run 'copilot-chat-archive scan' first to import chat sessions.", file=sys.stderr)
         sys.exit(1)
-    
+
     from copilot_repository_tools_common import Database
+
     database = Database(args.db)
     stats = database.get_stats()
-    
+
     if stats["session_count"] == 0:
         print("Warning: Database is empty. Run 'copilot-chat-archive scan' first.", file=sys.stderr)
-    
-    print(f"Starting web server...")
+
+    print("Starting web server...")
     print(f"  Database: {args.db}")
     print(f"  Sessions: {stats['session_count']}")
     print(f"  Messages: {stats['message_count']}")
     print(f"\nOpen http://{args.host}:{args.port}/ in a browser to view your archive.")
     print("Press Ctrl+C to stop the server.\n")
-    
+
     run_server(
         host=args.host,
         port=args.port,

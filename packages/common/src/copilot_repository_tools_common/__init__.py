@@ -14,6 +14,13 @@ This project borrows patterns from several open-source projects:
 
 __version__ = "0.1.0"
 
+from .database import Database, ParsedQuery, parse_search_query
+from .markdown_exporter import (
+    export_session_to_file,
+    generate_session_filename,
+    message_to_markdown,
+    session_to_markdown,
+)
 from .scanner import (
     ChatMessage,
     ChatSession,
@@ -22,38 +29,31 @@ from .scanner import (
     FileChange,
     ToolInvocation,
     find_copilot_chat_dirs,
-    get_vscode_storage_paths,
     get_cli_storage_paths,
+    get_vscode_storage_paths,
     scan_chat_sessions,
-)
-from .database import Database, ParsedQuery, parse_search_query
-from .markdown_exporter import (
-    export_session_to_file,
-    generate_session_filename,
-    message_to_markdown,
-    session_to_markdown,
 )
 
 __all__ = [
-    "__version__",
     # Scanner
     "ChatMessage",
     "ChatSession",
     "CommandRun",
     "ContentBlock",
-    "FileChange",
-    "ToolInvocation",
-    "find_copilot_chat_dirs",
-    "get_vscode_storage_paths",
-    "get_cli_storage_paths",
-    "scan_chat_sessions",
     # Database
     "Database",
+    "FileChange",
     "ParsedQuery",
-    "parse_search_query",
+    "ToolInvocation",
+    "__version__",
     # Markdown Exporter
     "export_session_to_file",
+    "find_copilot_chat_dirs",
     "generate_session_filename",
+    "get_cli_storage_paths",
+    "get_vscode_storage_paths",
     "message_to_markdown",
+    "parse_search_query",
+    "scan_chat_sessions",
     "session_to_markdown",
 ]

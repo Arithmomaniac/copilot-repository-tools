@@ -9,6 +9,7 @@ The schema has two parts:
 2. Derived tables (sessions, messages, etc.) - Can be dropped and recreated from raw_sessions
 """
 
+import contextlib
 import json
 import re
 import sqlite3
@@ -16,7 +17,7 @@ import zlib
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator
+from typing import ClassVar
 
 import orjson
 
@@ -24,6 +25,7 @@ import orjson
 @dataclass
 class ParsedQuery:
     """Represents a parsed search query with extracted field filters."""
+
     fts_query: str  # The FTS5 query string for content search
     role: str | None = None  # Extracted role filter (user/assistant)
     workspace: str | None = None  # Extracted workspace filter
@@ -32,55 +34,55 @@ class ParsedQuery:
 
 def parse_search_query(query: str) -> ParsedQuery:
     """Parse a search query to extract field prefixes and convert to FTS5 format.
-    
+
     Supports:
     - Multiple words: "python function" → matches both words (AND logic)
     - Exact phrases: '"python function"' → matches exact phrase
     - Field prefixes: 'role:user workspace:myproject title:something'
-    
+
     Args:
         query: The raw search query string.
-        
+
     Returns:
         ParsedQuery with extracted field filters and FTS5 query string.
     """
     if not query or not query.strip():
         return ParsedQuery(fts_query="")
-    
+
     query = query.strip()
-    
+
     # Extract field prefixes (role:, workspace:, title:)
     role = None
     workspace = None
     title = None
-    
+
     # Pattern for field:value (value can be quoted or unquoted)
     field_pattern = r'\b(role|workspace|title):(?:"([^"]*)"|(\S+))'
-    
+
     def extract_field(match):
         nonlocal role, workspace, title
         field_name = match.group(1).lower()
         # Value is either in group 2 (quoted) or group 3 (unquoted)
         value = match.group(2) if match.group(2) is not None else match.group(3)
-        
+
         if field_name == "role":
             role = value.lower()
         elif field_name == "workspace":
             workspace = value
         elif field_name == "title":
             title = value
-        
+
         return ""  # Remove the field prefix from the query
-    
+
     # Remove field prefixes and extract their values
     remaining_query = re.sub(field_pattern, extract_field, query, flags=re.IGNORECASE)
     remaining_query = remaining_query.strip()
-    
+
     # Now process the remaining query for FTS5
     # FTS5 by default uses AND for multiple terms, so we just need to handle:
     # 1. Quoted phrases (keep as-is)
     # 2. Unquoted words (join with spaces for implicit AND)
-    
+
     if not remaining_query:
         fts_query = ""
     else:
@@ -88,17 +90,17 @@ def parse_search_query(query: str) -> ParsedQuery:
         tokens = []
         # Pattern to match quoted strings or individual words
         token_pattern = r'"[^"]*"|[^\s"]+'
-        
+
         for match in re.finditer(token_pattern, remaining_query):
             token = match.group(0)
             # Clean up any empty quotes
             if token == '""':
                 continue
             tokens.append(token)
-        
+
         # Join tokens with space (FTS5 uses implicit AND)
         fts_query = " ".join(tokens)
-    
+
     return ParsedQuery(
         fts_query=fts_query,
         role=role,
@@ -113,18 +115,23 @@ _SORT_ORDER_CLAUSES = {
     "date": "ORDER BY s.created_at DESC",
 }
 
+from .markdown_exporter import message_to_markdown
 from .scanner import (
-    ChatMessage, ChatSession, ToolInvocation, FileChange, CommandRun, ContentBlock,
+    ChatMessage,
+    ChatSession,
+    CommandRun,
+    ContentBlock,
+    FileChange,
+    ToolInvocation,
     _extract_session_from_dict,
 )
-from .markdown_exporter import message_to_markdown
 
 
 class Database:
     """SQLite database for storing Copilot chat sessions.
-    
+
     Uses FTS5 for full-text search (inspired by tad-hq/universal-session-viewer).
-    
+
     The database has a two-layer design:
     1. raw_sessions table stores compressed raw JSON as the source of truth
     2. Derived tables (sessions, messages, etc.) can be dropped and rebuilt
@@ -265,7 +272,7 @@ class Database:
     """
 
     # List of derived tables that can be dropped and recreated
-    DERIVED_TABLES = [
+    DERIVED_TABLES: ClassVar[list[str]] = [
         "messages_fts",  # FTS table must be dropped first
         "content_blocks",
         "command_runs",
@@ -274,10 +281,10 @@ class Database:
         "messages",
         "sessions",
     ]
-    
+
     # List of triggers that need to be dropped/recreated with derived tables
-    DERIVED_TRIGGERS = ["messages_ai", "messages_ad", "messages_au"]
-    
+    DERIVED_TRIGGERS: ClassVar[list[str]] = ["messages_ai", "messages_ad", "messages_au"]
+
     # Compression level for zlib (0-9, 6 is a good balance of speed and compression)
     COMPRESSION_LEVEL = 6
 
@@ -307,7 +314,7 @@ class Database:
 
     def _ensure_schema(self):
         """Ensure the database schema exists.
-        
+
         With the new two-layer design:
         - raw_sessions is the source of truth (never needs migration)
         - Derived tables can be dropped and rebuilt, so no migrations needed
@@ -331,9 +338,7 @@ class Database:
             cursor = conn.cursor()
 
             # Check if session already exists in raw_sessions
-            cursor.execute(
-                "SELECT id FROM raw_sessions WHERE session_id = ?", (session.session_id,)
-            )
+            cursor.execute("SELECT id FROM raw_sessions WHERE session_id = ?", (session.session_id,))
             if cursor.fetchone():
                 return False
 
@@ -342,8 +347,8 @@ class Database:
                 compressed_json = zlib.compress(session.raw_json, level=self.COMPRESSION_LEVEL)
             else:
                 # Create minimal JSON from session data if no raw JSON available
-                compressed_json = zlib.compress(b'{}', level=self.COMPRESSION_LEVEL)
-            
+                compressed_json = zlib.compress(b"{}", level=self.COMPRESSION_LEVEL)
+
             cursor.execute(
                 """
                 INSERT INTO raw_sessions 
@@ -398,7 +403,7 @@ class Database:
                     include_diffs=True,
                     include_tool_inputs=True,
                 )
-                
+
                 cursor.execute(
                     """
                     INSERT INTO messages 
@@ -503,14 +508,10 @@ class Database:
             cursor = conn.cursor()
 
             # Delete from raw_sessions first (source of truth)
-            cursor.execute(
-                "DELETE FROM raw_sessions WHERE session_id = ?", (session.session_id,)
-            )
-            
+            cursor.execute("DELETE FROM raw_sessions WHERE session_id = ?", (session.session_id,))
+
             # Delete existing session and messages (cascades)
-            cursor.execute(
-                "DELETE FROM sessions WHERE session_id = ?", (session.session_id,)
-            )
+            cursor.execute("DELETE FROM sessions WHERE session_id = ?", (session.session_id,))
 
         # Add the session (this will add to both raw_sessions and derived tables)
         self.add_session(session)
@@ -552,10 +553,7 @@ class Database:
                 return True
 
             # Compare with provided values
-            if stored_mtime != file_mtime or stored_size != file_size:
-                return True
-
-            return False
+            return stored_mtime != file_mtime or stored_size != file_size
 
     def get_session(self, session_id: str) -> ChatSession | None:
         """Get a session by its ID.
@@ -569,9 +567,7 @@ class Database:
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
-            cursor.execute(
-                "SELECT * FROM sessions WHERE session_id = ?", (session_id,)
-            )
+            cursor.execute("SELECT * FROM sessions WHERE session_id = ?", (session_id,))
             row = cursor.fetchone()
             if not row:
                 return None
@@ -592,7 +588,7 @@ class Database:
             for msg_row in message_rows:
                 message_id = msg_row["id"]
                 # Safely get cached_markdown (may be NULL in older databases)
-                cached_md = msg_row["cached_markdown"] if "cached_markdown" in msg_row.keys() else None
+                cached_md = msg_row["cached_markdown"] if "cached_markdown" in msg_row.keys() else None  # noqa: SIM118
 
                 # Get tool invocations for this message
                 cursor.execute(
@@ -603,16 +599,18 @@ class Database:
                 for t in cursor.fetchall():
                     # Handle columns that may not exist in older databases
                     t_keys = t.keys()
-                    tool_invocations.append(ToolInvocation(
-                        name=t["name"],
-                        input=t["input"],
-                        result=t["result"],
-                        status=t["status"],
-                        start_time=t["start_time"],
-                        end_time=t["end_time"],
-                        source_type=t["source_type"] if "source_type" in t_keys else None,
-                        invocation_message=t["invocation_message"] if "invocation_message" in t_keys else None,
-                    ))
+                    tool_invocations.append(
+                        ToolInvocation(
+                            name=t["name"],
+                            input=t["input"],
+                            result=t["result"],
+                            status=t["status"],
+                            start_time=t["start_time"],
+                            end_time=t["end_time"],
+                            source_type=t["source_type"] if "source_type" in t_keys else None,
+                            invocation_message=t["invocation_message"] if "invocation_message" in t_keys else None,
+                        )
+                    )
 
                 # Get file changes for this message
                 cursor.execute(
@@ -656,21 +654,23 @@ class Database:
                     ContentBlock(
                         kind=b["kind"],
                         content=b["content"],
-                        description=b["description"] if "description" in b.keys() else None,
+                        description=b["description"] if "description" in b.keys() else None,  # noqa: SIM118
                     )
                     for b in cursor.fetchall()
                 ]
 
-                messages.append(ChatMessage(
-                    role=msg_row["role"],
-                    content=msg_row["content"],
-                    timestamp=msg_row["timestamp"],
-                    tool_invocations=tool_invocations,
-                    file_changes=file_changes,
-                    command_runs=command_runs,
-                    content_blocks=content_blocks,
-                    cached_markdown=cached_md,
-                ))
+                messages.append(
+                    ChatMessage(
+                        role=msg_row["role"],
+                        content=msg_row["content"],
+                        timestamp=msg_row["timestamp"],
+                        tool_invocations=tool_invocations,
+                        file_changes=file_changes,
+                        command_runs=command_runs,
+                        content_blocks=content_blocks,
+                        cached_markdown=cached_md,
+                    )
+                )
 
             # Helper to safely get optional fields from sqlite3.Row
             def safe_get(key):
@@ -717,16 +717,16 @@ class Database:
             Combined markdown string for the selected messages.
         """
         from .markdown_exporter import message_to_markdown
-        
+
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            
+
             # Build query based on range
             if start is not None or end is not None:
                 # Convert to 0-based indices
                 start_idx = (start - 1) if start else 0
                 end_idx = (end - 1) if end else 999999  # Large number for "no limit"
-                
+
                 cursor.execute(
                     """
                     SELECT id, role, content, timestamp, cached_markdown, message_index
@@ -749,7 +749,7 @@ class Database:
 
             rows = cursor.fetchall()
             markdown_parts = []
-            
+
             # If both options are enabled, use cached markdown
             if include_diffs and include_tool_inputs:
                 for row in rows:
@@ -761,7 +761,7 @@ class Database:
                 for row in rows:
                     message_id = row["id"]
                     message_index = row["message_index"] + 1  # Convert to 1-based
-                    
+
                     # Get tool invocations for this message
                     cursor.execute(
                         "SELECT * FROM tool_invocations WHERE message_id = ?",
@@ -771,17 +771,19 @@ class Database:
                     for t in cursor.fetchall():
                         # Handle columns that may not exist in older databases
                         t_keys = t.keys()
-                        tool_invocations.append(ToolInvocation(
-                            name=t["name"],
-                            input=t["input"],
-                            result=t["result"],
-                            status=t["status"],
-                            start_time=t["start_time"],
-                            end_time=t["end_time"],
-                            source_type=t["source_type"] if "source_type" in t_keys else None,
-                            invocation_message=t["invocation_message"] if "invocation_message" in t_keys else None,
-                        ))
-                    
+                        tool_invocations.append(
+                            ToolInvocation(
+                                name=t["name"],
+                                input=t["input"],
+                                result=t["result"],
+                                status=t["status"],
+                                start_time=t["start_time"],
+                                end_time=t["end_time"],
+                                source_type=t["source_type"] if "source_type" in t_keys else None,
+                                invocation_message=t["invocation_message"] if "invocation_message" in t_keys else None,
+                            )
+                        )
+
                     # Get file changes for this message
                     cursor.execute(
                         "SELECT * FROM file_changes WHERE message_id = ?",
@@ -797,7 +799,7 @@ class Database:
                         )
                         for f in cursor.fetchall()
                     ]
-                    
+
                     # Get command runs for this message
                     cursor.execute(
                         "SELECT * FROM command_runs WHERE message_id = ?",
@@ -814,7 +816,7 @@ class Database:
                         )
                         for c in cursor.fetchall()
                     ]
-                    
+
                     # Get content blocks for this message
                     cursor.execute(
                         "SELECT * FROM content_blocks WHERE message_id = ? ORDER BY block_index",
@@ -824,11 +826,11 @@ class Database:
                         ContentBlock(
                             kind=b["kind"],
                             content=b["content"],
-                            description=b["description"] if "description" in b.keys() else None,
+                            description=b["description"] if "description" in b.keys() else None,  # noqa: SIM118
                         )
                         for b in cursor.fetchall()
                     ]
-                    
+
                     # Create message object
                     message = ChatMessage(
                         role=row["role"],
@@ -839,7 +841,7 @@ class Database:
                         command_runs=command_runs,
                         content_blocks=content_blocks,
                     )
-                    
+
                     # Generate markdown with specified options
                     md = message_to_markdown(
                         message,
@@ -848,7 +850,7 @@ class Database:
                         include_tool_inputs=include_tool_inputs,
                     )
                     markdown_parts.append(md)
-            
+
             return "\n".join(markdown_parts)
 
     def list_sessions(
@@ -936,19 +938,19 @@ class Database:
 
         # Parse the query to extract field filters and convert to FTS5 format
         parsed = parse_search_query(query)
-        
+
         # Use parsed field filters, with explicit parameters taking precedence
         effective_role = role if role else parsed.role
         effective_title = session_title if session_title else parsed.title
         effective_workspace = parsed.workspace  # Only from query parsing
-        
+
         # If no FTS query after parsing, we can't do FTS search
         # But we might still have field filters to apply
         fts_query = parsed.fts_query
-        
+
         # Check if we have any filters to apply (even without FTS query)
         has_filters = effective_role or effective_title or effective_workspace
-        
+
         # Get the safe order clause from whitelist (defaults to relevance)
         order_clause = _SORT_ORDER_CLAUSES.get(sort_by, _SORT_ORDER_CLAUSES["relevance"])
 
@@ -959,7 +961,7 @@ class Database:
             if include_messages:
                 if fts_query:
                     # FTS search with optional filters
-                    message_query = f"""
+                    message_query = """
                         SELECT 
                             m.id,
                             m.session_id,
@@ -987,19 +989,19 @@ class Database:
                     if effective_title:
                         message_query += " AND (s.workspace_name LIKE ? OR s.custom_title LIKE ?)"
                         params.extend([f"%{effective_title}%", f"%{effective_title}%"])
-                    
+
                     if effective_workspace:
                         message_query += " AND s.workspace_name LIKE ?"
                         params.append(f"%{effective_workspace}%")
 
                     # Note: order_clause is safe because it comes from _SORT_ORDER_CLAUSES whitelist
-                    # noqa: S608 is acknowledged - f-string is safe here due to whitelist
+
                     message_query += f" {order_clause} LIMIT ?"
                     params.append(limit)
 
                     cursor.execute(message_query, params)
                     results.extend([dict(row) for row in cursor.fetchall()])
-                
+
                 elif has_filters:
                     # Filter-only query (no FTS, but with field filters)
                     message_query = """
@@ -1020,22 +1022,22 @@ class Database:
                         WHERE 1=1
                     """
                     params = []
-                    
+
                     if effective_role:
                         message_query += " AND m.role = ?"
                         params.append(effective_role)
-                    
+
                     if effective_title:
                         message_query += " AND (s.workspace_name LIKE ? OR s.custom_title LIKE ?)"
                         params.extend([f"%{effective_title}%", f"%{effective_title}%"])
-                    
+
                     if effective_workspace:
                         message_query += " AND s.workspace_name LIKE ?"
                         params.append(f"%{effective_workspace}%")
-                    
+
                     message_query += " ORDER BY s.created_at DESC LIMIT ?"
                     params.append(limit)
-                    
+
                     cursor.execute(message_query, params)
                     results.extend([dict(row) for row in cursor.fetchall()])
 
@@ -1062,18 +1064,18 @@ class Database:
                     WHERE (t.name LIKE ? OR t.input LIKE ? OR t.result LIKE ?)
                 """
                 params = [f"%{search_terms}%", f"%{search_terms}%", f"%{search_terms}%"]
-                
+
                 if effective_workspace:
                     tool_query += " AND s.workspace_name LIKE ?"
                     params.append(f"%{effective_workspace}%")
-                
+
                 if effective_title:
                     tool_query += " AND (s.workspace_name LIKE ? OR s.custom_title LIKE ?)"
                     params.extend([f"%{effective_title}%", f"%{effective_title}%"])
-                
+
                 tool_query += " LIMIT ?"
                 params.append(remaining)
-                
+
                 cursor.execute(tool_query, params)
                 results.extend([dict(row) for row in cursor.fetchall()])
 
@@ -1098,18 +1100,18 @@ class Database:
                     WHERE (f.path LIKE ? OR f.explanation LIKE ? OR f.diff LIKE ?)
                 """
                 params = [f"%{search_terms}%", f"%{search_terms}%", f"%{search_terms}%"]
-                
+
                 if effective_workspace:
                     file_query += " AND s.workspace_name LIKE ?"
                     params.append(f"%{effective_workspace}%")
-                
+
                 if effective_title:
                     file_query += " AND (s.workspace_name LIKE ? OR s.custom_title LIKE ?)"
                     params.extend([f"%{effective_title}%", f"%{effective_title}%"])
-                
+
                 file_query += " LIMIT ?"
                 params.append(remaining)
-                
+
                 cursor.execute(file_query, params)
                 results.extend([dict(row) for row in cursor.fetchall()])
 
@@ -1156,9 +1158,7 @@ class Database:
             cursor.execute("SELECT COUNT(DISTINCT workspace_name) FROM sessions")
             workspace_count = cursor.fetchone()[0]
 
-            cursor.execute(
-                "SELECT vscode_edition, COUNT(*) FROM sessions GROUP BY vscode_edition"
-            )
+            cursor.execute("SELECT vscode_edition, COUNT(*) FROM sessions GROUP BY vscode_edition")
             editions = dict(cursor.fetchall())
 
             return {
@@ -1178,87 +1178,87 @@ class Database:
         for session_info in self.list_sessions():
             session = self.get_session(session_info["session_id"])
             if session:
-                sessions.append({
-                    "session_id": session.session_id,
-                    "workspace_name": session.workspace_name,
-                    "workspace_path": session.workspace_path,
-                    "created_at": session.created_at,
-                    "updated_at": session.updated_at,
-                    "vscode_edition": session.vscode_edition,
-                    "messages": [
-                        {
-                            "role": msg.role,
-                            "content": msg.content,
-                            "timestamp": msg.timestamp,
-                        }
-                        for msg in session.messages
-                    ],
-                })
+                sessions.append(
+                    {
+                        "session_id": session.session_id,
+                        "workspace_name": session.workspace_name,
+                        "workspace_path": session.workspace_path,
+                        "created_at": session.created_at,
+                        "updated_at": session.updated_at,
+                        "vscode_edition": session.vscode_edition,
+                        "messages": [
+                            {
+                                "role": msg.role,
+                                "content": msg.content,
+                                "timestamp": msg.timestamp,
+                            }
+                            for msg in session.messages
+                        ],
+                    }
+                )
         return json.dumps(sessions, indent=2)
 
     def rebuild_derived_tables(self, progress_callback=None) -> dict:
         """Drop and recreate all derived tables from raw_sessions.
-        
+
         This method allows the schema to evolve without migrations - simply
         drop the derived tables and rebuild them from the raw JSON source.
-        
+
         Args:
             progress_callback: Optional callable that receives (processed, total) counts.
-            
+
         Returns:
             Dictionary with rebuild statistics.
         """
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            
+
             # Disable foreign keys temporarily for dropping tables
             conn.execute("PRAGMA foreign_keys = OFF")
-            
+
             # Drop derived tables in order (FTS first, then dependent tables)
             # Note: DERIVED_TABLES is a class constant with hardcoded table names,
             # so f-string usage is safe. Validation is additional defense-in-depth.
             for table in self.DERIVED_TABLES:
                 # Validate table name is alphanumeric with underscores only
-                if not all(c.isalnum() or c == '_' for c in table):
+                if not all(c.isalnum() or c == "_" for c in table):
                     raise ValueError(f"Invalid table name: {table}")
-                try:
-                    cursor.execute(f"DROP TABLE IF EXISTS {table}")  # noqa: S608
-                except sqlite3.OperationalError:
+                with contextlib.suppress(sqlite3.OperationalError):
                     # FTS tables might need special handling
-                    pass
-            
+                    cursor.execute(f"DROP TABLE IF EXISTS {table}")
+
             # Drop triggers (validated against DERIVED_TRIGGERS list)
             # Note: DERIVED_TRIGGERS is a class constant with hardcoded trigger names,
             # so f-string usage is safe. Validation is additional defense-in-depth.
             for trigger in self.DERIVED_TRIGGERS:
                 # Validate trigger name is alphanumeric with underscores only
-                if not all(c.isalnum() or c == '_' for c in trigger):
+                if not all(c.isalnum() or c == "_" for c in trigger):
                     raise ValueError(f"Invalid trigger name: {trigger}")
-                cursor.execute(f"DROP TRIGGER IF EXISTS {trigger}")  # noqa: S608
-            
+                cursor.execute(f"DROP TRIGGER IF EXISTS {trigger}")
+
             conn.commit()
-            
+
             # Recreate derived tables schema
             conn.executescript(self.DERIVED_SCHEMA)
             conn.execute("PRAGMA foreign_keys = ON")
-            
+
             # Count total raw sessions
             cursor.execute("SELECT COUNT(*) FROM raw_sessions")
             total_count = cursor.fetchone()[0]
-            
+
             # Rebuild from raw_sessions
             cursor.execute("""
                 SELECT session_id, raw_json_compressed, workspace_name, workspace_path,
                        source_file, vscode_edition, source_file_mtime, source_file_size
                 FROM raw_sessions
             """)
-            
+
             processed = 0
             errors = 0
-            
+
             for row in cursor.fetchall():
                 try:
-                    session_id = row[0]
+                    _session_id = row[0]  # Session ID from DB, used for logging if needed
                     compressed_json = row[1]
                     workspace_name = row[2]
                     workspace_path = row[3]
@@ -1266,11 +1266,11 @@ class Database:
                     vscode_edition = row[5]
                     source_file_mtime = row[6]
                     source_file_size = row[7]
-                    
+
                     # Decompress and parse raw JSON
                     raw_json = zlib.decompress(compressed_json)
                     data = orjson.loads(raw_json)
-                    
+
                     # Re-parse session from raw JSON
                     session = _extract_session_from_dict(
                         data,
@@ -1280,28 +1280,28 @@ class Database:
                         source_file=source_file,
                         raw_json=raw_json,  # Keep raw JSON for consistency
                     )
-                    
+
                     if session:
                         # Override metadata from raw_sessions table
                         session.source_file_mtime = source_file_mtime
                         session.source_file_size = source_file_size
-                        
+
                         # Insert into derived tables only (not raw_sessions)
                         self._insert_derived_session(conn, session)
-                        
+
                     processed += 1
-                    
+
                     if progress_callback:
                         progress_callback(processed, total_count)
-                        
-                except (zlib.error, orjson.JSONDecodeError, KeyError, TypeError) as e:
+
+                except (zlib.error, orjson.JSONDecodeError, KeyError, TypeError):
                     # Log error for debugging, but continue processing other sessions
                     # These errors can occur when raw JSON is malformed or cannot be parsed
                     errors += 1
                     processed += 1
-            
+
             conn.commit()
-            
+
         return {
             "total": total_count,
             "processed": processed,
@@ -1310,11 +1310,11 @@ class Database:
 
     def _insert_derived_session(self, conn, session: ChatSession):
         """Insert a session into derived tables only (not raw_sessions).
-        
+
         This is an internal method used by rebuild_derived_tables.
         """
         cursor = conn.cursor()
-        
+
         # Insert into sessions table
         cursor.execute(
             """
@@ -1350,7 +1350,7 @@ class Database:
                 include_diffs=True,
                 include_tool_inputs=True,
             )
-            
+
             cursor.execute(
                 """
                 INSERT INTO messages 
@@ -1445,7 +1445,7 @@ class Database:
 
     def get_raw_session_count(self) -> int:
         """Get the count of raw sessions stored in the database.
-        
+
         Returns:
             Number of sessions in raw_sessions table.
         """
@@ -1456,10 +1456,10 @@ class Database:
 
     def get_raw_json(self, session_id: str) -> bytes | None:
         """Get the decompressed raw JSON for a specific session.
-        
+
         Args:
             session_id: The session ID to retrieve.
-            
+
         Returns:
             Raw JSON bytes if found, None otherwise.
         """

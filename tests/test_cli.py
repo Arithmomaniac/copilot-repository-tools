@@ -1,15 +1,12 @@
 """Tests for the CLI module."""
 
 import json
-import tempfile
-from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-from typer.testing import CliRunner
-
 from copilot_repository_tools_cli import app
-from copilot_repository_tools_common import Database, ChatMessage, ChatSession
+from copilot_repository_tools_common import ChatMessage, ChatSession, Database
+from typer.testing import CliRunner
 
 
 @pytest.fixture
@@ -21,12 +18,11 @@ def runner():
 @pytest.fixture
 def mock_no_vscode_paths():
     """Mock storage paths to return empty for faster tests.
-    
+
     We patch at the CLI module level since that's where scan_chat_sessions is imported.
     """
-    with patch("copilot_repository_tools_cli.get_vscode_storage_paths", return_value=[]):
-        with patch("copilot_repository_tools_cli.scan_chat_sessions", return_value=iter([])):
-            yield
+    with patch("copilot_repository_tools_cli.get_vscode_storage_paths", return_value=[]), patch("copilot_repository_tools_cli.scan_chat_sessions", return_value=iter([])):
+        yield
 
 
 @pytest.fixture
@@ -83,18 +79,14 @@ class TestCLI:
 
     def test_search_command(self, runner, temp_db_with_data):
         """Test search command."""
-        result = runner.invoke(
-            app, ["search", "--db", str(temp_db_with_data), "Hello"]
-        )
+        result = runner.invoke(app, ["search", "--db", str(temp_db_with_data), "Hello"])
         assert result.exit_code == 0
         # Should find results
         assert "CLI test" in result.output or "result" in result.output.lower()
 
     def test_search_no_results(self, runner, temp_db_with_data):
         """Test search command with no results."""
-        result = runner.invoke(
-            app, ["search", "--db", str(temp_db_with_data), "nonexistent term xyz123"]
-        )
+        result = runner.invoke(app, ["search", "--db", str(temp_db_with_data), "nonexistent term xyz123"])
         assert result.exit_code == 0
         assert "No results" in result.output
 
@@ -136,9 +128,7 @@ class TestCLI:
         ]
         json_file.write_text(json.dumps(sessions))
 
-        result = runner.invoke(
-            app, ["import-json", "--db", str(db_path), str(json_file)]
-        )
+        result = runner.invoke(app, ["import-json", "--db", str(db_path), str(json_file)])
         assert result.exit_code == 0
         assert "Added: 1" in result.output
 
@@ -150,7 +140,7 @@ class TestCLI:
     def test_scan_full_flag(self, runner, tmp_path, mock_no_vscode_paths):
         """Test scan command with --full flag."""
         db_path = tmp_path / "full_test.db"
-        
+
         # First, create a database with an existing session
         db = Database(db_path)
         session = ChatSession(
@@ -164,7 +154,7 @@ class TestCLI:
             vscode_edition="stable",
         )
         db.add_session(session)
-        
+
         # Test that --full flag is recognized
         result = runner.invoke(app, ["scan", "--db", str(db_path), "--full"])
         assert result.exit_code == 0
@@ -173,7 +163,7 @@ class TestCLI:
     def test_scan_incremental_default(self, runner, tmp_path, mock_no_vscode_paths):
         """Test that scan command uses incremental mode by default."""
         db_path = tmp_path / "incremental_test.db"
-        
+
         # Create a database (it will be empty)
         result = runner.invoke(app, ["scan", "--db", str(db_path)])
         assert result.exit_code == 0
@@ -182,18 +172,15 @@ class TestCLI:
     def test_export_markdown_command(self, runner, temp_db_with_data, tmp_path):
         """Test export-markdown command exports sessions to markdown files."""
         output_dir = tmp_path / "markdown_output"
-        
-        result = runner.invoke(
-            app,
-            ["export-markdown", "--db", str(temp_db_with_data), "--output-dir", str(output_dir), "-v"]
-        )
+
+        result = runner.invoke(app, ["export-markdown", "--db", str(temp_db_with_data), "--output-dir", str(output_dir), "-v"])
         assert result.exit_code == 0
         assert "Exported 1 sessions" in result.output
-        
+
         # Check that a markdown file was created
         md_files = list(output_dir.glob("*.md"))
         assert len(md_files) == 1
-        
+
         # Check content of the markdown file
         content = md_files[0].read_text()
         assert "# Chat Session" in content
@@ -206,14 +193,22 @@ class TestCLI:
     def test_export_markdown_single_session(self, runner, temp_db_with_data, tmp_path):
         """Test export-markdown command with specific session ID."""
         output_dir = tmp_path / "markdown_output"
-        
+
         result = runner.invoke(
             app,
-            ["export-markdown", "--db", str(temp_db_with_data), "--output-dir", str(output_dir), "--session-id", "cli-test-session"]
+            [
+                "export-markdown",
+                "--db",
+                str(temp_db_with_data),
+                "--output-dir",
+                str(output_dir),
+                "--session-id",
+                "cli-test-session",
+            ],
         )
         assert result.exit_code == 0
         assert "Exported:" in result.output
-        
+
         # Check that exactly one markdown file was created
         md_files = list(output_dir.glob("*.md"))
         assert len(md_files) == 1
@@ -221,10 +216,18 @@ class TestCLI:
     def test_export_markdown_missing_session(self, runner, temp_db_with_data, tmp_path):
         """Test export-markdown command with non-existent session ID."""
         output_dir = tmp_path / "markdown_output"
-        
+
         result = runner.invoke(
             app,
-            ["export-markdown", "--db", str(temp_db_with_data), "--output-dir", str(output_dir), "--session-id", "nonexistent-session"]
+            [
+                "export-markdown",
+                "--db",
+                str(temp_db_with_data),
+                "--output-dir",
+                str(output_dir),
+                "--session-id",
+                "nonexistent-session",
+            ],
         )
         assert result.exit_code == 1
         assert "not found" in result.output
@@ -237,7 +240,7 @@ class TestRebuildCommand:
         """Test rebuild command with valid database."""
         db_path = tmp_path / "rebuild_test.db"
         db = Database(db_path)
-        
+
         # Add a session with raw JSON
         raw_json = b'{"sessionId": "rebuild-cli-test", "requests": [{"message": {"text": "Hello"}, "response": [{"kind": "text", "value": "Hi"}]}]}'
         session = ChatSession(
@@ -251,7 +254,7 @@ class TestRebuildCommand:
             raw_json=raw_json,
         )
         db.add_session(session)
-        
+
         result = runner.invoke(app, ["rebuild", "--db", str(db_path)])
         assert result.exit_code == 0
         assert "Rebuilding" in result.output
@@ -269,7 +272,7 @@ class TestRebuildCommand:
         db_path = tmp_path / "empty.db"
         # Create an empty database
         Database(db_path)
-        
+
         result = runner.invoke(app, ["rebuild", "--db", str(db_path)])
         assert result.exit_code == 1
         assert "No raw sessions found" in result.output
@@ -278,7 +281,7 @@ class TestRebuildCommand:
         """Test rebuild command with verbose flag."""
         db_path = tmp_path / "verbose_test.db"
         db = Database(db_path)
-        
+
         raw_json = b'{"sessionId": "verbose-test", "requests": [{"message": {"text": "Test"}, "response": []}]}'
         session = ChatSession(
             session_id="verbose-test",
@@ -288,7 +291,7 @@ class TestRebuildCommand:
             raw_json=raw_json,
         )
         db.add_session(session)
-        
+
         result = runner.invoke(app, ["rebuild", "--db", str(db_path), "--verbose"])
         assert result.exit_code == 0
         # Verbose output shows progress - check for expected patterns
