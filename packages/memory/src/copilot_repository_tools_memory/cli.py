@@ -183,6 +183,10 @@ def search_memories(
         str | None,
         typer.Option("--workspace", "-w", help="Filter by workspace."),
     ] = None,
+    repository: Annotated[
+        str | None,
+        typer.Option("--repository", "-r", help="Filter by repository (e.g., 'github.com/owner/repo')."),
+    ] = None,
     data_dir: Annotated[
         Path,
         typer.Option("--data-dir", help="Directory for storing memory data."),
@@ -193,13 +197,17 @@ def search_memories(
     Unlike keyword search, this understands meaning - so "login issues"
     can find memories about "authentication errors".
 
+    You can filter by workspace (specific directory) or by repository
+    (all workspaces/worktrees for the same git repository).
+
     Example:
         copilot-memory search "how did I handle authentication?"
         copilot-memory search "async patterns" --workspace my-project
+        copilot-memory search "error handling" --repository github.com/owner/repo
     """
     manager = _get_memory_manager(data_dir)
 
-    results = manager.search(query, limit=limit, workspace_name=workspace)
+    results = manager.search(query, limit=limit, workspace_name=workspace, repository_url=repository)
 
     if not results:
         console.print("[yellow]No memories found matching your query.[/yellow]")
@@ -210,9 +218,13 @@ def search_memories(
     for i, mem in enumerate(results, 1):
         score_str = f" (score: {mem.score:.2f})" if mem.score else ""
         workspace_str = mem.metadata.get("workspace_name", "unknown")
+        repo_str = mem.metadata.get("repository_url", "")
 
         console.print(f"[bold]{i}.[/bold] {mem.content}")
-        console.print(f"   [dim]Workspace: {workspace_str}{score_str}[/dim]\n")
+        if repo_str:
+            console.print(f"   [dim]Workspace: {workspace_str} | Repository: {repo_str}{score_str}[/dim]\n")
+        else:
+            console.print(f"   [dim]Workspace: {workspace_str}{score_str}[/dim]\n")
 
 
 @app.command("list")
@@ -220,6 +232,10 @@ def list_memories(
     workspace: Annotated[
         str | None,
         typer.Option("--workspace", "-w", help="Filter by workspace."),
+    ] = None,
+    repository: Annotated[
+        str | None,
+        typer.Option("--repository", "-r", help="Filter by repository (e.g., 'github.com/owner/repo')."),
     ] = None,
     limit: Annotated[
         int,
@@ -233,7 +249,7 @@ def list_memories(
     """List all stored memories."""
     manager = _get_memory_manager(data_dir)
 
-    memories = manager.get_all(workspace_name=workspace)
+    memories = manager.get_all(workspace_name=workspace, repository_url=repository)
 
     if not memories:
         console.print("[yellow]No memories stored yet.[/yellow]")
@@ -242,14 +258,17 @@ def list_memories(
 
     table = Table(title=f"Stored Memories ({len(memories)} total)")
     table.add_column("ID", style="dim", width=12)
-    table.add_column("Memory", style="cyan", max_width=60)
+    table.add_column("Memory", style="cyan", max_width=50)
     table.add_column("Workspace", style="green")
+    table.add_column("Repository", style="blue", max_width=30)
 
     for mem in memories[:limit]:
+        repo_url = mem.metadata.get("repository_url", "")
         table.add_row(
             mem.id[:12] + "..." if len(mem.id) > 12 else mem.id,
-            mem.content[:60] + "..." if len(mem.content) > 60 else mem.content,
+            mem.content[:50] + "..." if len(mem.content) > 50 else mem.content,
             mem.metadata.get("workspace_name", "unknown"),
+            repo_url[:30] + "..." if len(repo_url) > 30 else repo_url,
         )
 
     console.print(table)
@@ -264,6 +283,10 @@ def clear_memories(
         str | None,
         typer.Option("--workspace", "-w", help="Only clear memories for this workspace."),
     ] = None,
+    repository: Annotated[
+        str | None,
+        typer.Option("--repository", "-r", help="Only clear memories for this repository."),
+    ] = None,
     force: Annotated[
         bool,
         typer.Option("--force", "-f", help="Skip confirmation prompt."),
@@ -275,14 +298,19 @@ def clear_memories(
 ):
     """Clear stored memories."""
     if not force:
-        scope = f"workspace '{workspace}'" if workspace else "all workspaces"
+        if repository:
+            scope = f"repository '{repository}'"
+        elif workspace:
+            scope = f"workspace '{workspace}'"
+        else:
+            scope = "all workspaces"
         confirm = typer.confirm(f"Are you sure you want to clear memories for {scope}?")
         if not confirm:
             console.print("[yellow]Cancelled.[/yellow]")
             raise typer.Exit(0)
 
     manager = _get_memory_manager(data_dir)
-    count = manager.clear(workspace_name=workspace)
+    count = manager.clear(workspace_name=workspace, repository_url=repository)
 
     if count == -1:
         console.print("[green]✓ Cleared all memories.[/green]")

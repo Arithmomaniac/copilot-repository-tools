@@ -210,12 +210,14 @@ class MemoryManager:
             )
 
         # Build metadata for the session
+        # Include repository_url for repository-scoped memories
         metadata = {
             "session_id": session.session_id,
             "workspace_name": session.workspace_name or "unknown",
             "workspace_path": session.workspace_path or "",
             "source": session.type or "vscode",
             "message_count": current_message_count,
+            "repository_url": session.repository_url or "",
         }
 
         # Add to Mem0 - this triggers fact extraction
@@ -232,6 +234,7 @@ class MemoryManager:
         query: str,
         limit: int = 10,
         workspace_name: str | None = None,
+        repository_url: str | None = None,
     ) -> list[ExtractedMemory]:
         """Semantic search across memories.
 
@@ -239,12 +242,16 @@ class MemoryManager:
             query: Natural language search query.
             limit: Maximum results to return.
             workspace_name: Optional workspace filter.
+            repository_url: Optional repository filter. When provided, returns memories
+                from any workspace in this repository (useful for multiple worktrees).
 
         Returns:
             List of relevant memories with scores.
         """
         filters = {}
-        if workspace_name:
+        if repository_url:
+            filters["repository_url"] = repository_url
+        elif workspace_name:
             filters["workspace_name"] = workspace_name
 
         results = self.memory.search(
@@ -267,17 +274,22 @@ class MemoryManager:
     def get_all(
         self,
         workspace_name: str | None = None,
+        repository_url: str | None = None,
     ) -> list[ExtractedMemory]:
         """Get all stored memories.
 
         Args:
             workspace_name: Optional workspace filter.
+            repository_url: Optional repository filter. When provided, returns memories
+                from any workspace in this repository.
 
         Returns:
             List of all memories.
         """
         filters = {}
-        if workspace_name:
+        if repository_url:
+            filters["repository_url"] = repository_url
+        elif workspace_name:
             filters["workspace_name"] = workspace_name
 
         results = self.memory.get_all(
@@ -309,12 +321,18 @@ class MemoryManager:
         except Exception:
             return False
 
-    def clear(self, workspace_name: str | None = None, session_id: str | None = None) -> int:
-        """Clear all memories for a user, workspace, or session.
+    def clear(
+        self,
+        workspace_name: str | None = None,
+        session_id: str | None = None,
+        repository_url: str | None = None,
+    ) -> int:
+        """Clear all memories for a user, workspace, repository, or session.
 
         Args:
             workspace_name: If provided, only clear memories for this workspace.
             session_id: If provided, only clear memories for this specific session.
+            repository_url: If provided, only clear memories for this repository.
 
         Returns:
             Number of memories deleted, or -1 if deleted all (count unknown).
@@ -333,6 +351,13 @@ class MemoryManager:
                 return count
             except (ValueError, KeyError, RuntimeError):
                 return 0
+        elif repository_url:
+            memories = self.get_all(repository_url=repository_url)
+            count = 0
+            for mem in memories:
+                if self.delete(mem.id):
+                    count += 1
+            return count
         elif workspace_name:
             memories = self.get_all(workspace_name=workspace_name)
             count = 0
