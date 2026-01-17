@@ -192,10 +192,38 @@ class MemoryManager:
         # Initialize Mem0 with configuration
         self.memory = Memory.from_config(self.config)
 
+    def is_session_indexed(self, session_id: str) -> tuple[bool, int]:
+        """Check if a session has already been indexed.
+
+        Args:
+            session_id: The session ID to check.
+
+        Returns:
+            Tuple of (is_indexed, message_count) where message_count is the
+            number of messages that were indexed (0 if not indexed).
+        """
+        # Search for memories with this session_id in metadata
+        try:
+            results = self.memory.get_all(
+                user_id=self.user_id,
+                filters={"session_id": session_id},
+            )
+            memories = results.get("results", []) if isinstance(results, dict) else []
+            if memories:
+                # Get the message_count from the first memory's metadata
+                first_mem = memories[0] if memories else {}
+                msg_count = first_mem.get("metadata", {}).get("message_count", 0)
+                return True, msg_count
+            return False, 0
+        except (ValueError, KeyError, RuntimeError):
+            # If filtering fails, assume not indexed
+            return False, 0
+
     def add_session(
         self,
         session: ChatSession,
         extract_facts: bool = True,
+        force: bool = False,
     ) -> list[ExtractedMemory]:
         """Process a chat session and extract memories.
 
@@ -203,14 +231,33 @@ class MemoryManager:
         fact extraction. Mem0 will analyze the conversation and identify
         key facts, preferences, and patterns.
 
+        Supports incremental indexing: if a session has already been indexed
+        with the same number of messages, it will be skipped (unless force=True).
+        If the session has new messages, it will be re-indexed.
+
         Args:
             session: The chat session to process.
             extract_facts: Whether to extract facts (vs just storing for search).
                 Currently always extracts facts via Mem0.
+            force: If True, re-index even if already indexed.
 
         Returns:
             List of extracted memories from this session.
+            Returns empty list if session was skipped (already indexed).
         """
+        current_message_count = len(session.messages)
+
+        # Check if already indexed (skip if same message count, unless forced)
+        if not force:
+            is_indexed, indexed_msg_count = self.is_session_indexed(session.session_id)
+            if is_indexed and indexed_msg_count >= current_message_count:
+                # Already indexed with same or more messages - skip
+                return []
+
+            # If session has new messages, clear old memories first
+            if is_indexed and indexed_msg_count < current_message_count:
+                self.clear(session_id=session.session_id)
+
         # Build conversation context for Mem0
         messages = []
         for msg in session.messages:
@@ -227,6 +274,7 @@ class MemoryManager:
             "workspace_name": session.workspace_name or "unknown",
             "workspace_path": session.workspace_path or "",
             "source": session.type or "vscode",
+            "message_count": current_message_count,  # Track for incremental updates
         }
 
         # Add to Mem0 - this triggers fact extraction
@@ -312,17 +360,33 @@ class MemoryManager:
             # RuntimeError: Mem0 internal errors
             return False
 
-    def clear(self, workspace_name: str | None = None) -> int:
-        """Clear all memories for a user or workspace.
+    def clear(self, workspace_name: str | None = None, session_id: str | None = None) -> int:
+        """Clear all memories for a user, workspace, or session.
 
         Args:
             workspace_name: If provided, only clear memories for this workspace.
-                If None, clears all memories for the user.
+            session_id: If provided, only clear memories for this specific session.
+                If None, clears all memories for the user (or workspace if specified).
 
         Returns:
             Number of memories deleted, or -1 if deleted all (count unknown).
         """
-        if workspace_name:
+        if session_id:
+            # Delete memories for a specific session
+            try:
+                results = self.memory.get_all(
+                    user_id=self.user_id,
+                    filters={"session_id": session_id},
+                )
+                memories_list = results.get("results", []) if isinstance(results, dict) else []
+                count = 0
+                for mem in memories_list:
+                    if isinstance(mem, dict) and self.delete(mem.get("id", "")):
+                        count += 1
+                return count
+            except (ValueError, KeyError, RuntimeError):
+                return 0
+        elif workspace_name:
             # Delete memories one by one for the workspace
             memories = self.get_all(workspace_name=workspace_name)
             count = 0

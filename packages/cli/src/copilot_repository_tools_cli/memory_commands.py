@@ -43,9 +43,9 @@ def _get_memory_manager(config_path: Path | None = None):
         from copilot_repository_tools_common import MEM0_AVAILABLE, MemoryManager
     except ImportError:
         MEM0_AVAILABLE = False
-        MemoryManager = None
+        MemoryManager = None  # type: ignore[assignment]
 
-    if not MEM0_AVAILABLE:
+    if not MEM0_AVAILABLE or MemoryManager is None:
         console.print("[red]Mem0 is not installed.[/red]\nInstall with:\n  [cyan]uv add mem0ai litellm[/cyan]\nor:\n  [cyan]pip install mem0ai litellm[/cyan]")
         raise typer.Exit(1)
 
@@ -55,8 +55,7 @@ def _get_memory_manager(config_path: Path | None = None):
 
         config = json.loads(config_path.read_text(encoding="utf-8"))
 
-    # MemoryManager is guaranteed non-None here since we exit if MEM0_AVAILABLE is False
-    return MemoryManager(config=config)  # type: ignore[misc]
+    return MemoryManager(config=config)
 
 
 @memory_app.command("index")
@@ -81,11 +80,18 @@ def index_memories(
         bool,
         typer.Option("--verbose", "-v", help="Show verbose output."),
     ] = False,
+    force: Annotated[
+        bool,
+        typer.Option("--force", "-f", help="Force re-index all sessions (ignore incremental tracking)."),
+    ] = False,
 ):
     """Index chat sessions into Mem0 for semantic search.
 
     This command processes chat sessions from the database and extracts
     facts, preferences, and patterns using Mem0 with LLM-powered extraction.
+
+    By default, uses incremental indexing: sessions that have already been
+    indexed with the same message count are skipped. Use --force to re-index all.
 
     By default, uses GitHub Copilot models via LiteLLM for fact extraction.
     On first use, you may need to authenticate via OAuth device flow.
@@ -95,6 +101,7 @@ def index_memories(
     \b
         copilot-chat-archive memory index --db copilot_chats.db
         copilot-chat-archive memory index -w my-project --verbose
+        copilot-chat-archive memory index --force  # Re-index everything
     """
     from copilot_repository_tools_common import Database
 
@@ -113,9 +120,15 @@ def index_memories(
         return
 
     console.print(f"[cyan]Indexing {len(sessions)} sessions into Mem0...[/cyan]")
+    if force:
+        console.print("[dim]  (Force mode: re-indexing all sessions)[/dim]")
+    else:
+        console.print("[dim]  (Incremental mode: skipping already-indexed sessions)[/dim]")
     console.print("[dim]Using GitHub Copilot via LiteLLM for fact extraction[/dim]")
 
     total_memories = 0
+    indexed = 0
+    skipped = 0
     errors = 0
 
     with console.status("[bold green]Processing...") as status:
@@ -126,21 +139,28 @@ def index_memories(
                 status.update(f"[bold green]Processing {i + 1}/{len(sessions)}: {workspace_name}...")
 
                 try:
-                    memories = manager.add_session(session)
-                    total_memories += len(memories)
-
-                    if verbose and memories:
-                        console.print(f"  [green]✓[/green] {workspace_name}: {len(memories)} memories extracted")
-                        for mem in memories[:3]:  # Show first 3
-                            console.print(f"    - {mem.content[:80]}...")
+                    memories = manager.add_session(session, force=force)
+                    if memories:
+                        total_memories += len(memories)
+                        indexed += 1
+                        if verbose:
+                            console.print(f"  [green]✓[/green] {workspace_name}: {len(memories)} memories extracted")
+                            for mem in memories[:3]:  # Show first 3
+                                console.print(f"    - {mem.content[:80]}...")
+                    else:
+                        skipped += 1
+                        if verbose:
+                            console.print(f"  [dim]⊘[/dim] {workspace_name}: skipped (already indexed)")
                 except Exception as e:
                     errors += 1
                     if verbose:
                         console.print(f"  [red]✗[/red] {workspace_name}: {e}")
 
-    console.print(f"\n[green]✓ Indexed {len(sessions)} sessions, extracted {total_memories} memories[/green]")
+    console.print("\n[green]✓ Indexing complete[/green]")
+    console.print(f"  Indexed: {indexed} sessions ({total_memories} memories extracted)")
+    console.print(f"  Skipped: {skipped} sessions (already indexed)")
     if errors > 0:
-        console.print(f"[yellow]  ({errors} sessions had errors)[/yellow]")
+        console.print(f"  [yellow]Errors: {errors} sessions[/yellow]")
 
 
 @memory_app.command("search")

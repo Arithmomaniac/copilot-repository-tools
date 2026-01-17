@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Memories - {{ title }}</title>
+    <style>
+:root {
+    --bg-primary: #ffffff;
+    --bg-secondary: #f6f8fa;
+    --bg-tertiary: #f0f0f0;
+    --text-primary: #24292f;
+    --text-secondary: #57606a;
+    --border-color: #d0d7de;
+    --link-color: #0969da;
+    --user-bg: #ddf4ff;
+    --assistant-bg: #ffffff;
+    --code-bg: #f6f8fa;
+    --mark-bg: #fff8c5;
+    --success-bg: #dafbe1;
+    --success-border: #4ac26b;
+    --success-text: #1a7f37;
+    --warning-bg: #fff8c5;
+    --warning-border: #d4a72c;
+    --warning-text: #9a6700;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg-primary: #0d1117;
+        --bg-secondary: #161b22;
+        --bg-tertiary: #21262d;
+        --text-primary: #c9d1d9;
+        --text-secondary: #8b949e;
+        --border-color: #30363d;
+        --link-color: #58a6ff;
+        --user-bg: #1f3d5c;
+        --assistant-bg: #161b22;
+        --code-bg: #161b22;
+        --mark-bg: #3d3d00;
+        --success-bg: #238636;
+        --success-border: #238636;
+        --success-text: #dafbe1;
+        --warning-bg: #9e6a03;
+        --warning-border: #9e6a03;
+        --warning-text: #fff8c5;
+    }
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+    line-height: 1.6;
+    color: var(--text-primary);
+    background-color: var(--bg-primary);
+    margin: 0;
+    padding: 0;
+}
+
+.container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+header {
+    background-color: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+    padding: 20px 0;
+    margin-bottom: 20px;
+}
+
+header h1 {
+    margin: 0;
+}
+
+header .subtitle {
+    color: var(--text-secondary);
+    font-size: 0.9em;
+    margin-top: 5px;
+}
+
+nav {
+    margin-top: 15px;
+}
+
+nav a {
+    color: var(--link-color);
+    text-decoration: none;
+    margin-right: 20px;
+}
+
+nav a:hover {
+    text-decoration: underline;
+}
+
+nav a.active {
+    font-weight: 600;
+    border-bottom: 2px solid var(--link-color);
+    padding-bottom: 2px;
+}
+
+.search-box {
+    margin: 20px 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+}
+
+.search-box .search-input-group {
+    display: flex;
+    flex: 1;
+    min-width: 250px;
+}
+
+.search-box input[type="text"] {
+    flex: 1;
+    padding: 12px 16px;
+    font-size: 16px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px 0 0 6px;
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+}
+
+.search-box input[type="text"]:focus {
+    outline: none;
+    border-color: var(--link-color);
+    box-shadow: 0 0 0 3px rgba(9, 105, 218, 0.3);
+}
+
+.search-box button {
+    width: 100px;
+    padding: 12px 16px;
+    font-size: 16px;
+    border: 1px solid var(--link-color);
+    border-radius: 0 6px 6px 0;
+    background-color: var(--link-color);
+    color: white;
+    cursor: pointer;
+}
+
+.search-box button:hover {
+    background-color: #0860c4;
+}
+
+.search-box select {
+    padding: 12px 16px;
+    font-size: 14px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.stats-bar {
+    display: flex;
+    gap: 20px;
+    padding: 15px 20px;
+    background-color: var(--bg-secondary);
+    border-radius: 6px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+}
+
+.stat-item {
+    text-align: center;
+}
+
+.stat-value {
+    font-size: 1.5em;
+    font-weight: 600;
+    color: var(--link-color);
+}
+
+.stat-label {
+    font-size: 0.85em;
+    color: var(--text-secondary);
+}
+
+.memory-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.memory-item {
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    margin-bottom: 10px;
+    padding: 16px;
+    background-color: var(--bg-secondary);
+}
+
+.memory-content {
+    font-size: 1em;
+    margin-bottom: 10px;
+    line-height: 1.5;
+}
+
+.memory-meta {
+    display: flex;
+    gap: 15px;
+    color: var(--text-secondary);
+    font-size: 0.85em;
+    flex-wrap: wrap;
+}
+
+.memory-meta a {
+    color: var(--link-color);
+    text-decoration: none;
+}
+
+.memory-meta a:hover {
+    text-decoration: underline;
+}
+
+.score-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 0.8em;
+    background-color: var(--success-bg);
+    color: var(--success-text);
+}
+
+.workspace-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 0.8em;
+    background-color: var(--bg-tertiary);
+    color: var(--text-secondary);
+}
+
+.no-results {
+    text-align: center;
+    color: var(--text-secondary);
+    padding: 40px;
+}
+
+.not-available {
+    text-align: center;
+    padding: 40px;
+    background-color: var(--warning-bg);
+    border: 1px solid var(--warning-border);
+    border-radius: 6px;
+    color: var(--warning-text);
+}
+
+.not-available h2 {
+    margin-top: 0;
+}
+
+.not-available code {
+    background-color: var(--bg-tertiary);
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 0.9em;
+}
+
+.error-message {
+    padding: 15px 20px;
+    background-color: #ffebe9;
+    border: 1px solid #ff8182;
+    border-radius: 6px;
+    color: #cf222e;
+    margin-bottom: 20px;
+}
+
+@media (prefers-color-scheme: dark) {
+    .error-message {
+        background-color: #490202;
+        border-color: #f85149;
+        color: #ff7b72;
+    }
+}
+
+.search-help {
+    font-size: 0.85em;
+    color: var(--text-secondary);
+    margin-top: 8px;
+}
+
+footer {
+    margin-top: 40px;
+    padding: 20px 0;
+    border-top: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    font-size: 0.85em;
+    text-align: center;
+}
+
+footer a {
+    color: var(--link-color);
+    text-decoration: none;
+}
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>{{ title }}</h1>
+            <div class="subtitle">🧠 Semantic Memory Search</div>
+            <nav>
+                <a href="/">Sessions</a>
+                <a href="/memories" class="active">Memories</a>
+            </nav>
+        </div>
+    </header>
+
+    <main class="container">
+        {% if not mem0_available %}
+        <div class="not-available">
+            <h2>🔌 Mem0 Not Installed</h2>
+            <p>Semantic memory search requires Mem0 and LiteLLM to be installed.</p>
+            <p>Install with:</p>
+            <p><code>uv add mem0ai litellm</code></p>
+            <p>or</p>
+            <p><code>pip install mem0ai litellm</code></p>
+            <p style="margin-top: 20px;">Then run <code>copilot-chat-archive memory index</code> to extract memories from your chat history.</p>
+        </div>
+        {% else %}
+        
+        {% if error_message %}
+        <div class="error-message">
+            {{ error_message }}
+        </div>
+        {% endif %}
+
+        {% if memory_stats %}
+        <div class="stats-bar">
+            <div class="stat-item">
+                <div class="stat-value">{{ memory_stats.total }}</div>
+                <div class="stat-label">Total Memories</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value">{{ memory_stats.workspaces | length }}</div>
+                <div class="stat-label">Workspaces</div>
+            </div>
+        </div>
+        {% endif %}
+
+        <form method="GET" action="/memories" class="search-box">
+            <div class="search-input-group">
+                <input type="text" name="q" placeholder="Semantic search... (e.g., &quot;how did I handle authentication errors?&quot;)" autocomplete="off" value="{{ query or '' }}">
+                <button type="submit">Search</button>
+            </div>
+            {% if workspaces %}
+            <select name="workspace">
+                <option value="">All workspaces</option>
+                {% for ws in workspaces %}
+                <option value="{{ ws.workspace_name }}"{% if workspace_filter == ws.workspace_name %} selected{% endif %}>{{ ws.workspace_name }}</option>
+                {% endfor %}
+            </select>
+            {% endif %}
+        </form>
+        <div class="search-help">
+            💡 Semantic search understands meaning - try natural language queries like "error handling patterns" or "how did I set up authentication"
+        </div>
+
+        {% if query %}
+        <p style="color: var(--text-secondary); margin: 20px 0;">
+            Found <strong>{{ memory_results | length }}</strong> memories matching "<strong>{{ query }}</strong>"
+            {% if workspace_filter %} in workspace <strong>{{ workspace_filter }}</strong>{% endif %}
+            (<a href="/memories">clear</a>)
+        </p>
+        {% elif memory_results %}
+        <p style="color: var(--text-secondary); margin: 20px 0;">
+            Showing <strong>{{ memory_results | length }}</strong> memories
+            {% if workspace_filter %} in workspace <strong>{{ workspace_filter }}</strong>{% endif %}
+        </p>
+        {% endif %}
+
+        <ul class="memory-list">
+            {% for memory in memory_results %}
+            <li class="memory-item">
+                <div class="memory-content">{{ memory.content }}</div>
+                <div class="memory-meta">
+                    <span class="workspace-badge">📁 {{ memory.workspace }}</span>
+                    {% if memory.score %}
+                    <span class="score-badge">Score: {{ "%.3f" | format(memory.score) }}</span>
+                    {% endif %}
+                    {% if memory.session_id %}
+                    <a href="/session/{{ memory.session_id }}">View session →</a>
+                    {% endif %}
+                </div>
+            </li>
+            {% else %}
+            <li class="no-results">
+                {% if query %}
+                No memories found matching your query.
+                {% elif not memory_stats or memory_stats.total == 0 %}
+                No memories indexed yet.<br>
+                Run <code>copilot-chat-archive memory index</code> to extract memories from your chat history.
+                {% else %}
+                Enter a search query to find relevant memories.
+                {% endif %}
+            </li>
+            {% endfor %}
+        </ul>
+        {% endif %}
+    </main>
+
+    <footer>
+        <div class="container">
+            Powered by <a href="https://github.com/Arithmomaniac/copilot-repository-tools">Copilot Chat Archive</a> with <a href="https://github.com/mem0ai/mem0">Mem0</a>
+        </div>
+    </footer>
+</body>
+</html>

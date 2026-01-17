@@ -12,6 +12,7 @@ from typing import Annotated
 
 import typer
 from copilot_repository_tools_common import (
+    MEM0_AVAILABLE,
     ChatMessage,
     ChatSession,
     Database,
@@ -200,6 +201,12 @@ def scan(
     console.print(f"  {stats['session_count']} sessions")
     console.print(f"  {stats['message_count']} messages")
     console.print(f"  {stats['workspace_count']} workspaces")
+
+    # Note about Mem0 availability for semantic search
+    if not MEM0_AVAILABLE:
+        console.print("\n[dim]💡 Tip: Install mem0ai + litellm for semantic memory search:[/dim]")
+        console.print("[dim]   uv add mem0ai litellm  # or: pip install mem0ai litellm[/dim]")
+        console.print("[dim]   Then run: copilot-chat-archive memory index[/dim]")
 
 
 @app.command()
