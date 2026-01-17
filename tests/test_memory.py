@@ -1,7 +1,7 @@
 """Tests for the memory module (Mem0 integration)."""
 
 import pytest
-from copilot_repository_tools_common import ChatMessage, ChatSession, MEM0_AVAILABLE
+from copilot_repository_tools_common import MEM0_AVAILABLE, ChatMessage, ChatSession
 
 
 class TestMemoryModule:
@@ -79,21 +79,23 @@ class TestMemoryManagerWithMem0:
     @pytest.fixture
     def sample_session(self):
         """Create a sample chat session for testing."""
+        assistant_content_1 = (
+            "Here's how to create a Python dataclass:\n\n```python\nfrom dataclasses import dataclass\n\n@dataclass\nclass Person:\n    name: str\n    age: int\n```"
+        )
+        assistant_content_2 = (
+            "Sure! You can add methods like this:\n\n"
+            "```python\n@dataclass\nclass Person:\n    name: str\n    age: int\n    \n"
+            "    def greet(self):\n        return f'Hello, {self.name}!'\n```"
+        )
         return ChatSession(
             session_id="test-memory-session-123",
             workspace_name="test-project",
             workspace_path="/path/to/test-project",
             messages=[
                 ChatMessage(role="user", content="How do I create a Python dataclass?"),
-                ChatMessage(
-                    role="assistant",
-                    content="Here's how to create a Python dataclass:\n\n```python\nfrom dataclasses import dataclass\n\n@dataclass\nclass Person:\n    name: str\n    age: int\n```",
-                ),
+                ChatMessage(role="assistant", content=assistant_content_1),
                 ChatMessage(role="user", content="Can you add a method?"),
-                ChatMessage(
-                    role="assistant",
-                    content="Sure! You can add methods like this:\n\n```python\n@dataclass\nclass Person:\n    name: str\n    age: int\n    \n    def greet(self):\n        return f'Hello, {self.name}!'\n```",
-                ),
+                ChatMessage(role="assistant", content=assistant_content_2),
             ],
             type="vscode",
         )
@@ -131,8 +133,8 @@ class TestMemoryExports:
     def test_all_exports_available(self):
         """Test all expected exports are available from the module."""
         from copilot_repository_tools_common import (
-            ExtractedMemory,
             MEM0_AVAILABLE,
+            ExtractedMemory,
             MemoryManager,
             get_default_config,
         )

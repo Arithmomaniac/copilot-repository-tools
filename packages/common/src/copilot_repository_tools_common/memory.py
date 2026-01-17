@@ -71,6 +71,35 @@ class ExtractedMemory:
     score: float | None = None
 
 
+def _convert_mem0_result(result: dict, include_score: bool = False) -> list[ExtractedMemory]:
+    """Convert Mem0 API response to list of ExtractedMemory objects.
+
+    Args:
+        result: Response dict from Mem0 API (expected to have "results" key).
+        include_score: Whether to include score field from search results.
+
+    Returns:
+        List of ExtractedMemory objects.
+    """
+    if not isinstance(result, dict):
+        return []
+
+    results_list = result.get("results", [])
+    memories = []
+
+    for item in results_list:
+        if isinstance(item, dict):
+            memory = ExtractedMemory(
+                id=item.get("id", ""),
+                content=item.get("memory", ""),
+                metadata=item.get("metadata", {}),
+                score=item.get("score") if include_score else None,
+            )
+            memories.append(memory)
+
+    return memories
+
+
 def get_default_config() -> dict:
     """Get the default Mem0 configuration using Copilot via LiteLLM.
 
@@ -207,20 +236,7 @@ class MemoryManager:
             metadata=metadata,
         )
 
-        # Convert Mem0 results to our dataclass
-        extracted = []
-        results_list = result.get("results", []) if isinstance(result, dict) else []
-        for mem in results_list:
-            if isinstance(mem, dict):
-                extracted.append(
-                    ExtractedMemory(
-                        id=mem.get("id", ""),
-                        content=mem.get("memory", ""),
-                        metadata=mem.get("metadata", {}),
-                    )
-                )
-
-        return extracted
+        return _convert_mem0_result(result)
 
     def search(
         self,
@@ -253,17 +269,7 @@ class MemoryManager:
             filters=filters if filters else None,
         )
 
-        # Convert to our dataclass
-        results_list = results.get("results", []) if isinstance(results, dict) else []
-        return [
-            ExtractedMemory(
-                id=r.get("id", "") if isinstance(r, dict) else "",
-                content=r.get("memory", "") if isinstance(r, dict) else "",
-                metadata=r.get("metadata", {}) if isinstance(r, dict) else {},
-                score=r.get("score") if isinstance(r, dict) else None,
-            )
-            for r in results_list
-        ]
+        return _convert_mem0_result(results, include_score=True)
 
     def get_all(
         self,
@@ -286,16 +292,7 @@ class MemoryManager:
             filters=filters if filters else None,
         )
 
-        # Convert to our dataclass
-        results_list = results.get("results", []) if isinstance(results, dict) else []
-        return [
-            ExtractedMemory(
-                id=r.get("id", "") if isinstance(r, dict) else "",
-                content=r.get("memory", "") if isinstance(r, dict) else "",
-                metadata=r.get("metadata", {}) if isinstance(r, dict) else {},
-            )
-            for r in results_list
-        ]
+        return _convert_mem0_result(results)
 
     def delete(self, memory_id: str) -> bool:
         """Delete a specific memory.
@@ -309,7 +306,10 @@ class MemoryManager:
         try:
             self.memory.delete(memory_id=memory_id)
             return True
-        except Exception:
+        except (ValueError, KeyError, RuntimeError):
+            # ValueError: Invalid memory_id format
+            # KeyError: Memory not found
+            # RuntimeError: Mem0 internal errors
             return False
 
     def clear(self, workspace_name: str | None = None) -> int:
