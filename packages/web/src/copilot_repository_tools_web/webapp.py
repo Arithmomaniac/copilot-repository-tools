@@ -554,7 +554,7 @@ def create_app(
                         }
                         for r in results
                     ]
-                elif not query:
+                else:
                     # Show all memories if no query (limited)
                     memories_to_show = manager.get_all(workspace_name=workspace_filter)
                     memory_results = [

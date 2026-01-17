@@ -384,7 +384,7 @@ footer a {
                 <div class="memory-meta">
                     <span class="workspace-badge">📁 {{ memory.workspace }}</span>
                     {% if memory.score %}
-                    <span class="score-badge">Score: {{ "%.3f" | format(memory.score) }}</span>
+                    <span class="score-badge">Score: {{ "%.2f" | format(memory.score) }}</span>
                     {% endif %}
                     {% if memory.session_id %}
                     <a href="/session/{{ memory.session_id }}">View session →</a>
