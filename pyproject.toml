@@ -12,6 +12,7 @@ members = ["packages/*"]
 copilot-repository-tools-common = { workspace = true }
 copilot-repository-tools-cli = { workspace = true }
 copilot-repository-tools-web = { workspace = true }
+copilot-repository-tools-memory = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -25,7 +26,7 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["packages/common/src", "packages/cli/src", "packages/web/src"]
+pythonpath = ["packages/common/src", "packages/cli/src", "packages/web/src", "packages/memory/src"]
 markers = [
     "slow: marks tests as slow (scanning real user data, run with '-m slow' or all with '-m \"\"')",
 ]

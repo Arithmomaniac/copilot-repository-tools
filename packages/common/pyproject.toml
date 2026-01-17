@@ -11,12 +11,5 @@ dependencies = [
     "orjson>=3.9.0",
 ]
 
-[project.optional-dependencies]
-# Mem0 memory layer with LiteLLM for Copilot/LLM integration
-memory = [
-    "mem0ai>=0.1.0",
-    "litellm>=1.0.0",
-]
-
 [tool.uv]
 package = true

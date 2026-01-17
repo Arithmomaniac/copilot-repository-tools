@@ -2,8 +2,6 @@
 
 This module provides a modern CLI built with Typer for scanning, searching,
 and exporting VS Code GitHub Copilot chat history.
-
-Includes optional memory commands for Mem0 integration (requires mem0ai + litellm).
 """
 
 from datetime import datetime
@@ -12,7 +10,6 @@ from typing import Annotated
 
 import typer
 from copilot_repository_tools_common import (
-    MEM0_AVAILABLE,
     ChatMessage,
     ChatSession,
     Database,
@@ -24,17 +21,12 @@ from copilot_repository_tools_common import (
 )
 from rich.console import Console
 
-from .memory_commands import memory_app
-
 app = typer.Typer(
     name="copilot-chat-archive",
     help="Create a searchable archive of VS Code GitHub Copilot chats.",
     no_args_is_help=True,
 )
 console = Console()
-
-# Register memory sub-commands
-app.add_typer(memory_app, name="memory")
 
 
 def version_callback(value: bool):
@@ -201,12 +193,6 @@ def scan(
     console.print(f"  {stats['session_count']} sessions")
     console.print(f"  {stats['message_count']} messages")
     console.print(f"  {stats['workspace_count']} workspaces")
-
-    # Note about Mem0 availability for semantic search
-    if not MEM0_AVAILABLE:
-        console.print("\n[dim]💡 Tip: Install mem0ai + litellm for semantic memory search:[/dim]")
-        console.print("[dim]   uv add mem0ai litellm  # or: pip install mem0ai litellm[/dim]")
-        console.print("[dim]   Then run: copilot-chat-archive memory index[/dim]")
 
 
 @app.command()

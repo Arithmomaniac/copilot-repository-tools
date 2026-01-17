@@ -7,8 +7,6 @@ import markdown
 from copilot_repository_tools_common import Database, get_vscode_storage_paths, scan_chat_sessions
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 
-from .memory_routes import memory_bp
-
 # Create a reusable markdown converter with extensions
 _md_converter = markdown.Markdown(
     extensions=[
@@ -248,9 +246,6 @@ def create_app(
     app.config["ARCHIVE_TITLE"] = title
     app.config["STORAGE_PATHS"] = storage_paths  # None means use default VS Code paths
     app.config["INCLUDE_CLI"] = include_cli
-
-    # Register memory API blueprint (for Mem0 semantic search)
-    app.register_blueprint(memory_bp)
 
     def _create_snippet(content: str, max_length: int = 150) -> str:
         """Create a snippet from content, normalizing whitespace."""
@@ -496,94 +491,6 @@ def create_app(
             return jsonify({"error": "No messages found"}), 404
 
         return jsonify({"markdown": markdown_content})
-
-    @app.route("/memories")
-    def memories():
-        """Semantic memory search page using Mem0."""
-        # Check Mem0 availability
-        try:
-            from copilot_repository_tools_common import MEM0_AVAILABLE
-        except ImportError:
-            MEM0_AVAILABLE = False
-
-        query = request.args.get("q", "").strip()
-        workspace_filter = request.args.get("workspace")
-        memory_results = []
-        memory_stats = None
-        error_message = None
-
-        if MEM0_AVAILABLE:
-            try:
-                from copilot_repository_tools_common import MemoryManager
-
-                # Get config path from app config if provided
-                config_path = app.config.get("MEM0_CONFIG_PATH")
-                config = None
-                if config_path:
-                    import json
-                    from pathlib import Path
-
-                    config_file = Path(config_path)
-                    if config_file.exists():
-                        config = json.loads(config_file.read_text(encoding="utf-8"))
-
-                manager = MemoryManager(config=config)
-
-                # Get stats
-                all_memories = manager.get_all()
-                workspace_counts: dict[str, int] = {}
-                for m in all_memories:
-                    ws = m.metadata.get("workspace_name", "unknown")
-                    workspace_counts[ws] = workspace_counts.get(ws, 0) + 1
-
-                memory_stats = {
-                    "total": len(all_memories),
-                    "workspaces": workspace_counts,
-                }
-
-                # Search if query provided
-                if query:
-                    results = manager.search(query, limit=50, workspace_name=workspace_filter)
-                    memory_results = [
-                        {
-                            "id": r.id,
-                            "content": r.content,
-                            "score": r.score,
-                            "workspace": r.metadata.get("workspace_name", "unknown"),
-                            "session_id": r.metadata.get("session_id"),
-                        }
-                        for r in results
-                    ]
-                else:
-                    # Show all memories if no query (limited)
-                    memories_to_show = manager.get_all(workspace_name=workspace_filter)
-                    memory_results = [
-                        {
-                            "id": m.id,
-                            "content": m.content,
-                            "score": None,
-                            "workspace": m.metadata.get("workspace_name", "unknown"),
-                            "session_id": m.metadata.get("session_id"),
-                        }
-                        for m in memories_to_show[:100]
-                    ]
-            except Exception as e:
-                error_message = f"Error accessing memories: {e!s}"
-
-        db = Database(app.config["DB_PATH"])
-        workspaces = db.get_workspaces()
-
-        return render_template(
-            "memories.html",
-            title=app.config["ARCHIVE_TITLE"],
-            mem0_available=MEM0_AVAILABLE,
-            query=query,
-            workspace_filter=workspace_filter,
-            memory_results=memory_results,
-            memory_stats=memory_stats,
-            workspaces=workspaces,
-            error_message=error_message,
-        )
 
     return app
 

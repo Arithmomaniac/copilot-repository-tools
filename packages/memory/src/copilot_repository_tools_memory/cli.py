@@ -1,13 +1,12 @@
-"""Memory-related CLI commands using Mem0 integration.
+"""CLI for Copilot Repository Tools Memory.
 
-This module provides CLI commands for managing semantic memories extracted
-from Copilot chat history. Requires mem0ai and litellm to be installed.
-
-Commands:
-    memory index   - Index chat sessions into Mem0 for semantic search
-    memory search  - Semantic search through memories
-    memory list    - List all stored memories
-    memory clear   - Clear stored memories
+This module provides a standalone CLI for semantic memory operations:
+- setup: Initialize Mem0 with local resources (auto-runs on first use)
+- index: Extract facts from chat sessions
+- search: Semantic search through memories
+- list: List all stored memories
+- clear: Clear memories
+- serve: Start a simple API server (optional, for web integration)
 """
 
 from pathlib import Path
@@ -17,60 +16,72 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-console = Console()
+from .manager import MemoryManager, get_default_config
 
-# Create a sub-app for memory commands
-memory_app = typer.Typer(
-    name="memory",
-    help="Manage semantic memories from chat history (requires mem0ai + litellm).",
+app = typer.Typer(
+    name="copilot-memory",
+    help="Semantic memory layer for Copilot chat history using Mem0.",
     no_args_is_help=True,
 )
+console = Console()
+
+# Default data directory
+DEFAULT_DATA_DIR = Path.home() / ".copilot-memory"
 
 
-def _get_memory_manager(config_path: Path | None = None):
-    """Get a MemoryManager instance, with helpful error if dependencies not installed.
+def _get_memory_manager(data_dir: Path | None = None) -> MemoryManager:
+    """Get a MemoryManager instance, setting up if needed."""
+    if data_dir is None:
+        data_dir = DEFAULT_DATA_DIR
 
-    Args:
-        config_path: Optional path to JSON config file for Mem0.
+    data_dir.mkdir(parents=True, exist_ok=True)
 
-    Returns:
-        Initialized MemoryManager instance.
+    return MemoryManager(data_dir=data_dir)
 
-    Raises:
-        typer.Exit: If Mem0 or LiteLLM is not installed.
+
+@app.command("setup")
+def setup_memory(
+    data_dir: Annotated[
+        Path,
+        typer.Option("--data-dir", "-d", help="Directory for storing memory data."),
+    ] = DEFAULT_DATA_DIR,
+):
+    """Initialize Mem0 with local resources.
+
+    This sets up:
+    - Local ChromaDB for vector storage
+    - LiteLLM configuration for GitHub Copilot models
+
+    This command is optional - setup happens automatically on first use.
     """
-    try:
-        from copilot_repository_tools_common import MEM0_AVAILABLE, MemoryManager
-    except ImportError:
-        MEM0_AVAILABLE = False
-        MemoryManager = None  # type: ignore[assignment]
+    data_dir.mkdir(parents=True, exist_ok=True)
 
-    if not MEM0_AVAILABLE or MemoryManager is None:
-        console.print("[red]Mem0 is not installed.[/red]\nInstall with:\n  [cyan]uv add mem0ai litellm[/cyan]\nor:\n  [cyan]pip install mem0ai litellm[/cyan]")
-        raise typer.Exit(1)
+    console.print(f"[cyan]Setting up Mem0 in {data_dir}...[/cyan]")
 
-    config = None
-    if config_path and config_path.exists():
-        import json
+    # Generate and display config
+    config = get_default_config(data_dir)
 
-        config = json.loads(config_path.read_text(encoding="utf-8"))
+    console.print("\n[green]✓ Mem0 setup complete![/green]")
+    console.print(f"\n[dim]Data directory: {data_dir}[/dim]")
+    console.print(f"[dim]Vector store: {config['vector_store']['config']['path']}[/dim]")
+    console.print(f"[dim]LLM: {config['llm']['config']['model']}[/dim]")
 
-    return MemoryManager(config=config)
+    console.print("\n[cyan]Next steps:[/cyan]")
+    console.print("  1. Index your chat history:")
+    console.print("     [bold]copilot-memory index --db copilot_chats.db[/bold]")
+    console.print("  2. Search your memories:")
+    console.print('     [bold]copilot-memory search "how did I handle errors?"[/bold]')
 
 
-@memory_app.command("index")
+@app.command("index")
 def index_memories(
     db: Annotated[
         Path,
-        typer.Option("--db", "-d", help="Path to SQLite database file."),
+        typer.Option("--db", "-d", help="Path to copilot_chats.db SQLite database."),
     ] = Path("copilot_chats.db"),
     workspace: Annotated[
         str | None,
         typer.Option("--workspace", "-w", help="Only index sessions from this workspace."),
-    ] = None,
-    config: Annotated[
-        Path | None,
-        typer.Option("--config", "-c", help="Path to Mem0 config JSON file."),
     ] = None,
     limit: Annotated[
         int | None,
@@ -82,26 +93,25 @@ def index_memories(
     ] = False,
     force: Annotated[
         bool,
-        typer.Option("--force", "-f", help="Force re-index all sessions (ignore incremental tracking)."),
+        typer.Option("--force", "-f", help="Force re-index all sessions."),
     ] = False,
+    data_dir: Annotated[
+        Path,
+        typer.Option("--data-dir", help="Directory for storing memory data."),
+    ] = DEFAULT_DATA_DIR,
 ):
     """Index chat sessions into Mem0 for semantic search.
 
-    This command processes chat sessions from the database and extracts
-    facts, preferences, and patterns using Mem0 with LLM-powered extraction.
+    This command reads sessions from the existing copilot_chats.db database
+    and extracts facts, preferences, and patterns using Mem0.
 
-    By default, uses incremental indexing: sessions that have already been
-    indexed with the same message count are skipped. Use --force to re-index all.
-
-    By default, uses GitHub Copilot models via LiteLLM for fact extraction.
-    On first use, you may need to authenticate via OAuth device flow.
+    By default, uses incremental indexing (skips already-indexed sessions).
+    Use --force to re-index everything.
 
     Example:
-
-    \b
-        copilot-chat-archive memory index --db copilot_chats.db
-        copilot-chat-archive memory index -w my-project --verbose
-        copilot-chat-archive memory index --force  # Re-index everything
+        copilot-memory index --db copilot_chats.db
+        copilot-memory index -w my-project --verbose
+        copilot-memory index --force
     """
     from copilot_repository_tools_common import Database
 
@@ -110,7 +120,7 @@ def index_memories(
         console.print("Run 'copilot-chat-archive scan' first to import sessions.")
         raise typer.Exit(1)
 
-    manager = _get_memory_manager(config)
+    manager = _get_memory_manager(data_dir)
     database = Database(str(db))
 
     sessions = database.list_sessions(workspace_name=workspace, limit=limit)
@@ -124,7 +134,6 @@ def index_memories(
         console.print("[dim]  (Force mode: re-indexing all sessions)[/dim]")
     else:
         console.print("[dim]  (Incremental mode: skipping already-indexed sessions)[/dim]")
-    console.print("[dim]Using GitHub Copilot via LiteLLM for fact extraction[/dim]")
 
     total_memories = 0
     indexed = 0
@@ -145,7 +154,7 @@ def index_memories(
                         indexed += 1
                         if verbose:
                             console.print(f"  [green]✓[/green] {workspace_name}: {len(memories)} memories extracted")
-                            for mem in memories[:3]:  # Show first 3
+                            for mem in memories[:3]:
                                 console.print(f"    - {mem.content[:80]}...")
                     else:
                         skipped += 1
@@ -163,7 +172,7 @@ def index_memories(
         console.print(f"  [yellow]Errors: {errors} sessions[/yellow]")
 
 
-@memory_app.command("search")
+@app.command("search")
 def search_memories(
     query: Annotated[str, typer.Argument(help="Natural language search query.")],
     limit: Annotated[
@@ -174,74 +183,61 @@ def search_memories(
         str | None,
         typer.Option("--workspace", "-w", help="Filter by workspace."),
     ] = None,
-    config: Annotated[
-        Path | None,
-        typer.Option("--config", "-c", help="Path to Mem0 config JSON file."),
-    ] = None,
+    data_dir: Annotated[
+        Path,
+        typer.Option("--data-dir", help="Directory for storing memory data."),
+    ] = DEFAULT_DATA_DIR,
 ):
     """Semantic search through memories.
 
-    Unlike keyword search, semantic search understands meaning and can find
-    relevant memories even when using different terminology.
+    Unlike keyword search, this understands meaning - so "login issues"
+    can find memories about "authentication errors".
 
     Example:
-
-    \b
-        copilot-chat-archive memory search "how did I handle authentication errors?"
-        copilot-chat-archive memory search "async patterns" --workspace my-project
+        copilot-memory search "how did I handle authentication?"
+        copilot-memory search "async patterns" --workspace my-project
     """
-    manager = _get_memory_manager(config)
+    manager = _get_memory_manager(data_dir)
 
     results = manager.search(query, limit=limit, workspace_name=workspace)
 
     if not results:
         console.print("[yellow]No memories found matching your query.[/yellow]")
-        console.print("Try indexing your sessions first: [cyan]copilot-chat-archive memory index[/cyan]")
         return
 
     console.print(f"\n[cyan]Found {len(results)} relevant memories:[/cyan]\n")
 
     for i, mem in enumerate(results, 1):
-        score_str = f" (score: {mem.score:.3f})" if mem.score else ""
+        score_str = f" (score: {mem.score:.2f})" if mem.score else ""
         workspace_str = mem.metadata.get("workspace_name", "unknown")
 
         console.print(f"[bold]{i}.[/bold] {mem.content}")
         console.print(f"   [dim]Workspace: {workspace_str}{score_str}[/dim]\n")
 
 
-@memory_app.command("list")
+@app.command("list")
 def list_memories(
     workspace: Annotated[
         str | None,
         typer.Option("--workspace", "-w", help="Filter by workspace."),
     ] = None,
-    config: Annotated[
-        Path | None,
-        typer.Option("--config", "-c", help="Path to Mem0 config JSON file."),
-    ] = None,
     limit: Annotated[
         int,
-        typer.Option("--limit", "-l", help="Maximum memories to display."),
+        typer.Option("--limit", "-l", help="Maximum results to show."),
     ] = 50,
+    data_dir: Annotated[
+        Path,
+        typer.Option("--data-dir", help="Directory for storing memory data."),
+    ] = DEFAULT_DATA_DIR,
 ):
-    """List all stored memories.
-
-    Shows memories that have been extracted from your chat sessions.
-    Use --workspace to filter by a specific project.
-
-    Example:
-
-    \b
-        copilot-chat-archive memory list
-        copilot-chat-archive memory list --workspace my-project
-    """
-    manager = _get_memory_manager(config)
+    """List all stored memories."""
+    manager = _get_memory_manager(data_dir)
 
     memories = manager.get_all(workspace_name=workspace)
 
     if not memories:
         console.print("[yellow]No memories stored yet.[/yellow]")
-        console.print("Run [cyan]copilot-chat-archive memory index[/cyan] to extract memories from your chat history.")
+        console.print("Run [cyan]copilot-memory index[/cyan] to extract memories from your chat history.")
         return
 
     table = Table(title=f"Stored Memories ({len(memories)} total)")
@@ -262,32 +258,22 @@ def list_memories(
         console.print(f"\n[dim]Showing {limit} of {len(memories)} memories. Use --limit to see more.[/dim]")
 
 
-@memory_app.command("clear")
+@app.command("clear")
 def clear_memories(
     workspace: Annotated[
         str | None,
         typer.Option("--workspace", "-w", help="Only clear memories for this workspace."),
     ] = None,
-    config: Annotated[
-        Path | None,
-        typer.Option("--config", "-c", help="Path to Mem0 config JSON file."),
-    ] = None,
     force: Annotated[
         bool,
         typer.Option("--force", "-f", help="Skip confirmation prompt."),
     ] = False,
+    data_dir: Annotated[
+        Path,
+        typer.Option("--data-dir", help="Directory for storing memory data."),
+    ] = DEFAULT_DATA_DIR,
 ):
-    """Clear stored memories.
-
-    This will permanently delete extracted memories. Use --workspace to limit
-    deletion to a specific project.
-
-    Example:
-
-    \b
-        copilot-chat-archive memory clear --workspace old-project
-        copilot-chat-archive memory clear --force  # Clear all without confirmation
-    """
+    """Clear stored memories."""
     if not force:
         scope = f"workspace '{workspace}'" if workspace else "all workspaces"
         confirm = typer.confirm(f"Are you sure you want to clear memories for {scope}?")
@@ -295,10 +281,47 @@ def clear_memories(
             console.print("[yellow]Cancelled.[/yellow]")
             raise typer.Exit(0)
 
-    manager = _get_memory_manager(config)
+    manager = _get_memory_manager(data_dir)
     count = manager.clear(workspace_name=workspace)
 
     if count == -1:
         console.print("[green]✓ Cleared all memories.[/green]")
     else:
         console.print(f"[green]✓ Cleared {count} memories.[/green]")
+
+
+@app.command("stats")
+def show_stats(
+    data_dir: Annotated[
+        Path,
+        typer.Option("--data-dir", help="Directory for storing memory data."),
+    ] = DEFAULT_DATA_DIR,
+):
+    """Show memory statistics."""
+    manager = _get_memory_manager(data_dir)
+
+    all_memories = manager.get_all()
+
+    # Group by workspace
+    workspace_counts: dict[str, int] = {}
+    for m in all_memories:
+        ws = m.metadata.get("workspace_name", "unknown")
+        workspace_counts[ws] = workspace_counts.get(ws, 0) + 1
+
+    console.print("\n[bold]Memory Statistics[/bold]")
+    console.print(f"  Total memories: {len(all_memories)}")
+    console.print(f"  Workspaces: {len(workspace_counts)}")
+
+    if workspace_counts:
+        console.print("\n[cyan]By Workspace:[/cyan]")
+        for ws, count in sorted(workspace_counts.items(), key=lambda x: -x[1]):
+            console.print(f"  {ws}: {count} memories")
+
+
+def run():
+    """Entry point for the CLI."""
+    app()
+
+
+if __name__ == "__main__":
+    run()

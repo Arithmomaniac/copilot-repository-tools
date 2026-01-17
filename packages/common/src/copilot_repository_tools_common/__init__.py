@@ -4,7 +4,6 @@ This module provides shared functionality for working with VS Code Copilot chat 
 - Database: SQLite storage with FTS5 full-text search
 - Scanner: Find and parse chat session files from VS Code workspace storage
 - Markdown Exporter: Convert chat sessions to markdown format
-- Memory: Optional Mem0 integration for semantic memory (requires mem0ai)
 
 This project borrows patterns from several open-source projects:
 - simonw/claude-code-transcripts: HTML transcript generation approach
@@ -22,9 +21,6 @@ from .markdown_exporter import (
     message_to_markdown,
     session_to_markdown,
 )
-
-# Optional Mem0 integration - import succeeds even if mem0ai is not installed
-from .memory import MEM0_AVAILABLE, ExtractedMemory, MemoryManager, get_default_config
 from .scanner import (
     ChatMessage,
     ChatSession,
@@ -39,23 +35,22 @@ from .scanner import (
 )
 
 __all__ = [
-    "MEM0_AVAILABLE",
+    # Scanner
     "ChatMessage",
     "ChatSession",
     "CommandRun",
     "ContentBlock",
+    # Database
     "Database",
-    "ExtractedMemory",
     "FileChange",
-    "MemoryManager",
     "ParsedQuery",
     "ToolInvocation",
     "__version__",
+    # Markdown Exporter
     "export_session_to_file",
     "find_copilot_chat_dirs",
     "generate_session_filename",
     "get_cli_storage_paths",
-    "get_default_config",
     "get_vscode_storage_paths",
     "message_to_markdown",
     "parse_search_query",

@@ -1,57 +1,23 @@
-"""Mem0 integration for intelligent memory management.
+"""Memory Manager for Mem0 integration.
 
-This module provides semantic memory capabilities using Mem0,
-enabling fact extraction, semantic search, and cross-session insights
-from VS Code Copilot chat history.
-
-Features:
-- Extract facts and preferences from conversations
-- Semantic search across all sessions
-- User-scoped memories for personalization
-- Workspace-scoped memories for project context
-
-Mem0 is an optional dependency. When not installed, the module provides
-clear error messages and guidance for installation.
-
-LLM Configuration:
-By default, this module is configured to use GitHub Copilot models via LiteLLM.
-You can customize the LLM provider through the config parameter.
-
-Example config for Copilot via LiteLLM:
-    {
-        "llm": {
-            "provider": "litellm",
-            "config": {
-                "model": "github_copilot/gpt-4",
-                "temperature": 0
-            }
-        },
-        "vector_store": {
-            "provider": "chroma",
-            "config": {
-                "collection_name": "copilot_memories",
-                "path": "./copilot_memories_db"
-            }
-        }
-    }
+This module provides the MemoryManager class for semantic memory operations
+using Mem0. It handles:
+- Automatic setup of Mem0 with local ChromaDB
+- Fact extraction from chat sessions
+- Semantic search across memories
+- Incremental indexing (skips already-indexed sessions)
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING
 
+from mem0 import Memory
+
 if TYPE_CHECKING:
-    from .scanner import ChatSession
-
-# Optional import - Mem0 is not required for core functionality
-try:
-    from mem0 import Memory
-
-    MEM0_AVAILABLE = True
-except ImportError:
-    MEM0_AVAILABLE = False
-    Memory = None
+    from copilot_repository_tools_common import ChatSession
 
 
 @dataclass
@@ -60,9 +26,9 @@ class ExtractedMemory:
 
     Attributes:
         id: Unique identifier for this memory.
-        content: The extracted fact or insight content.
-        metadata: Additional metadata (workspace, session_id, source, etc.).
-        score: Relevance score from semantic search (None if not from search).
+        content: The extracted fact or insight.
+        metadata: Additional context (workspace, session_id, etc.).
+        score: Relevance score from search (None if not from search).
     """
 
     id: str
@@ -71,45 +37,24 @@ class ExtractedMemory:
     score: float | None = None
 
 
-def _convert_mem0_result(result: dict, include_score: bool = False) -> list[ExtractedMemory]:
-    """Convert Mem0 API response to list of ExtractedMemory objects.
+def get_default_config(data_dir: Path | None = None) -> dict:
+    """Get the default Mem0 configuration using local ChromaDB and LiteLLM.
+
+    This configuration uses:
+    - ChromaDB for local vector storage (no external services needed)
+    - LiteLLM with GitHub Copilot models for embeddings and LLM
 
     Args:
-        result: Response dict from Mem0 API (expected to have "results" key).
-        include_score: Whether to include score field from search results.
+        data_dir: Directory for storing ChromaDB data. Defaults to ~/.copilot-memory
 
     Returns:
-        List of ExtractedMemory objects.
+        Mem0 configuration dictionary.
     """
-    if not isinstance(result, dict):
-        return []
+    if data_dir is None:
+        data_dir = Path.home() / ".copilot-memory"
 
-    results_list = result.get("results", [])
-    memories = []
+    data_dir.mkdir(parents=True, exist_ok=True)
 
-    for item in results_list:
-        if isinstance(item, dict):
-            memory = ExtractedMemory(
-                id=item.get("id", ""),
-                content=item.get("memory", ""),
-                metadata=item.get("metadata", {}),
-                score=item.get("score") if include_score else None,
-            )
-            memories.append(memory)
-
-    return memories
-
-
-def get_default_config() -> dict:
-    """Get the default Mem0 configuration using Copilot via LiteLLM.
-
-    Returns:
-        Default configuration dict for Mem0 with LiteLLM provider.
-
-    Note:
-        This uses GitHub Copilot models through LiteLLM. On first use,
-        you may need to authenticate via OAuth device flow.
-    """
     return {
         "llm": {
             "provider": "litellm",
@@ -118,15 +63,41 @@ def get_default_config() -> dict:
                 "temperature": 0,
             },
         },
+        "embedder": {
+            "provider": "litellm",
+            "config": {
+                "model": "github_copilot/text-embedding-3-small",
+            },
+        },
         "vector_store": {
             "provider": "chroma",
             "config": {
                 "collection_name": "copilot_memories",
-                "path": "./copilot_memories_db",
+                "path": str(data_dir / "chroma_db"),
             },
         },
         "version": "v1.1",
     }
+
+
+def _convert_mem0_result(result: dict) -> list[ExtractedMemory]:
+    """Convert Mem0 result format to ExtractedMemory objects."""
+    memories = []
+    results_list = result.get("results", [])
+    if not isinstance(results_list, list):
+        results_list = []
+
+    for mem in results_list:
+        if isinstance(mem, dict):
+            memories.append(
+                ExtractedMemory(
+                    id=mem.get("id", ""),
+                    content=mem.get("memory", ""),
+                    metadata=mem.get("metadata", {}),
+                    score=mem.get("score"),
+                )
+            )
+    return memories
 
 
 class MemoryManager:
@@ -137,57 +108,31 @@ class MemoryManager:
     - Semantic search across all sessions
     - User-scoped memories for personalization
     - Workspace-scoped memories for project context
-
-    Requires Mem0 to be installed:
-        uv add mem0ai litellm
-        # or
-        pip install mem0ai litellm
+    - Incremental indexing (tracks which sessions are indexed)
 
     Example:
-        >>> from copilot_repository_tools_common import Database
-        >>> from copilot_repository_tools_common.memory import MemoryManager
-        >>>
-        >>> # Initialize with default config (uses Copilot via LiteLLM)
         >>> manager = MemoryManager()
-        >>>
-        >>> # Or with custom config
-        >>> config = {
-        ...     "llm": {"provider": "litellm", "config": {"model": "github_copilot/gpt-4"}},
-        ...     "vector_store": {"provider": "chroma", "config": {"path": "./memories"}}
-        ... }
-        >>> manager = MemoryManager(config=config)
-        >>>
         >>> # Index a session
-        >>> db = Database("copilot_chats.db")
-        >>> session = db.get_session("session-id")
         >>> memories = manager.add_session(session)
-        >>>
-        >>> # Search memories
+        >>> # Search for relevant memories
         >>> results = manager.search("error handling patterns")
-        >>> for mem in results:
-        ...     print(f"- {mem.content} (score: {mem.score:.3f})")
     """
 
     def __init__(
         self,
         config: dict | None = None,
         user_id: str = "default",
+        data_dir: Path | None = None,
     ):
         """Initialize the memory manager.
 
         Args:
-            config: Mem0 configuration dict. If None, uses defaults with
-                GitHub Copilot via LiteLLM.
+            config: Mem0 configuration dict. If None, uses default local config.
             user_id: User identifier for memory scoping.
-
-        Raises:
-            ImportError: If Mem0 is not installed.
+            data_dir: Directory for storing data. Only used if config is None.
         """
-        if not MEM0_AVAILABLE:
-            raise ImportError("Mem0 is not installed. Install with:\n  uv add mem0ai litellm\nor:\n  pip install mem0ai litellm")
-
         self.user_id = user_id
-        self.config = config or get_default_config()
+        self.config = config or get_default_config(data_dir)
 
         # Initialize Mem0 with configuration
         self.memory = Memory.from_config(self.config)
@@ -202,7 +147,6 @@ class MemoryManager:
             Tuple of (is_indexed, message_count) where message_count is the
             number of messages that were indexed (0 if not indexed).
         """
-        # Search for memories with this session_id in metadata
         try:
             results = self.memory.get_all(
                 user_id=self.user_id,
@@ -210,13 +154,11 @@ class MemoryManager:
             )
             memories = results.get("results", []) if isinstance(results, dict) else []
             if memories:
-                # Get the message_count from the first memory's metadata
                 first_mem = memories[0] if memories else {}
                 msg_count = first_mem.get("metadata", {}).get("message_count", 0)
                 return True, msg_count
             return False, 0
         except (ValueError, KeyError, RuntimeError):
-            # If filtering fails, assume not indexed
             return False, 0
 
     def add_session(
@@ -251,7 +193,6 @@ class MemoryManager:
         if not force:
             is_indexed, indexed_msg_count = self.is_session_indexed(session.session_id)
             if is_indexed and indexed_msg_count >= current_message_count:
-                # Already indexed with same or more messages - skip
                 return []
 
             # If session has new messages, clear old memories first
@@ -274,7 +215,7 @@ class MemoryManager:
             "workspace_name": session.workspace_name or "unknown",
             "workspace_path": session.workspace_path or "",
             "source": session.type or "vscode",
-            "message_count": current_message_count,  # Track for incremental updates
+            "message_count": current_message_count,
         }
 
         # Add to Mem0 - this triggers fact extraction
@@ -294,17 +235,13 @@ class MemoryManager:
     ) -> list[ExtractedMemory]:
         """Semantic search across memories.
 
-        Unlike the FTS5-based keyword search in the Database class, this
-        performs semantic search using vector embeddings, allowing natural
-        language queries like "How did I handle authentication errors?"
-
         Args:
             query: Natural language search query.
             limit: Maximum results to return.
             workspace_name: Optional workspace filter.
 
         Returns:
-            List of relevant memories with similarity scores.
+            List of relevant memories with scores.
         """
         filters = {}
         if workspace_name:
@@ -317,7 +254,15 @@ class MemoryManager:
             filters=filters if filters else None,
         )
 
-        return _convert_mem0_result(results, include_score=True)
+        return [
+            ExtractedMemory(
+                id=r.get("id", ""),
+                content=r.get("memory", ""),
+                metadata=r.get("metadata", {}),
+                score=r.get("score"),
+            )
+            for r in results.get("results", [])
+        ]
 
     def get_all(
         self,
@@ -329,7 +274,7 @@ class MemoryManager:
             workspace_name: Optional workspace filter.
 
         Returns:
-            List of all memories matching the filter.
+            List of all memories.
         """
         filters = {}
         if workspace_name:
@@ -340,7 +285,14 @@ class MemoryManager:
             filters=filters if filters else None,
         )
 
-        return _convert_mem0_result(results)
+        return [
+            ExtractedMemory(
+                id=r.get("id", ""),
+                content=r.get("memory", ""),
+                metadata=r.get("metadata", {}),
+            )
+            for r in results.get("results", [])
+        ]
 
     def delete(self, memory_id: str) -> bool:
         """Delete a specific memory.
@@ -349,15 +301,12 @@ class MemoryManager:
             memory_id: The ID of the memory to delete.
 
         Returns:
-            True if deleted successfully, False otherwise.
+            True if deleted successfully.
         """
         try:
             self.memory.delete(memory_id=memory_id)
             return True
-        except (ValueError, KeyError, RuntimeError):
-            # ValueError: Invalid memory_id format
-            # KeyError: Memory not found
-            # RuntimeError: Mem0 internal errors
+        except Exception:
             return False
 
     def clear(self, workspace_name: str | None = None, session_id: str | None = None) -> int:
@@ -366,13 +315,11 @@ class MemoryManager:
         Args:
             workspace_name: If provided, only clear memories for this workspace.
             session_id: If provided, only clear memories for this specific session.
-                If None, clears all memories for the user (or workspace if specified).
 
         Returns:
             Number of memories deleted, or -1 if deleted all (count unknown).
         """
         if session_id:
-            # Delete memories for a specific session
             try:
                 results = self.memory.get_all(
                     user_id=self.user_id,
@@ -387,7 +334,6 @@ class MemoryManager:
             except (ValueError, KeyError, RuntimeError):
                 return 0
         elif workspace_name:
-            # Delete memories one by one for the workspace
             memories = self.get_all(workspace_name=workspace_name)
             count = 0
             for mem in memories:
@@ -395,6 +341,5 @@ class MemoryManager:
                     count += 1
             return count
         else:
-            # Delete all memories for the user
             self.memory.delete_all(user_id=self.user_id)
-            return -1  # Unknown count when deleting all
+            return -1
