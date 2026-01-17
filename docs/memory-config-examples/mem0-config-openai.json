@@ -1,0 +1,17 @@
+{
+  "llm": {
+    "provider": "openai",
+    "config": {
+      "model": "gpt-4o-mini",
+      "temperature": 0
+    }
+  },
+  "vector_store": {
+    "provider": "chroma",
+    "config": {
+      "collection_name": "copilot_memories",
+      "path": "./copilot_memories_db"
+    }
+  },
+  "version": "v1.1"
+}

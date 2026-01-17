@@ -1,0 +1,24 @@
+{
+  "llm": {
+    "provider": "ollama",
+    "config": {
+      "model": "llama3.2",
+      "ollama_base_url": "http://localhost:11434"
+    }
+  },
+  "embedder": {
+    "provider": "ollama",
+    "config": {
+      "model": "nomic-embed-text",
+      "ollama_base_url": "http://localhost:11434"
+    }
+  },
+  "vector_store": {
+    "provider": "chroma",
+    "config": {
+      "collection_name": "copilot_memories",
+      "path": "./copilot_memories_db"
+    }
+  },
+  "version": "v1.1"
+}
