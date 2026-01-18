@@ -6,6 +6,13 @@ using Mem0. It handles:
 - Fact extraction from chat sessions
 - Semantic search across memories
 - Incremental indexing (skips already-indexed sessions)
+
+Memory Scoping:
+- Memories are automatically scoped to repositories (if workspace is in a git repo)
+  or to workspaces/folders (if not in a git repo).
+- Each scope is isolated: memories from one scope cannot modify or invalidate
+  memories from another scope.
+- Cross-scope querying is supported via the `all_scopes` parameter.
 """
 
 from __future__ import annotations
@@ -20,6 +27,30 @@ if TYPE_CHECKING:
     from copilot_repository_tools_common import ChatSession
 
 
+def _get_scope_id(repository_url: str | None, workspace_path: str | None) -> str:
+    """Get a scope identifier for memory isolation.
+
+    Memories are scoped to:
+    1. Repository (if workspace is in a git repo) - normalized URL
+    2. Workspace/folder (if not in a git repo) - workspace path
+
+    Args:
+        repository_url: The normalized git repository URL (e.g., 'github.com/owner/repo').
+        workspace_path: The workspace path.
+
+    Returns:
+        A scope identifier string. Returns 'unknown' if neither is available.
+    """
+    if repository_url:
+        # Use repository URL as scope (allows memories to be shared across worktrees)
+        return f"repo:{repository_url}"
+    elif workspace_path:
+        # Use workspace path as scope (folder-scoped memories)
+        return f"folder:{workspace_path}"
+    else:
+        return "unknown"
+
+
 @dataclass
 class ExtractedMemory:
     """A memory extracted from chat history.
@@ -27,7 +58,7 @@ class ExtractedMemory:
     Attributes:
         id: Unique identifier for this memory.
         content: The extracted fact or insight.
-        metadata: Additional context (workspace, session_id, etc.).
+        metadata: Additional context (workspace, session_id, scope, etc.).
         score: Relevance score from search (None if not from search).
     """
 
@@ -103,45 +134,49 @@ def _convert_mem0_result(result: dict) -> list[ExtractedMemory]:
 class MemoryManager:
     """Manages Mem0 integration for chat history.
 
+    Memory Scoping:
+    - Memories are automatically scoped to repositories (if in a git repo)
+      or to workspaces/folders (if not in a git repo).
+    - Each scope is isolated using a unique user_id in Mem0.
+    - Memories from one scope cannot modify or invalidate memories from another.
+
     Features:
     - Extract facts and preferences from conversations
-    - Semantic search across all sessions
-    - User-scoped memories for personalization
-    - Workspace-scoped memories for project context
+    - Semantic search within a scope
+    - Repository-scoped memories (shared across worktrees)
+    - Folder-scoped memories (for non-git workspaces)
     - Incremental indexing (tracks which sessions are indexed)
 
     Example:
         >>> manager = MemoryManager()
-        >>> # Index a session
+        >>> # Index a session (automatically scoped)
         >>> memories = manager.add_session(session)
-        >>> # Search for relevant memories
-        >>> results = manager.search("error handling patterns")
+        >>> # Search within scope
+        >>> results = manager.search("error handling patterns", scope_id="repo:github.com/owner/repo")
     """
 
     def __init__(
         self,
         config: dict | None = None,
-        user_id: str = "default",
         data_dir: Path | None = None,
     ):
         """Initialize the memory manager.
 
         Args:
             config: Mem0 configuration dict. If None, uses default local config.
-            user_id: User identifier for memory scoping.
             data_dir: Directory for storing data. Only used if config is None.
         """
-        self.user_id = user_id
         self.config = config or get_default_config(data_dir)
 
         # Initialize Mem0 with configuration
         self.memory = Memory.from_config(self.config)
 
-    def is_session_indexed(self, session_id: str) -> tuple[bool, int]:
-        """Check if a session has already been indexed.
+    def is_session_indexed(self, session_id: str, scope_id: str) -> tuple[bool, int]:
+        """Check if a session has already been indexed within a scope.
 
         Args:
             session_id: The session ID to check.
+            scope_id: The scope identifier (from _get_scope_id).
 
         Returns:
             Tuple of (is_indexed, message_count) where message_count is the
@@ -149,7 +184,7 @@ class MemoryManager:
         """
         try:
             results = self.memory.get_all(
-                user_id=self.user_id,
+                user_id=scope_id,
                 filters={"session_id": session_id},
             )
             memories = results.get("results", []) if isinstance(results, dict) else []
@@ -169,6 +204,10 @@ class MemoryManager:
     ) -> list[ExtractedMemory]:
         """Process a chat session and extract memories.
 
+        Memories are automatically scoped based on the session:
+        - If the session has a repository_url, memories are scoped to that repository
+        - Otherwise, memories are scoped to the workspace path (folder)
+
         This method takes a ChatSession object and passes it to Mem0 for
         fact extraction. Mem0 will analyze the conversation and identify
         key facts, preferences, and patterns.
@@ -187,17 +226,19 @@ class MemoryManager:
             List of extracted memories from this session.
             Returns empty list if session was skipped (already indexed).
         """
+        # Determine the scope for this session
+        scope_id = _get_scope_id(session.repository_url, session.workspace_path)
         current_message_count = len(session.messages)
 
         # Check if already indexed (skip if same message count, unless forced)
         if not force:
-            is_indexed, indexed_msg_count = self.is_session_indexed(session.session_id)
+            is_indexed, indexed_msg_count = self.is_session_indexed(session.session_id, scope_id)
             if is_indexed and indexed_msg_count >= current_message_count:
                 return []
 
             # If session has new messages, clear old memories first
             if is_indexed and indexed_msg_count < current_message_count:
-                self.clear(session_id=session.session_id)
+                self.clear(scope_id=scope_id, session_id=session.session_id)
 
         # Build conversation context for Mem0
         messages = []
@@ -210,7 +251,6 @@ class MemoryManager:
             )
 
         # Build metadata for the session
-        # Include repository_url for repository-scoped memories
         metadata = {
             "session_id": session.session_id,
             "workspace_name": session.workspace_name or "unknown",
@@ -218,12 +258,14 @@ class MemoryManager:
             "source": session.type or "vscode",
             "message_count": current_message_count,
             "repository_url": session.repository_url or "",
+            "scope_id": scope_id,
         }
 
         # Add to Mem0 - this triggers fact extraction
+        # Use scope_id as user_id for memory isolation
         result = self.memory.add(
             messages=messages,
-            user_id=self.user_id,
+            user_id=scope_id,
             metadata=metadata,
         )
 
@@ -233,32 +275,37 @@ class MemoryManager:
         self,
         query: str,
         limit: int = 10,
-        workspace_name: str | None = None,
+        scope_id: str | None = None,
         repository_url: str | None = None,
+        workspace_path: str | None = None,
     ) -> list[ExtractedMemory]:
-        """Semantic search across memories.
+        """Semantic search across memories within a scope.
+
+        Searches within a single scope (repository or folder). Each scope is
+        isolated, so memories from different scopes are not mixed.
 
         Args:
             query: Natural language search query.
             limit: Maximum results to return.
-            workspace_name: Optional workspace filter.
-            repository_url: Optional repository filter. When provided, returns memories
-                from any workspace in this repository (useful for multiple worktrees).
+            scope_id: Direct scope identifier. If provided, searches within this scope.
+            repository_url: Repository URL to derive scope from.
+            workspace_path: Workspace path to derive scope from (used if no repository).
 
         Returns:
             List of relevant memories with scores.
         """
-        filters = {}
-        if repository_url:
-            filters["repository_url"] = repository_url
-        elif workspace_name:
-            filters["workspace_name"] = workspace_name
+        # Determine scope_id
+        if not scope_id:
+            scope_id = _get_scope_id(repository_url, workspace_path)
+
+        if scope_id == "unknown":
+            # No scope specified - return empty results
+            return []
 
         results = self.memory.search(
             query=query,
-            user_id=self.user_id,
+            user_id=scope_id,
             limit=limit,
-            filters=filters if filters else None,
         )
 
         return [
@@ -273,29 +320,31 @@ class MemoryManager:
 
     def get_all(
         self,
-        workspace_name: str | None = None,
+        scope_id: str | None = None,
         repository_url: str | None = None,
+        workspace_path: str | None = None,
     ) -> list[ExtractedMemory]:
-        """Get all stored memories.
+        """Get all stored memories within a scope.
+
+        Each scope is isolated, so this only returns memories from the
+        specified scope.
 
         Args:
-            workspace_name: Optional workspace filter.
-            repository_url: Optional repository filter. When provided, returns memories
-                from any workspace in this repository.
+            scope_id: Direct scope identifier.
+            repository_url: Repository URL to derive scope from.
+            workspace_path: Workspace path to derive scope from.
 
         Returns:
-            List of all memories.
+            List of all memories in the scope.
         """
-        filters = {}
-        if repository_url:
-            filters["repository_url"] = repository_url
-        elif workspace_name:
-            filters["workspace_name"] = workspace_name
+        # Determine scope_id
+        if not scope_id:
+            scope_id = _get_scope_id(repository_url, workspace_path)
 
-        results = self.memory.get_all(
-            user_id=self.user_id,
-            filters=filters if filters else None,
-        )
+        if scope_id == "unknown":
+            return []
+
+        results = self.memory.get_all(user_id=scope_id)
 
         return [
             ExtractedMemory(
@@ -323,24 +372,37 @@ class MemoryManager:
 
     def clear(
         self,
-        workspace_name: str | None = None,
-        session_id: str | None = None,
+        scope_id: str | None = None,
         repository_url: str | None = None,
+        workspace_path: str | None = None,
+        session_id: str | None = None,
     ) -> int:
-        """Clear all memories for a user, workspace, repository, or session.
+        """Clear memories within a scope.
+
+        Memories from one scope cannot affect memories from another scope.
 
         Args:
-            workspace_name: If provided, only clear memories for this workspace.
-            session_id: If provided, only clear memories for this specific session.
-            repository_url: If provided, only clear memories for this repository.
+            scope_id: Direct scope identifier.
+            repository_url: Repository URL to derive scope from.
+            workspace_path: Workspace path to derive scope from.
+            session_id: If provided, only clear memories for this specific session
+                within the scope.
 
         Returns:
-            Number of memories deleted, or -1 if deleted all (count unknown).
+            Number of memories deleted, or -1 if deleted all in scope.
         """
+        # Determine scope_id
+        if not scope_id:
+            scope_id = _get_scope_id(repository_url, workspace_path)
+
+        if scope_id == "unknown":
+            return 0
+
         if session_id:
+            # Clear only memories for this session within the scope
             try:
                 results = self.memory.get_all(
-                    user_id=self.user_id,
+                    user_id=scope_id,
                     filters={"session_id": session_id},
                 )
                 memories_list = results.get("results", []) if isinstance(results, dict) else []
@@ -351,20 +413,22 @@ class MemoryManager:
                 return count
             except (ValueError, KeyError, RuntimeError):
                 return 0
-        elif repository_url:
-            memories = self.get_all(repository_url=repository_url)
-            count = 0
-            for mem in memories:
-                if self.delete(mem.id):
-                    count += 1
-            return count
-        elif workspace_name:
-            memories = self.get_all(workspace_name=workspace_name)
-            count = 0
-            for mem in memories:
-                if self.delete(mem.id):
-                    count += 1
-            return count
         else:
-            self.memory.delete_all(user_id=self.user_id)
+            # Clear all memories in this scope
+            self.memory.delete_all(user_id=scope_id)
             return -1
+
+    def get_scope_stats(self, scope_id: str) -> dict:
+        """Get statistics for a specific scope.
+
+        Args:
+            scope_id: The scope identifier.
+
+        Returns:
+            Dict with memory count and other stats.
+        """
+        memories = self.get_all(scope_id=scope_id)
+        return {
+            "scope_id": scope_id,
+            "memory_count": len(memories),
+        }

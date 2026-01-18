@@ -7,6 +7,11 @@ This module provides a standalone CLI for semantic memory operations:
 - list: List all stored memories
 - clear: Clear memories
 - serve: Start a simple API server (optional, for web integration)
+
+Memory Scoping:
+- Memories are automatically scoped to repositories (if in a git repo)
+  or to folders (if not in a git repo).
+- Each scope is isolated: memories from one scope cannot affect another.
 """
 
 from pathlib import Path
@@ -16,7 +21,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from .manager import MemoryManager, get_default_config
+from .manager import MemoryManager, _get_scope_id, get_default_config
 
 app = typer.Typer(
     name="copilot-memory",
@@ -179,63 +184,68 @@ def search_memories(
         int,
         typer.Option("--limit", "-l", help="Maximum results to return."),
     ] = 10,
-    workspace: Annotated[
-        str | None,
-        typer.Option("--workspace", "-w", help="Filter by workspace."),
-    ] = None,
     repository: Annotated[
         str | None,
-        typer.Option("--repository", "-r", help="Filter by repository (e.g., 'github.com/owner/repo')."),
+        typer.Option("--repository", "-r", help="Search within repository scope (e.g., 'github.com/owner/repo')."),
+    ] = None,
+    folder: Annotated[
+        str | None,
+        typer.Option("--folder", "-f", help="Search within folder scope (workspace path)."),
     ] = None,
     data_dir: Annotated[
         Path,
         typer.Option("--data-dir", help="Directory for storing memory data."),
     ] = DEFAULT_DATA_DIR,
 ):
-    """Semantic search through memories.
+    """Semantic search through memories within a scope.
 
     Unlike keyword search, this understands meaning - so "login issues"
     can find memories about "authentication errors".
 
-    You can filter by workspace (specific directory) or by repository
-    (all workspaces/worktrees for the same git repository).
+    Memories are scoped to either:
+    - Repository (if workspace is in a git repo) - use --repository
+    - Folder (if not in a git repo) - use --folder
 
     Example:
-        copilot-memory search "how did I handle authentication?"
-        copilot-memory search "async patterns" --workspace my-project
-        copilot-memory search "error handling" --repository github.com/owner/repo
+        copilot-memory search "how did I handle authentication?" --repository github.com/owner/repo
+        copilot-memory search "async patterns" --folder /path/to/project
     """
     manager = _get_memory_manager(data_dir)
 
-    results = manager.search(query, limit=limit, workspace_name=workspace, repository_url=repository)
+    # Determine scope
+    scope_id = _get_scope_id(repository, folder)
+    if scope_id == "unknown":
+        console.print("[yellow]Please specify --repository or --folder to search within a scope.[/yellow]")
+        console.print("Example: copilot-memory search 'query' --repository github.com/owner/repo")
+        raise typer.Exit(1)
+
+    results = manager.search(query, limit=limit, scope_id=scope_id)
 
     if not results:
         console.print("[yellow]No memories found matching your query.[/yellow]")
+        console.print(f"[dim]Searched in scope: {scope_id}[/dim]")
         return
 
-    console.print(f"\n[cyan]Found {len(results)} relevant memories:[/cyan]\n")
+    console.print(f"\n[cyan]Found {len(results)} relevant memories:[/cyan]")
+    console.print(f"[dim]Scope: {scope_id}[/dim]\n")
 
     for i, mem in enumerate(results, 1):
         score_str = f" (score: {mem.score:.2f})" if mem.score else ""
         workspace_str = mem.metadata.get("workspace_name", "unknown")
-        repo_str = mem.metadata.get("repository_url", "")
 
         console.print(f"[bold]{i}.[/bold] {mem.content}")
-        if repo_str:
-            console.print(f"   [dim]Workspace: {workspace_str} | Repository: {repo_str}{score_str}[/dim]\n")
-        else:
-            console.print(f"   [dim]Workspace: {workspace_str}{score_str}[/dim]\n")
+        console.print(f"   [dim]Workspace: {workspace_str}{score_str}[/dim]\n")
 
 
 @app.command("list")
 def list_memories(
-    workspace: Annotated[
-        str | None,
-        typer.Option("--workspace", "-w", help="Filter by workspace."),
-    ] = None,
     repository: Annotated[
         str | None,
-        typer.Option("--repository", "-r", help="Filter by repository (e.g., 'github.com/owner/repo')."),
+        typer.Option("--repository", "-r", help="List memories in repository scope."),
+    ] = None,
+    folder: Annotated[
+        str | None,
+        typer.Option("--folder", "-f", help="List memories in folder scope."),
     ] = None,
     limit: Annotated[
         int,
@@ -246,31 +256,42 @@ def list_memories(
         typer.Option("--data-dir", help="Directory for storing memory data."),
     ] = DEFAULT_DATA_DIR,
 ):
-    """List all stored memories."""
+    """List all stored memories within a scope.
+
+    Memories are scoped to either:
+    - Repository (if workspace is in a git repo) - use --repository
+    - Folder (if not in a git repo) - use --folder
+    """
     manager = _get_memory_manager(data_dir)
 
-    memories = manager.get_all(workspace_name=workspace, repository_url=repository)
+    # Determine scope
+    scope_id = _get_scope_id(repository, folder)
+    if scope_id == "unknown":
+        console.print("[yellow]Please specify --repository or --folder to list memories within a scope.[/yellow]")
+        console.print("Example: copilot-memory list --repository github.com/owner/repo")
+        raise typer.Exit(1)
+
+    memories = manager.get_all(scope_id=scope_id)
 
     if not memories:
         console.print("[yellow]No memories stored yet.[/yellow]")
+        console.print(f"[dim]Scope: {scope_id}[/dim]")
         console.print("Run [cyan]copilot-memory index[/cyan] to extract memories from your chat history.")
         return
 
     table = Table(title=f"Stored Memories ({len(memories)} total)")
     table.add_column("ID", style="dim", width=12)
-    table.add_column("Memory", style="cyan", max_width=50)
+    table.add_column("Memory", style="cyan", max_width=60)
     table.add_column("Workspace", style="green")
-    table.add_column("Repository", style="blue", max_width=30)
 
     for mem in memories[:limit]:
-        repo_url = mem.metadata.get("repository_url", "")
         table.add_row(
             mem.id[:12] + "..." if len(mem.id) > 12 else mem.id,
-            mem.content[:50] + "..." if len(mem.content) > 50 else mem.content,
+            mem.content[:60] + "..." if len(mem.content) > 60 else mem.content,
             mem.metadata.get("workspace_name", "unknown"),
-            repo_url[:30] + "..." if len(repo_url) > 30 else repo_url,
         )
 
+    console.print(f"[dim]Scope: {scope_id}[/dim]")
     console.print(table)
 
     if len(memories) > limit:
@@ -279,71 +300,83 @@ def list_memories(
 
 @app.command("clear")
 def clear_memories(
-    workspace: Annotated[
-        str | None,
-        typer.Option("--workspace", "-w", help="Only clear memories for this workspace."),
-    ] = None,
     repository: Annotated[
         str | None,
-        typer.Option("--repository", "-r", help="Only clear memories for this repository."),
+        typer.Option("--repository", "-r", help="Clear memories in repository scope."),
+    ] = None,
+    folder: Annotated[
+        str | None,
+        typer.Option("--folder", "-f", help="Clear memories in folder scope."),
     ] = None,
     force: Annotated[
         bool,
-        typer.Option("--force", "-f", help="Skip confirmation prompt."),
+        typer.Option("--yes", "-y", help="Skip confirmation prompt."),
     ] = False,
     data_dir: Annotated[
         Path,
         typer.Option("--data-dir", help="Directory for storing memory data."),
     ] = DEFAULT_DATA_DIR,
 ):
-    """Clear stored memories."""
+    """Clear stored memories within a scope.
+
+    Memories from one scope cannot affect memories from another scope.
+    You must specify either --repository or --folder.
+    """
+    # Determine scope
+    scope_id = _get_scope_id(repository, folder)
+    if scope_id == "unknown":
+        console.print("[yellow]Please specify --repository or --folder to clear memories within a scope.[/yellow]")
+        console.print("Example: copilot-memory clear --repository github.com/owner/repo")
+        raise typer.Exit(1)
+
     if not force:
-        if repository:
-            scope = f"repository '{repository}'"
-        elif workspace:
-            scope = f"workspace '{workspace}'"
-        else:
-            scope = "all workspaces"
-        confirm = typer.confirm(f"Are you sure you want to clear memories for {scope}?")
+        confirm = typer.confirm(f"Are you sure you want to clear all memories in scope '{scope_id}'?")
         if not confirm:
             console.print("[yellow]Cancelled.[/yellow]")
             raise typer.Exit(0)
 
     manager = _get_memory_manager(data_dir)
-    count = manager.clear(workspace_name=workspace, repository_url=repository)
+    count = manager.clear(scope_id=scope_id)
 
     if count == -1:
-        console.print("[green]✓ Cleared all memories.[/green]")
+        console.print(f"[green]✓ Cleared all memories in scope '{scope_id}'.[/green]")
     else:
         console.print(f"[green]✓ Cleared {count} memories.[/green]")
 
 
 @app.command("stats")
 def show_stats(
+    repository: Annotated[
+        str | None,
+        typer.Option("--repository", "-r", help="Show stats for repository scope."),
+    ] = None,
+    folder: Annotated[
+        str | None,
+        typer.Option("--folder", "-f", help="Show stats for folder scope."),
+    ] = None,
     data_dir: Annotated[
         Path,
         typer.Option("--data-dir", help="Directory for storing memory data."),
     ] = DEFAULT_DATA_DIR,
 ):
-    """Show memory statistics."""
+    """Show memory statistics for a scope.
+
+    Provide --repository or --folder to see stats for that scope.
+    """
+    # Determine scope
+    scope_id = _get_scope_id(repository, folder)
+    if scope_id == "unknown":
+        console.print("[yellow]Please specify --repository or --folder to show stats for a scope.[/yellow]")
+        console.print("Example: copilot-memory stats --repository github.com/owner/repo")
+        raise typer.Exit(1)
+
     manager = _get_memory_manager(data_dir)
 
-    all_memories = manager.get_all()
-
-    # Group by workspace
-    workspace_counts: dict[str, int] = {}
-    for m in all_memories:
-        ws = m.metadata.get("workspace_name", "unknown")
-        workspace_counts[ws] = workspace_counts.get(ws, 0) + 1
+    stats = manager.get_scope_stats(scope_id)
 
     console.print("\n[bold]Memory Statistics[/bold]")
-    console.print(f"  Total memories: {len(all_memories)}")
-    console.print(f"  Workspaces: {len(workspace_counts)}")
-
-    if workspace_counts:
-        console.print("\n[cyan]By Workspace:[/cyan]")
-        for ws, count in sorted(workspace_counts.items(), key=lambda x: -x[1]):
-            console.print(f"  {ws}: {count} memories")
+    console.print(f"  Scope: {scope_id}")
+    console.print(f"  Total memories: {stats['memory_count']}")
 
 
 def run():
