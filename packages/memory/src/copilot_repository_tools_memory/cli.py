@@ -12,6 +12,9 @@ Memory Scoping:
 - Memories are automatically scoped to repositories (if in a git repo)
   or to folders (if not in a git repo).
 - Each scope is isolated: memories from one scope cannot affect another.
+- Use --scope with either:
+  - 'repo:github.com/owner/repo' for repository scope
+  - 'folder:/path/to/project' for folder scope
 """
 
 from pathlib import Path
@@ -21,7 +24,39 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from .manager import MemoryManager, _get_scope_id, get_default_config
+from .manager import MemoryManager, get_default_config
+
+
+def _parse_scope(scope: str | None) -> str:
+    """Parse a scope string and return a normalized scope ID.
+
+    Accepts:
+    - 'repo:github.com/owner/repo' -> 'repo:github.com/owner/repo'
+    - 'folder:/path/to/project' -> 'folder:/path/to/project'
+    - 'github.com/owner/repo' -> 'repo:github.com/owner/repo' (assumes repo)
+    - '/path/to/project' -> 'folder:/path/to/project' (assumes folder if starts with /)
+
+    Args:
+        scope: The scope string to parse.
+
+    Returns:
+        Normalized scope ID or 'unknown' if scope is None.
+    """
+    if not scope:
+        return "unknown"
+
+    # Already has prefix
+    if scope.startswith("repo:") or scope.startswith("folder:"):
+        return scope
+
+    # Infer type from format
+    if scope.startswith("/"):
+        # Absolute path - treat as folder scope
+        return f"folder:{scope}"
+    else:
+        # Assume repository URL (e.g., github.com/owner/repo)
+        return f"repo:{scope}"
+
 
 app = typer.Typer(
     name="copilot-memory",
@@ -184,13 +219,13 @@ def search_memories(
         int,
         typer.Option("--limit", "-l", help="Maximum results to return."),
     ] = 10,
-    repository: Annotated[
+    scope: Annotated[
         str | None,
-        typer.Option("--repository", "-r", help="Search within repository scope (e.g., 'github.com/owner/repo')."),
-    ] = None,
-    folder: Annotated[
-        str | None,
-        typer.Option("--folder", "-f", help="Search within folder scope (workspace path)."),
+        typer.Option(
+            "--scope",
+            "-s",
+            help="Scope to search within (e.g., 'repo:github.com/owner/repo' or 'folder:/path/to/project').",
+        ),
     ] = None,
     data_dir: Annotated[
         Path,
@@ -203,20 +238,24 @@ def search_memories(
     can find memories about "authentication errors".
 
     Memories are scoped to either:
-    - Repository (if workspace is in a git repo) - use --repository
-    - Folder (if not in a git repo) - use --folder
+    - Repository: --scope repo:github.com/owner/repo
+    - Folder: --scope folder:/path/to/project
+
+    You can also use shorthand:
+    - --scope github.com/owner/repo (assumes repo)
+    - --scope /path/to/project (assumes folder if starts with /)
 
     Example:
-        copilot-memory search "how did I handle authentication?" --repository github.com/owner/repo
-        copilot-memory search "async patterns" --folder /path/to/project
+        copilot-memory search "how did I handle authentication?" --scope repo:github.com/owner/repo
+        copilot-memory search "async patterns" --scope /path/to/project
     """
     manager = _get_memory_manager(data_dir)
 
     # Determine scope
-    scope_id = _get_scope_id(repository, folder)
+    scope_id = _parse_scope(scope)
     if scope_id == "unknown":
-        console.print("[yellow]Please specify --repository or --folder to search within a scope.[/yellow]")
-        console.print("Example: copilot-memory search 'query' --repository github.com/owner/repo")
+        console.print("[yellow]Please specify --scope to search within a scope.[/yellow]")
+        console.print("Example: copilot-memory search 'query' --scope repo:github.com/owner/repo")
         raise typer.Exit(1)
 
     results = manager.search(query, limit=limit, scope_id=scope_id)
@@ -239,13 +278,13 @@ def search_memories(
 
 @app.command("list")
 def list_memories(
-    repository: Annotated[
+    scope: Annotated[
         str | None,
-        typer.Option("--repository", "-r", help="List memories in repository scope."),
-    ] = None,
-    folder: Annotated[
-        str | None,
-        typer.Option("--folder", "-f", help="List memories in folder scope."),
+        typer.Option(
+            "--scope",
+            "-s",
+            help="Scope to list memories from (e.g., 'repo:github.com/owner/repo' or 'folder:/path/to/project').",
+        ),
     ] = None,
     limit: Annotated[
         int,
@@ -259,16 +298,16 @@ def list_memories(
     """List all stored memories within a scope.
 
     Memories are scoped to either:
-    - Repository (if workspace is in a git repo) - use --repository
-    - Folder (if not in a git repo) - use --folder
+    - Repository: --scope repo:github.com/owner/repo
+    - Folder: --scope folder:/path/to/project
     """
     manager = _get_memory_manager(data_dir)
 
     # Determine scope
-    scope_id = _get_scope_id(repository, folder)
+    scope_id = _parse_scope(scope)
     if scope_id == "unknown":
-        console.print("[yellow]Please specify --repository or --folder to list memories within a scope.[/yellow]")
-        console.print("Example: copilot-memory list --repository github.com/owner/repo")
+        console.print("[yellow]Please specify --scope to list memories within a scope.[/yellow]")
+        console.print("Example: copilot-memory list --scope repo:github.com/owner/repo")
         raise typer.Exit(1)
 
     memories = manager.get_all(scope_id=scope_id)
@@ -300,13 +339,13 @@ def list_memories(
 
 @app.command("clear")
 def clear_memories(
-    repository: Annotated[
+    scope: Annotated[
         str | None,
-        typer.Option("--repository", "-r", help="Clear memories in repository scope."),
-    ] = None,
-    folder: Annotated[
-        str | None,
-        typer.Option("--folder", "-f", help="Clear memories in folder scope."),
+        typer.Option(
+            "--scope",
+            "-s",
+            help="Scope to clear memories from (e.g., 'repo:github.com/owner/repo' or 'folder:/path/to/project').",
+        ),
     ] = None,
     force: Annotated[
         bool,
@@ -320,13 +359,13 @@ def clear_memories(
     """Clear stored memories within a scope.
 
     Memories from one scope cannot affect memories from another scope.
-    You must specify either --repository or --folder.
+    You must specify --scope.
     """
     # Determine scope
-    scope_id = _get_scope_id(repository, folder)
+    scope_id = _parse_scope(scope)
     if scope_id == "unknown":
-        console.print("[yellow]Please specify --repository or --folder to clear memories within a scope.[/yellow]")
-        console.print("Example: copilot-memory clear --repository github.com/owner/repo")
+        console.print("[yellow]Please specify --scope to clear memories within a scope.[/yellow]")
+        console.print("Example: copilot-memory clear --scope repo:github.com/owner/repo")
         raise typer.Exit(1)
 
     if not force:
@@ -346,13 +385,13 @@ def clear_memories(
 
 @app.command("stats")
 def show_stats(
-    repository: Annotated[
+    scope: Annotated[
         str | None,
-        typer.Option("--repository", "-r", help="Show stats for repository scope."),
-    ] = None,
-    folder: Annotated[
-        str | None,
-        typer.Option("--folder", "-f", help="Show stats for folder scope."),
+        typer.Option(
+            "--scope",
+            "-s",
+            help="Scope to show stats for (e.g., 'repo:github.com/owner/repo' or 'folder:/path/to/project').",
+        ),
     ] = None,
     data_dir: Annotated[
         Path,
@@ -361,13 +400,13 @@ def show_stats(
 ):
     """Show memory statistics for a scope.
 
-    Provide --repository or --folder to see stats for that scope.
+    Provide --scope to see stats for that scope.
     """
     # Determine scope
-    scope_id = _get_scope_id(repository, folder)
+    scope_id = _parse_scope(scope)
     if scope_id == "unknown":
-        console.print("[yellow]Please specify --repository or --folder to show stats for a scope.[/yellow]")
-        console.print("Example: copilot-memory stats --repository github.com/owner/repo")
+        console.print("[yellow]Please specify --scope to show stats for a scope.[/yellow]")
+        console.print("Example: copilot-memory stats --scope repo:github.com/owner/repo")
         raise typer.Exit(1)
 
     manager = _get_memory_manager(data_dir)
