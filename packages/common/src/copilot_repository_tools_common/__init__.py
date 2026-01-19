@@ -28,6 +28,7 @@ from .scanner import (
     ContentBlock,
     FileChange,
     ToolInvocation,
+    detect_repository_url,
     find_copilot_chat_dirs,
     get_cli_storage_paths,
     get_vscode_storage_paths,
@@ -46,6 +47,8 @@ __all__ = [
     "ParsedQuery",
     "ToolInvocation",
     "__version__",
+    # Repository detection
+    "detect_repository_url",
     # Markdown Exporter
     "export_session_to_file",
     "find_copilot_chat_dirs",

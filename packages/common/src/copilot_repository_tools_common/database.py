@@ -149,11 +149,13 @@ class Database:
         vscode_edition TEXT DEFAULT 'stable',
         source_file_mtime REAL,
         source_file_size INTEGER,
+        repository_url TEXT,
         imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
 
     CREATE INDEX IF NOT EXISTS idx_raw_sessions_session_id ON raw_sessions(session_id);
     CREATE INDEX IF NOT EXISTS idx_raw_sessions_workspace ON raw_sessions(workspace_name);
+    CREATE INDEX IF NOT EXISTS idx_raw_sessions_repository ON raw_sessions(repository_url);
     """
 
     # Schema for derived tables that can be dropped and recreated
@@ -173,7 +175,8 @@ class Database:
         imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         source_file_mtime REAL,
         source_file_size INTEGER,
-        type TEXT DEFAULT 'vscode'
+        type TEXT DEFAULT 'vscode',
+        repository_url TEXT
     );
 
     CREATE TABLE IF NOT EXISTS messages (
@@ -240,6 +243,7 @@ class Database:
 
     CREATE INDEX IF NOT EXISTS idx_sessions_workspace ON sessions(workspace_name);
     CREATE INDEX IF NOT EXISTS idx_sessions_created ON sessions(created_at);
+    CREATE INDEX IF NOT EXISTS idx_sessions_repository ON sessions(repository_url);
     CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
     CREATE INDEX IF NOT EXISTS idx_messages_role ON messages(role);
     CREATE INDEX IF NOT EXISTS idx_tool_invocations_message ON tool_invocations(message_id);
@@ -353,8 +357,8 @@ class Database:
                 """
                 INSERT INTO raw_sessions 
                 (session_id, raw_json_compressed, workspace_name, workspace_path, 
-                 source_file, vscode_edition, source_file_mtime, source_file_size)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 source_file, vscode_edition, source_file_mtime, source_file_size, repository_url)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session.session_id,
@@ -365,6 +369,7 @@ class Database:
                     session.vscode_edition,
                     session.source_file_mtime,
                     session.source_file_size,
+                    session.repository_url,
                 ),
             )
 
@@ -374,8 +379,8 @@ class Database:
                 INSERT INTO sessions 
                 (session_id, workspace_name, workspace_path, created_at, updated_at, 
                  source_file, vscode_edition, custom_title, requester_username, responder_username,
-                 source_file_mtime, source_file_size, type)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 source_file_mtime, source_file_size, type, repository_url)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session.session_id,
@@ -391,6 +396,7 @@ class Database:
                     session.source_file_mtime,
                     session.source_file_size,
                     session.type,
+                    session.repository_url,
                 ),
             )
 
@@ -694,6 +700,7 @@ class Database:
                 source_file_mtime=safe_get("source_file_mtime"),
                 source_file_size=safe_get("source_file_size"),
                 type=safe_get("type") or "vscode",
+                repository_url=safe_get("repository_url"),
             )
 
     def get_messages_markdown(
@@ -1321,8 +1328,8 @@ class Database:
             INSERT INTO sessions 
             (session_id, workspace_name, workspace_path, created_at, updated_at, 
              source_file, vscode_edition, custom_title, requester_username, responder_username,
-             source_file_mtime, source_file_size, type)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             source_file_mtime, source_file_size, type, repository_url)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session.session_id,
@@ -1338,6 +1345,7 @@ class Database:
                 session.source_file_mtime,
                 session.source_file_size,
                 session.type,
+                session.repository_url,
             ),
         )
 

@@ -763,3 +763,92 @@ class TestAdvancedSearchIntegration:
         """Test that non-matching query returns empty results."""
         results = search_test_db.search("nonexistentword12345")
         assert len(results) == 0
+
+
+class TestRepositoryUrlSupport:
+    """Tests for repository_url field in database operations."""
+
+    def test_add_session_with_repository_url(self, temp_db):
+        """Test that sessions with repository_url are stored correctly."""
+        session = ChatSession(
+            session_id="test-repo-session",
+            workspace_name="my-project",
+            workspace_path="/home/user/projects/my-project",
+            messages=[
+                ChatMessage(role="user", content="Hello"),
+                ChatMessage(role="assistant", content="Hi there!"),
+            ],
+            repository_url="github.com/owner/repo",
+        )
+
+        result = temp_db.add_session(session)
+        assert result is True
+
+    def test_get_session_returns_repository_url(self, temp_db):
+        """Test that get_session returns repository_url."""
+        session = ChatSession(
+            session_id="test-repo-session-2",
+            workspace_name="my-project",
+            workspace_path="/home/user/projects/my-project",
+            messages=[
+                ChatMessage(role="user", content="Hello"),
+                ChatMessage(role="assistant", content="Hi!"),
+            ],
+            repository_url="github.com/owner/repo",
+        )
+
+        temp_db.add_session(session)
+        retrieved = temp_db.get_session("test-repo-session-2")
+
+        assert retrieved is not None
+        assert retrieved.repository_url == "github.com/owner/repo"
+
+    def test_session_without_repository_url(self, temp_db):
+        """Test that sessions without repository_url work correctly."""
+        session = ChatSession(
+            session_id="test-no-repo-session",
+            workspace_name="my-project",
+            workspace_path="/home/user/projects/my-project",
+            messages=[
+                ChatMessage(role="user", content="Hello"),
+            ],
+        )
+
+        temp_db.add_session(session)
+        retrieved = temp_db.get_session("test-no-repo-session")
+
+        assert retrieved is not None
+        assert retrieved.repository_url is None
+
+    def test_update_session_preserves_repository_url(self, temp_db):
+        """Test that update_session preserves repository_url."""
+        session = ChatSession(
+            session_id="test-update-repo-session",
+            workspace_name="my-project",
+            workspace_path="/home/user/projects/my-project",
+            messages=[
+                ChatMessage(role="user", content="Hello"),
+            ],
+            repository_url="gitlab.com/group/project",
+        )
+
+        temp_db.add_session(session)
+
+        # Update session with more messages
+        updated_session = ChatSession(
+            session_id="test-update-repo-session",
+            workspace_name="my-project",
+            workspace_path="/home/user/projects/my-project",
+            messages=[
+                ChatMessage(role="user", content="Hello"),
+                ChatMessage(role="assistant", content="Hi!"),
+            ],
+            repository_url="gitlab.com/group/project",
+        )
+
+        temp_db.update_session(updated_session)
+        retrieved = temp_db.get_session("test-update-repo-session")
+
+        assert retrieved is not None
+        assert retrieved.repository_url == "gitlab.com/group/project"
+        assert len(retrieved.messages) == 2
