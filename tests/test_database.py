@@ -899,3 +899,56 @@ class TestRepositoryUrlSupport:
         repo_map = {r["repository_url"]: r["session_count"] for r in repositories}
         assert repo_map.get("github.com/owner/repo1") == 2
         assert repo_map.get("github.com/owner/repo2") == 1
+
+    def test_search_with_repository_filter(self, temp_db):
+        """Test that search filters by repository URL."""
+        # Add sessions with different repositories
+        session1 = ChatSession(
+            session_id="search-repo-1",
+            workspace_name="project1",
+            workspace_path="/path/to/project1",
+            messages=[ChatMessage(role="user", content="Hello from repo1")],
+            repository_url="github.com/owner/repo1",
+        )
+        session2 = ChatSession(
+            session_id="search-repo-2",
+            workspace_name="project2",
+            workspace_path="/path/to/project2",
+            messages=[ChatMessage(role="user", content="Hello from repo2")],
+            repository_url="github.com/owner/repo2",
+        )
+        temp_db.add_session(session1)
+        temp_db.add_session(session2)
+
+        # Search with repository filter
+        results = temp_db.search("Hello", repository="github.com/owner/repo1")
+        assert len(results) == 1
+        assert "repo1" in results[0]["content"]
+
+    def test_search_with_repository_in_query(self, temp_db):
+        """Test that search parses repository: or repo: prefix in query."""
+        # Add sessions with different repositories
+        session1 = ChatSession(
+            session_id="query-repo-1",
+            workspace_name="project1",
+            workspace_path="/path/to/project1",
+            messages=[ChatMessage(role="user", content="Hello query test")],
+            repository_url="github.com/owner/myrepo",
+        )
+        session2 = ChatSession(
+            session_id="query-repo-2",
+            workspace_name="project2",
+            workspace_path="/path/to/project2",
+            messages=[ChatMessage(role="user", content="Hello query test")],
+            repository_url="github.com/other/otherrepo",
+        )
+        temp_db.add_session(session1)
+        temp_db.add_session(session2)
+
+        # Search with repo: prefix
+        results = temp_db.search("repo:myrepo Hello")
+        assert len(results) == 1
+
+        # Search with repository: prefix
+        results = temp_db.search("repository:other Hello")
+        assert len(results) == 1

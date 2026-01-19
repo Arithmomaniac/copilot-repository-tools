@@ -30,6 +30,7 @@ class ParsedQuery:
     role: str | None = None  # Extracted role filter (user/assistant)
     workspace: str | None = None  # Extracted workspace filter
     title: str | None = None  # Extracted title filter
+    repository: str | None = None  # Extracted repository filter
 
 
 def parse_search_query(query: str) -> ParsedQuery:
@@ -38,7 +39,7 @@ def parse_search_query(query: str) -> ParsedQuery:
     Supports:
     - Multiple words: "python function" → matches both words (AND logic)
     - Exact phrases: '"python function"' → matches exact phrase
-    - Field prefixes: 'role:user workspace:myproject title:something'
+    - Field prefixes: 'role:user workspace:myproject title:something repository:github.com/owner/repo'
 
     Args:
         query: The raw search query string.
@@ -51,16 +52,17 @@ def parse_search_query(query: str) -> ParsedQuery:
 
     query = query.strip()
 
-    # Extract field prefixes (role:, workspace:, title:)
+    # Extract field prefixes (role:, workspace:, title:, repository:)
     role = None
     workspace = None
     title = None
+    repository = None
 
     # Pattern for field:value (value can be quoted or unquoted)
-    field_pattern = r'\b(role|workspace|title):(?:"([^"]*)"|(\S+))'
+    field_pattern = r'\b(role|workspace|title|repository|repo):(?:"([^"]*)"|(\S+))'
 
     def extract_field(match):
-        nonlocal role, workspace, title
+        nonlocal role, workspace, title, repository
         field_name = match.group(1).lower()
         # Value is either in group 2 (quoted) or group 3 (unquoted)
         value = match.group(2) if match.group(2) is not None else match.group(3)
@@ -71,6 +73,8 @@ def parse_search_query(query: str) -> ParsedQuery:
             workspace = value
         elif field_name == "title":
             title = value
+        elif field_name in ("repository", "repo"):
+            repository = value
 
         return ""  # Remove the field prefix from the query
 
@@ -106,6 +110,7 @@ def parse_search_query(query: str) -> ParsedQuery:
         role=role,
         workspace=workspace,
         title=title,
+        repository=repository,
     )
 
 
@@ -919,13 +924,14 @@ class Database:
         include_file_changes: bool = True,
         session_title: str | None = None,
         sort_by: str = "relevance",
+        repository: str | None = None,
     ) -> list[dict]:
         """Search messages using full-text search with field filtering.
 
         Supports advanced query syntax:
         - Multiple words: "python function" → matches both words (AND logic)
         - Exact phrases: '"python function"' → matches exact phrase
-        - Field prefixes: 'role:user', 'workspace:myproject', 'title:something'
+        - Field prefixes: 'role:user', 'workspace:myproject', 'title:something', 'repository:github.com/owner/repo'
 
         Args:
             query: The search query (supports field prefixes and quoted phrases).
@@ -938,6 +944,8 @@ class Database:
             session_title: Filter by session title/workspace name.
                            Can also be specified in query as 'title:...' or 'workspace:...'.
             sort_by: Sort order - 'relevance' (default) or 'date'.
+            repository: Filter by repository URL.
+                        Can also be specified in query as 'repository:...' or 'repo:...'.
 
         Returns:
             List of matching messages with session info.
@@ -951,13 +959,14 @@ class Database:
         effective_role = role if role else parsed.role
         effective_title = session_title if session_title else parsed.title
         effective_workspace = parsed.workspace  # Only from query parsing
+        effective_repository = repository if repository else parsed.repository
 
         # If no FTS query after parsing, we can't do FTS search
         # But we might still have field filters to apply
         fts_query = parsed.fts_query
 
         # Check if we have any filters to apply (even without FTS query)
-        has_filters = effective_role or effective_title or effective_workspace
+        has_filters = effective_role or effective_title or effective_workspace or effective_repository
 
         # Get the safe order clause from whitelist (defaults to relevance)
         order_clause = _SORT_ORDER_CLAUSES.get(sort_by, _SORT_ORDER_CLAUSES["relevance"])
@@ -1002,6 +1011,10 @@ class Database:
                         message_query += " AND s.workspace_name LIKE ?"
                         params.append(f"%{effective_workspace}%")
 
+                    if effective_repository:
+                        message_query += " AND s.repository_url LIKE ?"
+                        params.append(f"%{effective_repository}%")
+
                     # Note: order_clause is safe because it comes from _SORT_ORDER_CLAUSES whitelist
 
                     message_query += f" {order_clause} LIMIT ?"
@@ -1043,6 +1056,10 @@ class Database:
                         message_query += " AND s.workspace_name LIKE ?"
                         params.append(f"%{effective_workspace}%")
 
+                    if effective_repository:
+                        message_query += " AND s.repository_url LIKE ?"
+                        params.append(f"%{effective_repository}%")
+
                     message_query += " ORDER BY s.created_at DESC LIMIT ?"
                     params.append(limit)
 
@@ -1081,6 +1098,10 @@ class Database:
                     tool_query += " AND (s.workspace_name LIKE ? OR s.custom_title LIKE ?)"
                     params.extend([f"%{effective_title}%", f"%{effective_title}%"])
 
+                if effective_repository:
+                    tool_query += " AND s.repository_url LIKE ?"
+                    params.append(f"%{effective_repository}%")
+
                 tool_query += " LIMIT ?"
                 params.append(remaining)
 
@@ -1116,6 +1137,10 @@ class Database:
                 if effective_title:
                     file_query += " AND (s.workspace_name LIKE ? OR s.custom_title LIKE ?)"
                     params.extend([f"%{effective_title}%", f"%{effective_title}%"])
+
+                if effective_repository:
+                    file_query += " AND s.repository_url LIKE ?"
+                    params.append(f"%{effective_repository}%")
 
                 file_query += " LIMIT ?"
                 params.append(remaining)
