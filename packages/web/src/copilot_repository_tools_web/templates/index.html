@@ -187,6 +187,59 @@ header .stats {
     color: white;
 }
 
+.repositories {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 10px;
+    align-items: center;
+}
+
+.repository-filter {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background-color: var(--bg-tertiary);
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 0.85em;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.repository-filter:hover {
+    background-color: var(--border-color);
+}
+
+.repository-filter input[type="checkbox"] {
+    margin: 0;
+    cursor: pointer;
+}
+
+.repository-filter.checked {
+    background-color: #238636;
+    color: white;
+}
+
+@media (prefers-color-scheme: dark) {
+    .repository-filter.checked {
+        background-color: #2ea043;
+        color: white;
+    }
+}
+
+.filter-section {
+    margin-bottom: 16px;
+}
+
+.filter-section-header {
+    font-size: 0.85em;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+}
+
 .filter-actions {
     display: flex;
     gap: 10px;
@@ -479,6 +532,9 @@ footer a {
             {% for ws_name in selected_workspaces or [] %}
             <input type="hidden" name="workspace" value="{{ ws_name }}">
             {% endfor %}
+            {% for repo_url in selected_repositories or [] %}
+            <input type="hidden" name="repository" value="{{ repo_url }}">
+            {% endfor %}
         </form>
         <div class="search-help">
             💡 Tips: Use <code>"exact phrase"</code> for exact match, <code>role:user</code> or <code>role:assistant</code> to filter by role, <code>workspace:name</code> to filter by workspace
@@ -511,19 +567,42 @@ footer a {
         </div>
         {% endif %}
 
-        {% if workspaces %}
-        <div class="workspaces" id="workspace-filters">
-            {% for ws in workspaces %}
-            <label class="workspace-filter{% if ws.workspace_name in (selected_workspaces or []) %} checked{% endif %}">
-                <input type="checkbox" name="workspace" value="{{ ws.workspace_name }}"
-                    {% if ws.workspace_name in (selected_workspaces or []) %}checked{% endif %}>
-                {{ ws.workspace_name }} ({{ ws.session_count }})
-            </label>
-            {% endfor %}
-        </div>
-        <div class="filter-actions">
-            <button type="button" class="apply-btn" id="apply-filter">Apply Filter</button>
-            <button type="button" class="clear-btn" id="clear-filter">Clear</button>
+        {% if workspaces or repositories %}
+        <div id="filters-container">
+            {% if workspaces %}
+            <div class="filter-section">
+                <div class="filter-section-header">📁 Workspaces</div>
+                <div class="workspaces" id="workspace-filters">
+                    {% for ws in workspaces %}
+                    <label class="workspace-filter{% if ws.workspace_name in (selected_workspaces or []) %} checked{% endif %}">
+                        <input type="checkbox" name="workspace" value="{{ ws.workspace_name }}"
+                            {% if ws.workspace_name in (selected_workspaces or []) %}checked{% endif %}>
+                        {{ ws.workspace_name }} ({{ ws.session_count }})
+                    </label>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+
+            {% if repositories %}
+            <div class="filter-section">
+                <div class="filter-section-header">🔗 Repositories</div>
+                <div class="repositories" id="repository-filters">
+                    {% for repo in repositories %}
+                    <label class="repository-filter{% if repo.repository_url in (selected_repositories or []) %} checked{% endif %}">
+                        <input type="checkbox" name="repository" value="{{ repo.repository_url }}"
+                            {% if repo.repository_url in (selected_repositories or []) %}checked{% endif %}>
+                        {{ repo.repository_url }} ({{ repo.session_count }})
+                    </label>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+
+            <div class="filter-actions">
+                <button type="button" class="apply-btn" id="apply-filter">Apply Filter</button>
+                <button type="button" class="clear-btn" id="clear-filter">Clear</button>
+            </div>
         </div>
         {% endif %}
 
@@ -577,16 +656,26 @@ footer a {
     </footer>
 
     <script>
-        // Workspace filter functionality
+        // Filter functionality for both workspaces and repositories
         document.addEventListener('DOMContentLoaded', function() {
             const applyBtn = document.getElementById('apply-filter');
             const clearBtn = document.getElementById('clear-filter');
             const searchForm = document.getElementById('search-form');
             const workspaceFilters = document.getElementById('workspace-filters');
+            const repositoryFilters = document.getElementById('repository-filters');
 
+            // Toggle checked class on label when checkbox changes (workspaces)
             if (workspaceFilters) {
-                // Toggle checked class on label when checkbox changes
                 workspaceFilters.querySelectorAll('input[type="checkbox"]').forEach(function(checkbox) {
+                    checkbox.addEventListener('change', function() {
+                        this.parentElement.classList.toggle('checked', this.checked);
+                    });
+                });
+            }
+
+            // Toggle checked class on label when checkbox changes (repositories)
+            if (repositoryFilters) {
+                repositoryFilters.querySelectorAll('input[type="checkbox"]').forEach(function(checkbox) {
                     checkbox.addEventListener('change', function() {
                         this.parentElement.classList.toggle('checked', this.checked);
                     });
@@ -595,14 +684,21 @@ footer a {
 
             if (applyBtn) {
                 applyBtn.addEventListener('click', function() {
-                    // Get selected workspaces
-                    const checkboxes = workspaceFilters.querySelectorAll('input[type="checkbox"]:checked');
-                    const selectedWorkspaces = Array.from(checkboxes).map(cb => cb.value);
-                    
-                    // Build URL with workspace params
                     const url = new URL(window.location.href);
+                    
+                    // Get selected workspaces
                     url.searchParams.delete('workspace');
-                    selectedWorkspaces.forEach(ws => url.searchParams.append('workspace', ws));
+                    if (workspaceFilters) {
+                        const workspaceCheckboxes = workspaceFilters.querySelectorAll('input[type="checkbox"]:checked');
+                        Array.from(workspaceCheckboxes).forEach(cb => url.searchParams.append('workspace', cb.value));
+                    }
+                    
+                    // Get selected repositories
+                    url.searchParams.delete('repository');
+                    if (repositoryFilters) {
+                        const repoCheckboxes = repositoryFilters.querySelectorAll('input[type="checkbox"]:checked');
+                        Array.from(repoCheckboxes).forEach(cb => url.searchParams.append('repository', cb.value));
+                    }
                     
                     window.location.href = url.toString();
                 });
@@ -610,15 +706,26 @@ footer a {
 
             if (clearBtn) {
                 clearBtn.addEventListener('click', function() {
-                    // Clear all checkboxes
-                    workspaceFilters.querySelectorAll('input[type="checkbox"]').forEach(function(checkbox) {
-                        checkbox.checked = false;
-                        checkbox.parentElement.classList.remove('checked');
-                    });
+                    // Clear all workspace checkboxes
+                    if (workspaceFilters) {
+                        workspaceFilters.querySelectorAll('input[type="checkbox"]').forEach(function(checkbox) {
+                            checkbox.checked = false;
+                            checkbox.parentElement.classList.remove('checked');
+                        });
+                    }
                     
-                    // Redirect without workspace params
+                    // Clear all repository checkboxes
+                    if (repositoryFilters) {
+                        repositoryFilters.querySelectorAll('input[type="checkbox"]').forEach(function(checkbox) {
+                            checkbox.checked = false;
+                            checkbox.parentElement.classList.remove('checked');
+                        });
+                    }
+                    
+                    // Redirect without filter params
                     const url = new URL(window.location.href);
                     url.searchParams.delete('workspace');
+                    url.searchParams.delete('repository');
                     window.location.href = url.toString();
                 });
             }

@@ -852,3 +852,50 @@ class TestRepositoryUrlSupport:
         assert retrieved is not None
         assert retrieved.repository_url == "gitlab.com/group/project"
         assert len(retrieved.messages) == 2
+
+    def test_get_repositories(self, temp_db):
+        """Test that get_repositories returns distinct repositories with counts."""
+        # Add sessions with different repositories
+        session1 = ChatSession(
+            session_id="test-repo-1",
+            workspace_name="project1",
+            workspace_path="/path/to/project1",
+            messages=[ChatMessage(role="user", content="Hello")],
+            repository_url="github.com/owner/repo1",
+        )
+        session2 = ChatSession(
+            session_id="test-repo-2",
+            workspace_name="project2",
+            workspace_path="/path/to/project2",
+            messages=[ChatMessage(role="user", content="Hello")],
+            repository_url="github.com/owner/repo1",  # Same repo as session1
+        )
+        session3 = ChatSession(
+            session_id="test-repo-3",
+            workspace_name="project3",
+            workspace_path="/path/to/project3",
+            messages=[ChatMessage(role="user", content="Hello")],
+            repository_url="github.com/owner/repo2",  # Different repo
+        )
+        session4 = ChatSession(
+            session_id="test-repo-4",
+            workspace_name="project4",
+            workspace_path="/path/to/project4",
+            messages=[ChatMessage(role="user", content="Hello")],
+            repository_url=None,  # No repo URL
+        )
+
+        temp_db.add_session(session1)
+        temp_db.add_session(session2)
+        temp_db.add_session(session3)
+        temp_db.add_session(session4)
+
+        repositories = temp_db.get_repositories()
+
+        # Should have 2 unique repositories (excluding None)
+        assert len(repositories) == 2
+
+        # Check that session counts are correct
+        repo_map = {r["repository_url"]: r["session_count"] for r in repositories}
+        assert repo_map.get("github.com/owner/repo1") == 2
+        assert repo_map.get("github.com/owner/repo2") == 1

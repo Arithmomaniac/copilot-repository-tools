@@ -888,6 +888,7 @@ class Database:
                     s.updated_at,
                     s.vscode_edition,
                     s.custom_title,
+                    s.repository_url,
                     COUNT(m.id) as message_count,
                     MAX(m.timestamp) as last_message_at
                 FROM sessions s
@@ -1142,6 +1143,28 @@ class Database:
                 FROM sessions
                 WHERE workspace_name IS NOT NULL
                 GROUP BY workspace_name, workspace_path
+                ORDER BY last_activity DESC
+                """
+            )
+            return [dict(row) for row in cursor.fetchall()]
+
+    def get_repositories(self) -> list[dict]:
+        """Get all unique repositories.
+
+        Returns:
+            List of repository info dictionaries.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT 
+                    repository_url,
+                    COUNT(*) as session_count,
+                    MAX(created_at) as last_activity
+                FROM sessions
+                WHERE repository_url IS NOT NULL
+                GROUP BY repository_url
                 ORDER BY last_activity DESC
                 """
             )
