@@ -13,6 +13,7 @@
     --text-secondary: #57606a;
     --border-color: #d0d7de;
     --link-color: #0969da;
+    --repo-color: #238636;
     --user-bg: #ddf4ff;
     --assistant-bg: #ffffff;
     --code-bg: #f6f8fa;
@@ -28,6 +29,7 @@
         --text-secondary: #8b949e;
         --border-color: #30363d;
         --link-color: #58a6ff;
+        --repo-color: #2ea043;
         --user-bg: #1f3d5c;
         --assistant-bg: #161b22;
         --code-bg: #161b22;
@@ -218,15 +220,8 @@ header .stats {
 }
 
 .repository-filter.checked {
-    background-color: #238636;
+    background-color: var(--repo-color);
     color: white;
-}
-
-@media (prefers-color-scheme: dark) {
-    .repository-filter.checked {
-        background-color: #2ea043;
-        color: white;
-    }
 }
 
 .filter-section {
