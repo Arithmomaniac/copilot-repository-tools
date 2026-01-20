@@ -770,3 +770,192 @@ class TestAdvancedSearchIntegration:
         """Test that non-matching query returns empty results."""
         results = search_test_db.search("nonexistentword12345")
         assert len(results) == 0
+
+
+class TestRepositoryUrlSupport:
+    """Tests for repository_url field in database operations."""
+
+    def test_add_session_with_repository_url(self, temp_db):
+        """Test that sessions with repository_url are stored correctly."""
+        session = ChatSession(
+            session_id="test-repo-session",
+            workspace_name="my-project",
+            workspace_path="/home/user/projects/my-project",
+            messages=[
+                ChatMessage(role="user", content="Hello"),
+                ChatMessage(role="assistant", content="Hi there!"),
+            ],
+            repository_url="github.com/owner/repo",
+        )
+
+        result = temp_db.add_session(session)
+        assert result is True
+
+    def test_get_session_returns_repository_url(self, temp_db):
+        """Test that get_session returns repository_url."""
+        session = ChatSession(
+            session_id="test-repo-session-2",
+            workspace_name="my-project",
+            workspace_path="/home/user/projects/my-project",
+            messages=[
+                ChatMessage(role="user", content="Hello"),
+                ChatMessage(role="assistant", content="Hi!"),
+            ],
+            repository_url="github.com/owner/repo",
+        )
+
+        temp_db.add_session(session)
+        retrieved = temp_db.get_session("test-repo-session-2")
+
+        assert retrieved is not None
+        assert retrieved.repository_url == "github.com/owner/repo"
+
+    def test_session_without_repository_url(self, temp_db):
+        """Test that sessions without repository_url work correctly."""
+        session = ChatSession(
+            session_id="test-no-repo-session",
+            workspace_name="my-project",
+            workspace_path="/home/user/projects/my-project",
+            messages=[
+                ChatMessage(role="user", content="Hello"),
+            ],
+        )
+
+        temp_db.add_session(session)
+        retrieved = temp_db.get_session("test-no-repo-session")
+
+        assert retrieved is not None
+        assert retrieved.repository_url is None
+
+    def test_update_session_preserves_repository_url(self, temp_db):
+        """Test that update_session preserves repository_url."""
+        session = ChatSession(
+            session_id="test-update-repo-session",
+            workspace_name="my-project",
+            workspace_path="/home/user/projects/my-project",
+            messages=[
+                ChatMessage(role="user", content="Hello"),
+            ],
+            repository_url="gitlab.com/group/project",
+        )
+
+        temp_db.add_session(session)
+
+        # Update session with more messages
+        updated_session = ChatSession(
+            session_id="test-update-repo-session",
+            workspace_name="my-project",
+            workspace_path="/home/user/projects/my-project",
+            messages=[
+                ChatMessage(role="user", content="Hello"),
+                ChatMessage(role="assistant", content="Hi!"),
+            ],
+            repository_url="gitlab.com/group/project",
+        )
+
+        temp_db.update_session(updated_session)
+        retrieved = temp_db.get_session("test-update-repo-session")
+
+        assert retrieved is not None
+        assert retrieved.repository_url == "gitlab.com/group/project"
+        assert len(retrieved.messages) == 2
+
+    def test_get_repositories(self, temp_db):
+        """Test that get_repositories returns distinct repositories with counts."""
+        # Add sessions with different repositories
+        session1 = ChatSession(
+            session_id="test-repo-1",
+            workspace_name="project1",
+            workspace_path="/path/to/project1",
+            messages=[ChatMessage(role="user", content="Hello")],
+            repository_url="github.com/owner/repo1",
+        )
+        session2 = ChatSession(
+            session_id="test-repo-2",
+            workspace_name="project2",
+            workspace_path="/path/to/project2",
+            messages=[ChatMessage(role="user", content="Hello")],
+            repository_url="github.com/owner/repo1",  # Same repo as session1
+        )
+        session3 = ChatSession(
+            session_id="test-repo-3",
+            workspace_name="project3",
+            workspace_path="/path/to/project3",
+            messages=[ChatMessage(role="user", content="Hello")],
+            repository_url="github.com/owner/repo2",  # Different repo
+        )
+        session4 = ChatSession(
+            session_id="test-repo-4",
+            workspace_name="project4",
+            workspace_path="/path/to/project4",
+            messages=[ChatMessage(role="user", content="Hello")],
+            repository_url=None,  # No repo URL
+        )
+
+        temp_db.add_session(session1)
+        temp_db.add_session(session2)
+        temp_db.add_session(session3)
+        temp_db.add_session(session4)
+
+        repositories = temp_db.get_repositories()
+
+        # Should have 2 unique repositories (excluding None)
+        assert len(repositories) == 2
+
+        # Check that session counts are correct
+        repo_map = {r["repository_url"]: r["session_count"] for r in repositories}
+        assert repo_map.get("github.com/owner/repo1") == 2
+        assert repo_map.get("github.com/owner/repo2") == 1
+
+    def test_search_with_repository_filter(self, temp_db):
+        """Test that search filters by repository URL."""
+        # Add sessions with different repositories
+        session1 = ChatSession(
+            session_id="search-repo-1",
+            workspace_name="project1",
+            workspace_path="/path/to/project1",
+            messages=[ChatMessage(role="user", content="Hello from repo1")],
+            repository_url="github.com/owner/repo1",
+        )
+        session2 = ChatSession(
+            session_id="search-repo-2",
+            workspace_name="project2",
+            workspace_path="/path/to/project2",
+            messages=[ChatMessage(role="user", content="Hello from repo2")],
+            repository_url="github.com/owner/repo2",
+        )
+        temp_db.add_session(session1)
+        temp_db.add_session(session2)
+
+        # Search with repository filter
+        results = temp_db.search("Hello", repository="github.com/owner/repo1")
+        assert len(results) == 1
+        assert "repo1" in results[0]["content"]
+
+    def test_search_with_repository_in_query(self, temp_db):
+        """Test that search parses repository: or repo: prefix in query."""
+        # Add sessions with different repositories
+        session1 = ChatSession(
+            session_id="query-repo-1",
+            workspace_name="project1",
+            workspace_path="/path/to/project1",
+            messages=[ChatMessage(role="user", content="Hello query test")],
+            repository_url="github.com/owner/myrepo",
+        )
+        session2 = ChatSession(
+            session_id="query-repo-2",
+            workspace_name="project2",
+            workspace_path="/path/to/project2",
+            messages=[ChatMessage(role="user", content="Hello query test")],
+            repository_url="github.com/other/otherrepo",
+        )
+        temp_db.add_session(session1)
+        temp_db.add_session(session2)
+
+        # Search with repo: prefix
+        results = temp_db.search("repo:myrepo Hello")
+        assert len(results) == 1
+
+        # Search with repository: prefix
+        results = temp_db.search("repository:other Hello")
+        assert len(results) == 1

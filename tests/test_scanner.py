@@ -520,3 +520,149 @@ class TestCLIParsing:
 
         # Should work without errors
         assert isinstance(sessions, list)
+
+
+class TestRepositoryUrlDetection:
+    """Tests for git repository URL detection and normalization."""
+
+    def test_normalize_git_url_https(self):
+        """Test normalizing HTTPS git URLs."""
+        from copilot_repository_tools_common.scanner import _normalize_git_url
+
+        # Standard HTTPS URL
+        result = _normalize_git_url("https://github.com/owner/repo.git")
+        assert result == "github.com/owner/repo"
+
+        # Without .git suffix
+        result = _normalize_git_url("https://github.com/owner/repo")
+        assert result == "github.com/owner/repo"
+
+        # GitLab URL
+        result = _normalize_git_url("https://gitlab.com/group/project.git")
+        assert result == "gitlab.com/group/project"
+
+    def test_normalize_git_url_ssh(self):
+        """Test normalizing SSH git URLs."""
+        from copilot_repository_tools_common.scanner import _normalize_git_url
+
+        # Standard SSH URL
+        result = _normalize_git_url("git@github.com:owner/repo.git")
+        assert result == "github.com/owner/repo"
+
+        # Without .git suffix
+        result = _normalize_git_url("git@github.com:owner/repo")
+        assert result == "github.com/owner/repo"
+
+        # GitLab SSH URL
+        result = _normalize_git_url("git@gitlab.com:group/project.git")
+        assert result == "gitlab.com/group/project"
+
+    def test_normalize_git_url_ssh_protocol(self):
+        """Test normalizing SSH protocol URLs."""
+        from copilot_repository_tools_common.scanner import _normalize_git_url
+
+        # SSH protocol URL
+        result = _normalize_git_url("ssh://git@github.com/owner/repo.git")
+        assert result == "github.com/owner/repo"
+
+        # Without username
+        result = _normalize_git_url("ssh://github.com/owner/repo.git")
+        assert result == "github.com/owner/repo"
+
+    def test_normalize_git_url_trailing_slash(self):
+        """Test that trailing slashes are handled."""
+        from copilot_repository_tools_common.scanner import _normalize_git_url
+
+        result = _normalize_git_url("https://github.com/owner/repo/")
+        assert result == "github.com/owner/repo"
+
+    def test_normalize_git_url_unknown_format(self):
+        """Test that unknown formats are returned as-is."""
+        from copilot_repository_tools_common.scanner import _normalize_git_url
+
+        result = _normalize_git_url("some-unknown-format")
+        assert result == "some-unknown-format"
+
+    def test_detect_repository_url_none_workspace(self):
+        """Test that None workspace path returns None."""
+        from copilot_repository_tools_common.scanner import detect_repository_url
+
+        result = detect_repository_url(None)
+        assert result is None
+
+    def test_detect_repository_url_empty_workspace(self):
+        """Test that empty workspace path returns None."""
+        from copilot_repository_tools_common.scanner import detect_repository_url
+
+        result = detect_repository_url("")
+        assert result is None
+
+    def test_detect_repository_url_not_git_repo(self, tmp_path):
+        """Test that non-git directory returns None."""
+        from copilot_repository_tools_common.scanner import detect_repository_url
+
+        # Create a regular directory that's not a git repo
+        workspace = tmp_path / "not-a-repo"
+        workspace.mkdir()
+
+        result = detect_repository_url(str(workspace))
+        assert result is None
+
+    def test_detect_repository_url_with_git_repo(self, tmp_path):
+        """Test detection in an actual git repository."""
+        import subprocess
+
+        from copilot_repository_tools_common.scanner import detect_repository_url
+
+        # Create a git repo
+        workspace = tmp_path / "test-repo"
+        workspace.mkdir()
+
+        # Initialize git repo
+        subprocess.run(["git", "init"], cwd=workspace, capture_output=True, check=True)  # noqa: S607, S603
+
+        # Without a remote, should return None
+        result = detect_repository_url(str(workspace))
+        assert result is None
+
+        # Add a remote
+        subprocess.run(  # noqa: S603, S607
+            ["git", "remote", "add", "origin", "https://github.com/test-owner/test-repo.git"],
+            cwd=workspace,
+            capture_output=True,
+            check=True,
+        )
+
+        # Now should return the normalized URL
+        result = detect_repository_url(str(workspace))
+        assert result == "github.com/test-owner/test-repo"
+
+    def test_chat_session_has_repository_url_field(self):
+        """Test that ChatSession dataclass has repository_url field."""
+        session = ChatSession(
+            session_id="test-session",
+            workspace_name="test-workspace",
+            workspace_path="/path/to/workspace",
+            messages=[],
+            repository_url="github.com/owner/repo",
+        )
+
+        assert session.repository_url == "github.com/owner/repo"
+
+    def test_chat_session_repository_url_defaults_to_none(self):
+        """Test that ChatSession.repository_url defaults to None."""
+        session = ChatSession(
+            session_id="test-session",
+            workspace_name="test-workspace",
+            workspace_path="/path/to/workspace",
+            messages=[],
+        )
+
+        assert session.repository_url is None
+
+    def test_detect_repository_url_exported_from_common(self):
+        """Test that detect_repository_url is exported from the common package."""
+        from copilot_repository_tools_common import detect_repository_url
+
+        # Should be callable
+        assert callable(detect_repository_url)

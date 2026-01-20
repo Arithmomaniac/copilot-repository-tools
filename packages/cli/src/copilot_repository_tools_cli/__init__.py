@@ -231,6 +231,14 @@ def search(
             help="Filter by session title or workspace name.",
         ),
     ] = None,
+    repository_filter: Annotated[
+        str | None,
+        typer.Option(
+            "--repository",
+            "--repo",
+            help="Filter by repository URL (e.g., github.com/owner/repo).",
+        ),
+    ] = None,
     no_tools: Annotated[
         bool,
         typer.Option(
@@ -283,7 +291,7 @@ def search(
     \b
     - Multiple words: "python function" matches both words (AND logic)
     - Exact phrases: Use quotes like "python function" for exact match
-    - Field filters in query: role:user, role:assistant, workspace:name, title:name
+    - Field filters in query: role:user, role:assistant, workspace:name, title:name, repository:url (or repo:url)
 
     Examples:
 
@@ -291,10 +299,12 @@ def search(
       copilot-chat-archive search "python function"
       copilot-chat-archive search "role:user python"
       copilot-chat-archive search "workspace:my-project"
+      copilot-chat-archive search "repo:github.com/owner/repo"
       copilot-chat-archive search '"exact phrase"'
 
     Use --role to filter by user requests or assistant responses.
     Use --title to filter by session/workspace name.
+    Use --repository to filter by git repository URL.
     Use --no-tools or --no-files to exclude specific content types.
     Use --tools-only or --files-only to search only specific content types.
     Use --full to show complete content instead of truncated snippets.
@@ -332,6 +342,7 @@ def search(
         include_file_changes=include_file_changes,
         session_title=title_filter,
         sort_by=sort_by,
+        repository=repository_filter,
     )
 
     if not results:
@@ -400,6 +411,14 @@ def stats(
             console.print(f"    {ws['workspace_name']}: {ws['session_count']} sessions")
         if len(workspaces) > 10:
             console.print(f"    ... and {len(workspaces) - 10} more")
+
+    repositories = database.get_repositories()
+    if repositories:
+        console.print("\n  [green]Repositories:[/green]")
+        for repo in repositories[:10]:
+            console.print(f"    {repo['repository_url']}: {repo['session_count']} sessions")
+        if len(repositories) > 10:
+            console.print(f"    ... and {len(repositories) - 10} more")
 
 
 @app.command()
