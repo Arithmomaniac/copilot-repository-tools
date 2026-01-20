@@ -336,9 +336,7 @@ class Database:
         with self._get_connection() as conn:
             # Check if raw_sessions exists and needs migration
             cursor = conn.cursor()
-            cursor.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='raw_sessions'"
-            )
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='raw_sessions'")
             raw_sessions_exists = cursor.fetchone() is not None
 
             if raw_sessions_exists:
@@ -350,9 +348,7 @@ class Database:
                     conn.commit()
 
             # Check if sessions table exists and needs migration
-            cursor.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'"
-            )
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'")
             sessions_exists = cursor.fetchone() is not None
 
             if sessions_exists:
