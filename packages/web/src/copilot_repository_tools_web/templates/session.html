@@ -61,6 +61,9 @@ header {
     border-bottom: 1px solid var(--border-color);
     padding: 20px 0;
     margin-bottom: 20px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
 }
 
 header h1 {
@@ -136,6 +139,19 @@ header h1 {
     background-color: var(--code-bg);
     padding: 2px 6px;
     border-radius: 3px;
+}
+
+.source-file {
+    margin-top: 5px;
+    color: var(--text-secondary);
+}
+
+.source-file code {
+    font-size: 0.8em;
+    background-color: var(--code-bg);
+    padding: 2px 6px;
+    border-radius: 3px;
+    word-break: break-all;
 }
 
 .message {
@@ -999,6 +1015,8 @@ footer a {
                     {{ session.custom_title }}
                 {% elif session.workspace_name %}
                     {{ session.workspace_name }}
+                {% elif first_user_prompt %}
+                    <em>{{ first_user_prompt | truncate(100, True) }}</em>
                 {% else %}
                     Session {{ session.session_id[:8] }}...
                 {% endif %}
@@ -1016,6 +1034,11 @@ footer a {
             <div class="session-id">
                 <small>Session ID: <code>{{ session.session_id }}</code></small>
             </div>
+            {% if session.source_file %}
+            <div class="source-file">
+                <small>Source: <code>{{ session.source_file }}</code></small>
+            </div>
+            {% endif %}
         </div>
 
         <!-- Copy Markdown Toolbar -->

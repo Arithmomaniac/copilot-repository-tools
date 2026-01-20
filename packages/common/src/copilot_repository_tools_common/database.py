@@ -31,6 +31,7 @@ class ParsedQuery:
     workspace: str | None = None  # Extracted workspace filter
     title: str | None = None  # Extracted title filter
     repository: str | None = None  # Extracted repository filter
+    edition: str | None = None  # Extracted edition filter (stable/insider/cli)
 
 
 def parse_search_query(query: str) -> ParsedQuery:
@@ -39,7 +40,7 @@ def parse_search_query(query: str) -> ParsedQuery:
     Supports:
     - Multiple words: "python function" → matches both words (AND logic)
     - Exact phrases: '"python function"' → matches exact phrase
-    - Field prefixes: 'role:user workspace:myproject title:something repository:github.com/owner/repo'
+    - Field prefixes: 'role:user workspace:myproject title:something repository:github.com/owner/repo edition:cli'
 
     Args:
         query: The raw search query string.
@@ -52,17 +53,18 @@ def parse_search_query(query: str) -> ParsedQuery:
 
     query = query.strip()
 
-    # Extract field prefixes (role:, workspace:, title:, repository:)
+    # Extract field prefixes (role:, workspace:, title:, repository:, edition:)
     role = None
     workspace = None
     title = None
     repository = None
+    edition = None
 
     # Pattern for field:value (value can be quoted or unquoted)
-    field_pattern = r'\b(role|workspace|title|repository|repo):(?:"([^"]*)"|(\S+))'
+    field_pattern = r'\b(role|workspace|title|repository|repo|edition):(?:"([^"]*)"|(\S+))'
 
     def extract_field(match):
-        nonlocal role, workspace, title, repository
+        nonlocal role, workspace, title, repository, edition
         field_name = match.group(1).lower()
         # Value is either in group 2 (quoted) or group 3 (unquoted)
         value = match.group(2) if match.group(2) is not None else match.group(3)
@@ -75,6 +77,8 @@ def parse_search_query(query: str) -> ParsedQuery:
             title = value
         elif field_name in ("repository", "repo"):
             repository = value
+        elif field_name == "edition":
+            edition = value.lower()
 
         return ""  # Remove the field prefix from the query
 
@@ -111,6 +115,7 @@ def parse_search_query(query: str) -> ParsedQuery:
         workspace=workspace,
         title=title,
         repository=repository,
+        edition=edition,
     )
 
 
@@ -329,7 +334,36 @@ class Database:
         - Derived tables can be dropped and rebuilt, so no migrations needed
         """
         with self._get_connection() as conn:
-            # Create raw_sessions table first (source of truth)
+            # Check if raw_sessions exists and needs migration
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='raw_sessions'"
+            )
+            raw_sessions_exists = cursor.fetchone() is not None
+
+            if raw_sessions_exists:
+                # Check if repository_url column exists, add if missing
+                cursor.execute("PRAGMA table_info(raw_sessions)")
+                columns = {row[1] for row in cursor.fetchall()}
+                if "repository_url" not in columns:
+                    cursor.execute("ALTER TABLE raw_sessions ADD COLUMN repository_url TEXT")
+                    conn.commit()
+
+            # Check if sessions table exists and needs migration
+            cursor.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'"
+            )
+            sessions_exists = cursor.fetchone() is not None
+
+            if sessions_exists:
+                # Check if repository_url column exists in sessions, add if missing
+                cursor.execute("PRAGMA table_info(sessions)")
+                columns = {row[1] for row in cursor.fetchall()}
+                if "repository_url" not in columns:
+                    cursor.execute("ALTER TABLE sessions ADD COLUMN repository_url TEXT")
+                    conn.commit()
+
+            # Create raw_sessions table first (source of truth) - uses IF NOT EXISTS
             conn.executescript(self.RAW_SCHEMA)
             # Create derived tables
             conn.executescript(self.DERIVED_SCHEMA)
@@ -895,7 +929,10 @@ class Database:
                     s.custom_title,
                     s.repository_url,
                     COUNT(m.id) as message_count,
-                    MAX(m.timestamp) as last_message_at
+                    MAX(m.timestamp) as last_message_at,
+                    (SELECT content FROM messages m2 
+                     WHERE m2.session_id = s.session_id AND m2.role = 'user' 
+                     ORDER BY m2.message_index LIMIT 1) as first_user_prompt
                 FROM sessions s
                 LEFT JOIN messages m ON s.session_id = m.session_id
             """
@@ -960,13 +997,14 @@ class Database:
         effective_title = session_title if session_title else parsed.title
         effective_workspace = parsed.workspace  # Only from query parsing
         effective_repository = repository if repository else parsed.repository
+        effective_edition = parsed.edition  # Only from query parsing
 
         # If no FTS query after parsing, we can't do FTS search
         # But we might still have field filters to apply
         fts_query = parsed.fts_query
 
         # Check if we have any filters to apply (even without FTS query)
-        has_filters = effective_role or effective_title or effective_workspace or effective_repository
+        has_filters = effective_role or effective_title or effective_workspace or effective_repository or effective_edition
 
         # Get the safe order clause from whitelist (defaults to relevance)
         order_clause = _SORT_ORDER_CLAUSES.get(sort_by, _SORT_ORDER_CLAUSES["relevance"])
@@ -1015,6 +1053,10 @@ class Database:
                         message_query += " AND s.repository_url LIKE ?"
                         params.append(f"%{effective_repository}%")
 
+                    if effective_edition:
+                        message_query += " AND s.vscode_edition = ?"
+                        params.append(effective_edition)
+
                     # Note: order_clause is safe because it comes from _SORT_ORDER_CLAUSES whitelist
 
                     message_query += f" {order_clause} LIMIT ?"
@@ -1060,6 +1102,10 @@ class Database:
                         message_query += " AND s.repository_url LIKE ?"
                         params.append(f"%{effective_repository}%")
 
+                    if effective_edition:
+                        message_query += " AND s.vscode_edition = ?"
+                        params.append(effective_edition)
+
                     message_query += " ORDER BY s.created_at DESC LIMIT ?"
                     params.append(limit)
 
@@ -1102,6 +1148,10 @@ class Database:
                     tool_query += " AND s.repository_url LIKE ?"
                     params.append(f"%{effective_repository}%")
 
+                if effective_edition:
+                    tool_query += " AND s.vscode_edition = ?"
+                    params.append(effective_edition)
+
                 tool_query += " LIMIT ?"
                 params.append(remaining)
 
@@ -1141,6 +1191,10 @@ class Database:
                 if effective_repository:
                     file_query += " AND s.repository_url LIKE ?"
                     params.append(f"%{effective_repository}%")
+
+                if effective_edition:
+                    file_query += " AND s.vscode_edition = ?"
+                    params.append(effective_edition)
 
                 file_query += " LIMIT ?"
                 params.append(remaining)

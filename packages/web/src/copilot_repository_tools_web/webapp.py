@@ -266,6 +266,7 @@ def create_app(
         query = request.args.get("q", "").strip()
         selected_workspaces = request.args.getlist("workspace")
         selected_repositories = request.args.getlist("repository")
+        selected_editions = request.args.getlist("edition")
         sort_by = request.args.get("sort", "relevance")  # 'relevance' or 'date'
 
         # Get refresh results from session (set after a refresh operation)
@@ -315,6 +316,10 @@ def create_app(
         if selected_repositories:
             sessions = [s for s in sessions if s.get("repository_url") in selected_repositories]
 
+        # Apply edition filter if selected
+        if selected_editions:
+            sessions = [s for s in sessions if s.get("vscode_edition") in selected_editions]
+
         workspaces = db.get_workspaces()
         repositories = db.get_repositories()
         stats = db.get_stats()
@@ -330,6 +335,7 @@ def create_app(
             search_snippets=search_snippets,
             selected_workspaces=selected_workspaces,
             selected_repositories=selected_repositories,
+            selected_editions=selected_editions,
             refresh_result=refresh_result,
             sort_by=sort_by,
         )
@@ -350,7 +356,12 @@ def create_app(
 
         # Pre-process messages to match tool invocations and command runs with content blocks
         # This creates a mapping that the template can use directly
+        first_user_prompt = None
         for message in session.messages:
+            # Capture first user prompt for title fallback
+            if message.role == "user" and first_user_prompt is None:
+                first_user_prompt = message.content
+
             block_tool_map = {}
             block_cmd_map = {}
             used_tool_indices = set()
@@ -388,6 +399,7 @@ def create_app(
             title=app.config["ARCHIVE_TITLE"],
             session=session,
             message_count=len(session.messages),
+            first_user_prompt=first_user_prompt,
         )
 
     @app.route("/refresh", methods=["POST"])
