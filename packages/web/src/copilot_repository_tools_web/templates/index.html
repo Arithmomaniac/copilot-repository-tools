@@ -59,6 +59,9 @@ header {
     border-bottom: 1px solid var(--border-color);
     padding: 20px 0;
     margin-bottom: 20px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
 }
 
 header h1 {
@@ -152,45 +155,220 @@ header .stats {
     font-size: 0.9em;
 }
 
-.workspaces {
+.filters-section {
     display: flex;
     flex-wrap: wrap;
-    gap: 10px;
-    margin-bottom: 10px;
+    gap: 20px;
+    margin-bottom: 20px;
+    align-items: flex-start;
+}
+
+/* Edition filter buttons */
+.edition-filters {
+    display: flex;
+    gap: 8px;
     align-items: center;
 }
 
-.workspace-filter {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    background-color: var(--bg-tertiary);
-    padding: 4px 12px;
-    border-radius: 20px;
+.edition-filters label {
     font-size: 0.85em;
     color: var(--text-secondary);
+    margin-right: 4px;
+}
+
+.edition-filter-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    font-size: 0.85em;
     cursor: pointer;
-    transition: background-color 0.2s;
+    transition: background-color 0.2s, border-color 0.2s;
+    background-color: var(--bg-secondary);
+    color: var(--text-primary);
 }
 
-.workspace-filter:hover {
-    background-color: var(--border-color);
+.edition-filter-btn:hover {
+    background-color: var(--bg-tertiary);
 }
 
-.workspace-filter input[type="checkbox"] {
+.edition-filter-btn input[type="checkbox"] {
+    display: none;
+}
+
+.edition-filter-btn.checked {
+    border-color: var(--link-color);
+    background-color: rgba(9, 105, 218, 0.1);
+}
+
+.edition-filter-btn.checked .edition-badge {
+    opacity: 1;
+}
+
+/* Multi-select dropdown for workspaces */
+.workspace-dropdown {
+    position: relative;
+    min-width: 250px;
+}
+
+.workspace-dropdown-btn {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    font-size: 0.9em;
+    cursor: pointer;
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+}
+
+.workspace-dropdown-btn:hover {
+    border-color: var(--link-color);
+}
+
+.workspace-dropdown-btn .dropdown-arrow {
+    margin-left: 8px;
+    font-size: 0.7em;
+}
+
+.workspace-dropdown-menu {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    max-height: 300px;
+    overflow-y: auto;
+    background-color: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    z-index: 50;
+    margin-top: 4px;
+}
+
+.workspace-dropdown.open .workspace-dropdown-menu {
+    display: block;
+}
+
+.workspace-search {
+    padding: 8px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.workspace-search input {
+    width: 100%;
+    padding: 6px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    font-size: 0.85em;
+    background-color: var(--bg-secondary);
+    color: var(--text-primary);
+}
+
+.workspace-search input:focus {
+    outline: none;
+    border-color: var(--link-color);
+}
+
+.workspace-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    cursor: pointer;
+    font-size: 0.85em;
+    color: var(--text-primary);
+}
+
+.workspace-option:hover {
+    background-color: var(--bg-tertiary);
+}
+
+.workspace-option.hidden {
+    display: none;
+}
+
+.workspace-option input[type="checkbox"] {
     margin: 0;
     cursor: pointer;
 }
 
-.workspace-filter.checked {
-    background-color: var(--link-color);
-    color: white;
+.workspace-option.checked {
+    background-color: rgba(9, 105, 218, 0.1);
+}
+
+.workspace-count {
+    margin-left: auto;
+    font-size: 0.8em;
+    color: var(--text-secondary);
+}
+
+.selected-count {
+    font-size: 0.8em;
+    color: var(--text-secondary);
+    margin-left: 4px;
+}
+
+/* Repository filter pills */
+.repository-filters {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+}
+
+.repository-filters > label:first-child {
+    font-size: 0.85em;
+    color: var(--text-secondary);
+    margin-right: 4px;
+}
+
+.repository-filter {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 16px;
+    font-size: 0.8em;
+    cursor: pointer;
+    transition: background-color 0.2s, border-color 0.2s;
+    background-color: var(--bg-secondary);
+    color: var(--text-primary);
+}
+
+.repository-filter:hover {
+    background-color: var(--bg-tertiary);
+}
+
+.repository-filter input[type="checkbox"] {
+    display: none;
+}
+
+.repository-filter.checked {
+    border-color: #238636;
+    background-color: rgba(35, 134, 54, 0.1);
+    color: #238636;
+}
+
+@media (prefers-color-scheme: dark) {
+    .repository-filter.checked {
+        border-color: #2ea043;
+        background-color: rgba(46, 160, 67, 0.2);
+        color: #2ea043;
+    }
 }
 
 .filter-actions {
     display: flex;
     gap: 10px;
-    margin-bottom: 20px;
+    align-items: center;
 }
 
 .filter-actions button {
@@ -479,9 +657,12 @@ footer a {
             {% for ws_name in selected_workspaces or [] %}
             <input type="hidden" name="workspace" value="{{ ws_name }}">
             {% endfor %}
+            {% for repo_url in selected_repositories or [] %}
+            <input type="hidden" name="repository" value="{{ repo_url }}">
+            {% endfor %}
         </form>
         <div class="search-help">
-            💡 Tips: Use <code>"exact phrase"</code> for exact match, <code>role:user</code> or <code>role:assistant</code> to filter by role, <code>workspace:name</code> to filter by workspace
+            💡 Tips: Use <code>"exact phrase"</code> for exact match, <code>role:user</code> or <code>role:assistant</code> to filter by role, <code>workspace:name</code> to filter by workspace, <code>edition:cli</code> to filter by edition, <code>repo:name</code> to filter by repository
         </div>
 
         {% if refresh_result %}
@@ -511,21 +692,70 @@ footer a {
         </div>
         {% endif %}
 
-        {% if workspaces %}
-        <div class="workspaces" id="workspace-filters">
-            {% for ws in workspaces %}
-            <label class="workspace-filter{% if ws.workspace_name in (selected_workspaces or []) %} checked{% endif %}">
-                <input type="checkbox" name="workspace" value="{{ ws.workspace_name }}"
-                    {% if ws.workspace_name in (selected_workspaces or []) %}checked{% endif %}>
-                {{ ws.workspace_name }} ({{ ws.session_count }})
-            </label>
-            {% endfor %}
+        <div class="filters-section">
+            <!-- Edition filter buttons -->
+            {% if stats.editions %}
+            <div class="edition-filters" id="edition-filters">
+                <label>Edition:</label>
+                {% for edition_name, count in stats.editions.items() %}
+                <label class="edition-filter-btn{% if edition_name in (selected_editions or []) %} checked{% endif %}">
+                    <input type="checkbox" name="edition" value="{{ edition_name }}"
+                        {% if edition_name in (selected_editions or []) %}checked{% endif %}>
+                    <span class="edition-badge {{ edition_name }}">{{ edition_name }}</span>
+                    <span class="edition-count">({{ count }})</span>
+                </label>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            <!-- Workspace multi-select dropdown -->
+            {% if workspaces %}
+            <div class="workspace-dropdown" id="workspace-dropdown">
+                <button type="button" class="workspace-dropdown-btn" id="workspace-dropdown-btn">
+                    <span>
+                        {% if selected_workspaces %}
+                            {{ selected_workspaces | length }} workspace{{ 's' if selected_workspaces | length > 1 else '' }} selected
+                        {% else %}
+                            All workspaces
+                        {% endif %}
+                    </span>
+                    <span class="dropdown-arrow">▼</span>
+                </button>
+                <div class="workspace-dropdown-menu" id="workspace-dropdown-menu">
+                    <div class="workspace-search">
+                        <input type="text" id="workspace-search-input" placeholder="Search workspaces...">
+                    </div>
+                    {% for ws in workspaces %}
+                    <label class="workspace-option{% if ws.workspace_name in (selected_workspaces or []) %} checked{% endif %}" data-name="{{ ws.workspace_name | lower }}">
+                        <input type="checkbox" name="workspace" value="{{ ws.workspace_name }}"
+                            {% if ws.workspace_name in (selected_workspaces or []) %}checked{% endif %}>
+                        {{ ws.workspace_name }}
+                        <span class="workspace-count">{{ ws.session_count }}</span>
+                    </label>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+
+            <!-- Repository filter pills -->
+            {% if repositories %}
+            <div class="repository-filters" id="repository-filters">
+                <label>Repository:</label>
+                {% for repo in repositories %}
+                <label class="repository-filter{% if repo.repository_url in (selected_repositories or []) %} checked{% endif %}">
+                    <input type="checkbox" name="repository" value="{{ repo.repository_url }}"
+                        {% if repo.repository_url in (selected_repositories or []) %}checked{% endif %}>
+                    🔗 {{ repo.repository_url }} ({{ repo.session_count }})
+                </label>
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            <div class="filter-actions">
+                <button type="button" class="apply-btn" id="apply-filter">Apply Filter</button>
+                <button type="button" class="clear-btn" id="clear-filter">Clear</button>
+            </div>
         </div>
-        <div class="filter-actions">
-            <button type="button" class="apply-btn" id="apply-filter">Apply Filter</button>
-            <button type="button" class="clear-btn" id="clear-filter">Clear</button>
-        </div>
-        {% endif %}
 
         <ul class="session-list" id="session-list">
             {% for session in sessions %}
@@ -535,6 +765,8 @@ footer a {
                         {{ session.custom_title }}
                     {% elif session.workspace_name %}
                         {{ session.workspace_name }}
+                    {% elif session.first_user_prompt %}
+                        <em>{{ session.first_user_prompt | truncate(100, True) }}</em>
                     {% else %}
                         Session {{ session.session_id[:8] }}...
                     {% endif %}
@@ -577,32 +809,118 @@ footer a {
     </footer>
 
     <script>
-        // Workspace filter functionality
+        // Filter functionality
         document.addEventListener('DOMContentLoaded', function() {
             const applyBtn = document.getElementById('apply-filter');
             const clearBtn = document.getElementById('clear-filter');
-            const searchForm = document.getElementById('search-form');
-            const workspaceFilters = document.getElementById('workspace-filters');
+            const workspaceDropdown = document.getElementById('workspace-dropdown');
+            const workspaceDropdownBtn = document.getElementById('workspace-dropdown-btn');
+            const workspaceDropdownMenu = document.getElementById('workspace-dropdown-menu');
+            const workspaceSearchInput = document.getElementById('workspace-search-input');
+            const editionFilters = document.getElementById('edition-filters');
+            const repositoryFilters = document.getElementById('repository-filters');
 
-            if (workspaceFilters) {
-                // Toggle checked class on label when checkbox changes
-                workspaceFilters.querySelectorAll('input[type="checkbox"]').forEach(function(checkbox) {
-                    checkbox.addEventListener('change', function() {
-                        this.parentElement.classList.toggle('checked', this.checked);
+            // Workspace dropdown toggle
+            if (workspaceDropdownBtn) {
+                workspaceDropdownBtn.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    workspaceDropdown.classList.toggle('open');
+                    if (workspaceDropdown.classList.contains('open') && workspaceSearchInput) {
+                        workspaceSearchInput.focus();
+                    }
+                });
+            }
+
+            // Close dropdown when clicking outside
+            document.addEventListener('click', function(e) {
+                if (workspaceDropdown && !workspaceDropdown.contains(e.target)) {
+                    workspaceDropdown.classList.remove('open');
+                }
+            });
+
+            // Workspace search filtering
+            if (workspaceSearchInput) {
+                workspaceSearchInput.addEventListener('input', function() {
+                    const searchTerm = this.value.toLowerCase();
+                    const options = workspaceDropdownMenu.querySelectorAll('.workspace-option');
+                    options.forEach(function(option) {
+                        const name = option.dataset.name || '';
+                        if (name.includes(searchTerm)) {
+                            option.classList.remove('hidden');
+                        } else {
+                            option.classList.add('hidden');
+                        }
                     });
                 });
             }
 
+            // Toggle checked class on workspace options
+            if (workspaceDropdownMenu) {
+                workspaceDropdownMenu.querySelectorAll('input[type="checkbox"]').forEach(function(checkbox) {
+                    checkbox.addEventListener('change', function(e) {
+                        e.stopPropagation();
+                        this.closest('.workspace-option').classList.toggle('checked', this.checked);
+                        updateWorkspaceButtonText();
+                    });
+                });
+            }
+
+            // Toggle checked class on edition filter buttons
+            if (editionFilters) {
+                editionFilters.querySelectorAll('input[type="checkbox"]').forEach(function(checkbox) {
+                    checkbox.addEventListener('change', function() {
+                        this.closest('.edition-filter-btn').classList.toggle('checked', this.checked);
+                    });
+                });
+            }
+
+            // Toggle checked class on repository filter pills
+            if (repositoryFilters) {
+                repositoryFilters.querySelectorAll('input[type="checkbox"]').forEach(function(checkbox) {
+                    checkbox.addEventListener('change', function() {
+                        this.closest('.repository-filter').classList.toggle('checked', this.checked);
+                    });
+                });
+            }
+
+            function updateWorkspaceButtonText() {
+                if (!workspaceDropdownBtn) return;
+                const checked = workspaceDropdownMenu.querySelectorAll('input[type="checkbox"]:checked');
+                const count = checked.length;
+                const textSpan = workspaceDropdownBtn.querySelector('span:first-child');
+                if (count === 0) {
+                    textSpan.textContent = 'All workspaces';
+                } else if (count === 1) {
+                    textSpan.textContent = '1 workspace selected';
+                } else {
+                    textSpan.textContent = count + ' workspaces selected';
+                }
+            }
+
             if (applyBtn) {
                 applyBtn.addEventListener('click', function() {
-                    // Get selected workspaces
-                    const checkboxes = workspaceFilters.querySelectorAll('input[type="checkbox"]:checked');
-                    const selectedWorkspaces = Array.from(checkboxes).map(cb => cb.value);
-                    
-                    // Build URL with workspace params
                     const url = new URL(window.location.href);
+                    
+                    // Get selected workspaces
                     url.searchParams.delete('workspace');
-                    selectedWorkspaces.forEach(ws => url.searchParams.append('workspace', ws));
+                    if (workspaceDropdownMenu) {
+                        const workspaceCheckboxes = workspaceDropdownMenu.querySelectorAll('input[type="checkbox"]:checked');
+                        workspaceCheckboxes.forEach(cb => url.searchParams.append('workspace', cb.value));
+                    }
+                    
+                    // Get selected editions
+                    url.searchParams.delete('edition');
+                    if (editionFilters) {
+                        const editionCheckboxes = editionFilters.querySelectorAll('input[type="checkbox"]:checked');
+                        editionCheckboxes.forEach(cb => url.searchParams.append('edition', cb.value));
+                    }
+                    
+                    // Get selected repositories
+                    url.searchParams.delete('repository');
+                    if (repositoryFilters) {
+                        const repoCheckboxes = repositoryFilters.querySelectorAll('input[type="checkbox"]:checked');
+                        repoCheckboxes.forEach(cb => url.searchParams.append('repository', cb.value));
+                    }
                     
                     window.location.href = url.toString();
                 });
@@ -610,15 +928,36 @@ footer a {
 
             if (clearBtn) {
                 clearBtn.addEventListener('click', function() {
-                    // Clear all checkboxes
-                    workspaceFilters.querySelectorAll('input[type="checkbox"]').forEach(function(checkbox) {
-                        checkbox.checked = false;
-                        checkbox.parentElement.classList.remove('checked');
-                    });
+                    // Clear all workspace checkboxes
+                    if (workspaceDropdownMenu) {
+                        workspaceDropdownMenu.querySelectorAll('input[type="checkbox"]').forEach(function(checkbox) {
+                            checkbox.checked = false;
+                            checkbox.closest('.workspace-option').classList.remove('checked');
+                        });
+                        updateWorkspaceButtonText();
+                    }
                     
-                    // Redirect without workspace params
+                    // Clear all edition checkboxes
+                    if (editionFilters) {
+                        editionFilters.querySelectorAll('input[type="checkbox"]').forEach(function(checkbox) {
+                            checkbox.checked = false;
+                            checkbox.closest('.edition-filter-btn').classList.remove('checked');
+                        });
+                    }
+                    
+                    // Clear all repository checkboxes
+                    if (repositoryFilters) {
+                        repositoryFilters.querySelectorAll('input[type="checkbox"]').forEach(function(checkbox) {
+                            checkbox.checked = false;
+                            checkbox.closest('.repository-filter').classList.remove('checked');
+                        });
+                    }
+                    
+                    // Redirect without filter params
                     const url = new URL(window.location.href);
                     url.searchParams.delete('workspace');
+                    url.searchParams.delete('edition');
+                    url.searchParams.delete('repository');
                     window.location.href = url.toString();
                 });
             }
