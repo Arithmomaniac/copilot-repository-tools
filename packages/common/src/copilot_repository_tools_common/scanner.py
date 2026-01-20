@@ -578,38 +578,72 @@ def _format_edits_as_diff(edits: list[list[dict]], original_content: str | None 
             if diff:
                 return diff
 
-    # Fallback: Generate simplified diff showing insertions
-    diff_lines = []
-
+    # Fallback: Collect all edits and consolidate them
+    all_edits = []
     for edit_batch in edits:
         if not isinstance(edit_batch, list):
             continue
-
         for edit in edit_batch:
             if not isinstance(edit, dict):
                 continue
-
             edit_range = edit.get("range", {})
             new_text = edit.get("text", "")
+            if new_text:  # Only include non-empty edits
+                start_line = edit_range.get("startLineNumber", 1)
+                all_edits.append((start_line, new_text))
 
-            if not new_text:
-                continue
+    if not all_edits:
+        return None
 
-            # Extract line numbers
-            start_line = edit_range.get("startLineNumber", "?")
-            end_line = edit_range.get("endLineNumber", "?")
+    # Sort by line number
+    all_edits.sort(key=lambda x: x[0])
 
-            # Format as a simple diff showing the insertion
-            if start_line == end_line:
-                diff_lines.append(f"@@ Line {start_line} @@")
-            else:
-                diff_lines.append(f"@@ Lines {start_line}-{end_line} @@")
+    # Check if this looks like a new file creation (consecutive single-line inserts)
+    # This happens when VS Code streams content line by line
+    is_new_file = len(all_edits) > 5 and all(all_edits[i][0] == all_edits[i - 1][0] + 1 for i in range(1, min(10, len(all_edits))))
 
-            # Show the new text with + prefix for each line
-            for line in new_text.split("\n"):
+    if is_new_file:
+        # Combine all edits into a single block for new file
+        combined_text = ""
+        for _, text in all_edits:
+            combined_text += text
+        # Show as a single addition block
+        diff_lines = ["@@ New file @@"]
+        for line in combined_text.split("\n"):
+            diff_lines.append(f"+ {line}")
+        return "\n".join(diff_lines).rstrip()
+
+    # Group edits by proximity (within 3 lines of each other)
+    groups = []
+    current_group = [all_edits[0]]
+
+    for i in range(1, len(all_edits)):
+        prev_line = current_group[-1][0]
+        curr_line = all_edits[i][0]
+        # If within 3 lines, add to current group
+        if curr_line - prev_line <= 3:
+            current_group.append(all_edits[i])
+        else:
+            groups.append(current_group)
+            current_group = [all_edits[i]]
+    groups.append(current_group)
+
+    # Format each group as a hunk
+    diff_lines = []
+    for group in groups:
+        start_line = group[0][0]
+        end_line = group[-1][0]
+
+        if start_line == end_line:
+            diff_lines.append(f"@@ Line {start_line} @@")
+        else:
+            diff_lines.append(f"@@ Lines {start_line}-{end_line} @@")
+
+        for _, text in group:
+            for line in text.split("\n"):
                 diff_lines.append(f"+ {line}")
 
-            diff_lines.append("")  # Empty line between edits
+        diff_lines.append("")  # Empty line between hunks
 
     if diff_lines:
         return "\n".join(diff_lines).rstrip()

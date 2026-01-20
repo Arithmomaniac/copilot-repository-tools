@@ -1,5 +1,6 @@
 """Flask web application for viewing Copilot chat archive."""
 
+import re
 from datetime import datetime
 from urllib.parse import unquote
 
@@ -34,8 +35,6 @@ def _markdown_to_html(text: str) -> str:
     text = text.replace("\r\n", "\n")
 
     # Replace common VS Code Copilot UI patterns with proper markdown
-    import re
-    from urllib.parse import unquote
 
     def extract_filename_from_file_uri(uri: str) -> str:
         """Extract the filename from a file:// URI."""
@@ -88,6 +87,38 @@ def _urldecode(text: str) -> str:
     if not text:
         return ""
     return unquote(text)
+
+
+# Regex pattern for ANSI escape codes (SGR sequences, cursor control, etc.)
+_ANSI_ESCAPE_PATTERN = re.compile(
+    r"\x1b"  # ESC character (can also appear as \033 or \e)
+    r"(?:"
+    r"\[[0-9;]*[A-Za-z]"  # CSI sequences like [32;1m (colors), [2J (clear)
+    r"|"
+    r"\][^\x07]*\x07"  # OSC sequences ending with BEL
+    r"|"
+    r"\][^\x1b]*\x1b\\"  # OSC sequences ending with ST
+    r")"
+)
+
+
+def _strip_ansi(text: str | None) -> str:
+    """Strip ANSI escape codes from terminal output.
+
+    Handles common ANSI sequences including:
+    - SGR (Select Graphic Rendition) codes for colors/formatting: ESC[32;1m
+    - Cursor control: ESC[2J, ESC[H
+    - OSC (Operating System Command) sequences
+
+    Args:
+        text: Text that may contain ANSI escape codes, or None.
+
+    Returns:
+        Text with ANSI escape codes removed, or empty string if text is None/empty.
+    """
+    if not text:
+        return ""
+    return _ANSI_ESCAPE_PATTERN.sub("", text)
 
 
 def _format_timestamp(value: str) -> str:
@@ -237,6 +268,7 @@ def create_app(
     app.jinja_env.filters["format_timestamp"] = _format_timestamp
     app.jinja_env.filters["parse_diff_stats"] = _parse_diff_stats
     app.jinja_env.filters["extract_filename"] = _extract_filename
+    app.jinja_env.filters["strip_ansi"] = _strip_ansi
 
     # Register global function for tool matching
     app.jinja_env.globals["match_tool_for_block"] = _match_tool_for_block
