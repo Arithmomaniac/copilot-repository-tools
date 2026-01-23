@@ -692,6 +692,45 @@ def rebuild(
     console.print(f"  {stats['workspace_count']} workspaces")
 
 
+@app.command()
+def optimize(
+    db: Annotated[
+        Path,
+        typer.Option(
+            "--db",
+            "-d",
+            help="Path to SQLite database file.",
+            exists=True,
+        ),
+    ] = Path("copilot_chats.db"),
+):
+    """Optimize the full-text search index for better query performance.
+
+    This command merges FTS5 index segments, reducing fragmentation and
+    improving search speed. Recommended to run periodically, especially
+    after bulk imports or the rebuild command.
+
+    The optimization process:
+    1. Merges all FTS index segments into fewer, larger segments
+    2. Runs an integrity check to verify index consistency
+    """
+    database = Database(db)
+
+    console.print("Optimizing FTS5 search index...")
+
+    result = database.optimize_fts()
+
+    console.print("\n[green]Optimization complete:[/green]")
+    console.print(f"  Index segments before: {result['segments_before']}")
+    console.print(f"  Index segments after:  {result['segments_after']}")
+
+    if result["segments_before"] > result["segments_after"]:
+        reduction = result["segments_before"] - result["segments_after"]
+        console.print(f"  [cyan]Merged {reduction} segments for faster queries[/cyan]")
+    else:
+        console.print("  [dim]Index was already optimized[/dim]")
+
+
 def run():
     """Entry point for the CLI."""
     app()

@@ -1709,3 +1709,37 @@ class Database:
             if row:
                 return zlib.decompress(row[0])
             return None
+
+    def optimize_fts(self) -> dict:
+        """Optimize the FTS5 full-text search index for better query performance.
+
+        This merges FTS index segments, reducing fragmentation and improving
+        search speed. Should be run periodically, especially after bulk imports.
+
+        Returns:
+            Dictionary with optimization results including segment counts before/after.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Get segment count before optimization
+            cursor.execute("SELECT COUNT(*) FROM messages_fts_data")
+            segments_before = cursor.fetchone()[0]
+
+            # Run FTS5 optimize command - merges all segments into one
+            cursor.execute("INSERT INTO messages_fts(messages_fts) VALUES('optimize')")
+
+            # Get segment count after optimization
+            cursor.execute("SELECT COUNT(*) FROM messages_fts_data")
+            segments_after = cursor.fetchone()[0]
+
+            # Also run integrity check
+            cursor.execute("INSERT INTO messages_fts(messages_fts) VALUES('integrity-check')")
+
+            conn.commit()
+
+            return {
+                "segments_before": segments_before,
+                "segments_after": segments_after,
+                "optimized": True,
+            }

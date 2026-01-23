@@ -1117,3 +1117,43 @@ class TestSkipAndPagination:
         """Test search when skip exceeds total results."""
         results = db_with_many_sessions.search("pagination", limit=10, skip=100)
         assert len(results) == 0
+
+
+class TestFTSOptimization:
+    """Tests for FTS5 index optimization."""
+
+    def test_optimize_fts_empty_database(self, temp_db):
+        """Test optimize_fts on empty database."""
+        result = temp_db.optimize_fts()
+        assert result["optimized"] is True
+        assert "segments_before" in result
+        assert "segments_after" in result
+
+    def test_optimize_fts_with_data(self, temp_db, sample_session):
+        """Test optimize_fts after adding data."""
+        temp_db.add_session(sample_session)
+        
+        result = temp_db.optimize_fts()
+        assert result["optimized"] is True
+        assert result["segments_before"] >= 0
+        assert result["segments_after"] >= 0
+
+    def test_optimize_fts_multiple_sessions(self, tmp_path):
+        """Test optimize_fts with multiple sessions (more fragmentation)."""
+        db = Database(tmp_path / "multi_session.db")
+        
+        # Add multiple sessions to create FTS fragmentation
+        for i in range(5):
+            session = ChatSession(
+                session_id=f"optimize-test-{i}",
+                workspace_name=f"project-{i}",
+                workspace_path=f"/path/to/project-{i}",
+                messages=[
+                    ChatMessage(role="user", content=f"Test message number {i} for optimization"),
+                    ChatMessage(role="assistant", content=f"Response to message {i}"),
+                ],
+            )
+            db.add_session(session)
+        
+        result = db.optimize_fts()
+        assert result["optimized"] is True
