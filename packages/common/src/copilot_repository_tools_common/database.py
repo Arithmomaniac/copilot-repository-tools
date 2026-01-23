@@ -158,6 +158,11 @@ def parse_search_query(query: str) -> ParsedQuery:
     )
 
 
+# SQL LIKE pattern to detect ISO timestamp format (e.g., "2025-01-15T10:30:00Z")
+# Pattern matches "YYYY-MM-DD" prefix which is common to all ISO timestamps
+_ISO_TIMESTAMP_PATTERN = "____-__-__%"
+
+
 def _build_date_filter_clause(start_date: str | None, end_date: str | None, date_column: str = "s.created_at") -> tuple[str, list]:
     """Build SQL WHERE clause fragments for date filtering.
 
@@ -180,13 +185,13 @@ def _build_date_filter_clause(start_date: str | None, end_date: str | None, date
 
     if start_date:
         # Handle both ISO timestamps and millisecond epochs
-        # For ISO: compare directly
-        # For epoch ms: convert to date
+        # For ISO: compare directly using date extraction
+        # For epoch ms: convert to date using SQLite's datetime functions
         clauses.append(f"""
             (
                 (TYPEOF({date_column}) = 'text' AND (
-                    ({date_column} LIKE '____-__-__%' AND DATE(SUBSTR({date_column}, 1, 10)) >= ?) OR
-                    ({date_column} NOT LIKE '____-__-__%' AND DATE({date_column} / 1000, 'unixepoch') >= ?)
+                    ({date_column} LIKE '{_ISO_TIMESTAMP_PATTERN}' AND DATE(SUBSTR({date_column}, 1, 10)) >= ?) OR
+                    ({date_column} NOT LIKE '{_ISO_TIMESTAMP_PATTERN}' AND DATE({date_column} / 1000, 'unixepoch') >= ?)
                 ))
             )
         """)
@@ -196,8 +201,8 @@ def _build_date_filter_clause(start_date: str | None, end_date: str | None, date
         clauses.append(f"""
             (
                 (TYPEOF({date_column}) = 'text' AND (
-                    ({date_column} LIKE '____-__-__%' AND DATE(SUBSTR({date_column}, 1, 10)) <= ?) OR
-                    ({date_column} NOT LIKE '____-__-__%' AND DATE({date_column} / 1000, 'unixepoch') <= ?)
+                    ({date_column} LIKE '{_ISO_TIMESTAMP_PATTERN}' AND DATE(SUBSTR({date_column}, 1, 10)) <= ?) OR
+                    ({date_column} NOT LIKE '{_ISO_TIMESTAMP_PATTERN}' AND DATE({date_column} / 1000, 'unixepoch') <= ?)
                 ))
             )
         """)
