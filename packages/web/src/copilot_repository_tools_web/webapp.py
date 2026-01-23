@@ -261,13 +261,20 @@ def create_app(
 
     @app.route("/")
     def index():
-        """List sessions, with optional search, workspace, and repository filtering."""
+        """List sessions, with optional search, workspace, repository filtering, and pagination."""
         db = Database(app.config["DB_PATH"])
         query = request.args.get("q", "").strip()
         selected_workspaces = request.args.getlist("workspace")
         selected_repositories = request.args.getlist("repository")
         selected_editions = request.args.getlist("edition")
         sort_by = request.args.get("sort", "relevance")  # 'relevance' or 'date'
+
+        # Pagination parameters
+        try:
+            page = max(1, int(request.args.get("page", 1)))
+        except (ValueError, TypeError):
+            page = 1
+        per_page = 20  # Sessions per page
 
         # Get refresh results from session (set after a refresh operation)
         # Pop to ensure it's only shown once
@@ -320,6 +327,14 @@ def create_app(
         if selected_editions:
             sessions = [s for s in sessions if s.get("vscode_edition") in selected_editions]
 
+        # Calculate pagination
+        total_sessions = len(sessions)
+        total_pages = max(1, (total_sessions + per_page - 1) // per_page)  # Ceiling division
+        page = min(page, total_pages)  # Ensure page doesn't exceed total
+        start_idx = (page - 1) * per_page
+        end_idx = start_idx + per_page
+        paginated_sessions = sessions[start_idx:end_idx]
+
         workspaces = db.get_workspaces()
         repositories = db.get_repositories()
         stats = db.get_stats()
@@ -327,7 +342,7 @@ def create_app(
         return render_template(
             "index.html",
             title=app.config["ARCHIVE_TITLE"],
-            sessions=sessions,
+            sessions=paginated_sessions,
             workspaces=workspaces,
             repositories=repositories,
             stats=stats,
@@ -338,6 +353,11 @@ def create_app(
             selected_editions=selected_editions,
             refresh_result=refresh_result,
             sort_by=sort_by,
+            # Pagination context
+            page=page,
+            per_page=per_page,
+            total_pages=total_pages,
+            total_sessions=total_sessions,
         )
 
     @app.route("/session/<session_id>")

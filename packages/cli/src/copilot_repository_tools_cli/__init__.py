@@ -212,9 +212,17 @@ def search(
         typer.Option(
             "--limit",
             "-l",
-            help="Maximum number of results to show.",
+            "--top",
+            help="Maximum number of results to show (top).",
         ),
     ] = 20,
+    skip: Annotated[
+        int,
+        typer.Option(
+            "--skip",
+            help="Number of results to skip (for pagination).",
+        ),
+    ] = 0,
     role: Annotated[
         str | None,
         typer.Option(
@@ -292,6 +300,7 @@ def search(
     - Multiple words: "python function" matches both words (AND logic)
     - Exact phrases: Use quotes like "python function" for exact match
     - Field filters in query: role:user, role:assistant, workspace:name, title:name, repository:url (or repo:url)
+    - Date filters: start_date:2024-01-01 end_date:2024-12-31 (yyyy-mm-dd format, inclusive)
 
     Examples:
 
@@ -300,11 +309,13 @@ def search(
       copilot-chat-archive search "role:user python"
       copilot-chat-archive search "workspace:my-project"
       copilot-chat-archive search "repo:github.com/owner/repo"
+      copilot-chat-archive search "start_date:2024-01-01 end_date:2024-06-30"
       copilot-chat-archive search '"exact phrase"'
 
     Use --role to filter by user requests or assistant responses.
     Use --title to filter by session/workspace name.
     Use --repository to filter by git repository URL.
+    Use --skip and --limit/--top for pagination.
     Use --no-tools or --no-files to exclude specific content types.
     Use --tools-only or --files-only to search only specific content types.
     Use --full to show complete content instead of truncated snippets.
@@ -336,6 +347,7 @@ def search(
     results = database.search(
         query,
         limit=limit,
+        skip=skip,
         role=role,
         include_messages=include_messages,
         include_tool_calls=include_tool_calls,
@@ -349,9 +361,12 @@ def search(
         console.print(f"[yellow]No results found for '{query}'[/yellow]")
         return
 
-    console.print(f"[green bold]Found {len(results)} result(s) for '{query}':[/green bold]\n")
+    # Display result count with pagination info
+    start_num = skip + 1
+    end_num = skip + len(results)
+    console.print(f"[green bold]Showing results {start_num}-{end_num} for '{query}':[/green bold]\n")
 
-    for i, result in enumerate(results, 1):
+    for i, result in enumerate(results, start_num):
         console.print(f"[cyan bold]━━━ Result {i} ━━━[/cyan bold]")
         console.print(f"[bright_blue bold]Session ID:[/bright_blue bold] {result['session_id']}")
 
