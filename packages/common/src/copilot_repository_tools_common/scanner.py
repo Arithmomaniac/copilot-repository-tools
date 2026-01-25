@@ -286,93 +286,10 @@ def get_vscode_storage_paths() -> list[tuple[str, str]]:
     return paths
 
 
-def _find_chat_dirs_everything(storage_path: str, edition: str) -> Iterator[tuple[Path, str, str]]:
-    """Find chat directories using Everything search (Windows optimization).
-
-    Args:
-        storage_path: Path to VS Code workspaceStorage directory.
-        edition: VS Code edition identifier.
-
-    Yields:
-        Tuples of (chat_dir_path, workspace_id, edition)
-    """
-    from copilot_repository_tools_common.everything_scanner import find_workspaces_with_chat_data
-
-    workspace_dirs = find_workspaces_with_chat_data(storage_path)
-    yielded_workspaces: set[str] = set()
-
-    for workspace_dir in workspace_dirs:
-        workspace_id = workspace_dir.name
-        if workspace_id in yielded_workspaces:
-            continue
-
-        # Check for chatSessions directory (newer format)
-        chat_sessions_dir = workspace_dir / "chatSessions"
-        if chat_sessions_dir.exists() and chat_sessions_dir.is_dir():
-            yielded_workspaces.add(workspace_id)
-            yield chat_sessions_dir, workspace_id, edition
-
-        # Check for state.vscdb.backup
-        copilot_chat_dir = workspace_dir / "state.vscdb.backup"
-        if copilot_chat_dir.exists() and workspace_id not in yielded_workspaces:
-            yielded_workspaces.add(workspace_id)
-            yield copilot_chat_dir.parent, workspace_id, edition
-
-        # Check for workspace.json (workspace with potential state.vscdb)
-        workspace_state = workspace_dir / "workspace.json"
-        if workspace_state.exists() and workspace_id not in yielded_workspaces:
-            yielded_workspaces.add(workspace_id)
-            yield workspace_dir, workspace_id, edition
-
-
-def _find_chat_dirs_standard(storage_path: str, edition: str) -> Iterator[tuple[Path, str, str]]:
-    """Find chat directories using standard directory traversal.
-
-    Args:
-        storage_path: Path to VS Code workspaceStorage directory.
-        edition: VS Code edition identifier.
-
-    Yields:
-        Tuples of (chat_dir_path, workspace_id, edition)
-    """
-    storage_dir = Path(storage_path)
-    if not storage_dir.exists():
-        return
-
-    # Each subdirectory is a workspace
-    for workspace_dir in storage_dir.iterdir():
-        if not workspace_dir.is_dir():
-            continue
-
-        workspace_id = workspace_dir.name
-
-        # Look for Copilot chat sessions - they may be in different locations
-        # depending on the VS Code and Copilot extension versions
-
-        # Check for github.copilot-chat extension storage
-        copilot_chat_dir = workspace_dir / "state.vscdb.backup"  # Some versions use this
-        if copilot_chat_dir.exists():
-            yield copilot_chat_dir.parent, workspace_id, edition
-
-        # Check for chatSessions directory (newer format)
-        chat_sessions_dir = workspace_dir / "chatSessions"
-        if chat_sessions_dir.exists() and chat_sessions_dir.is_dir():
-            yield chat_sessions_dir, workspace_id, edition
-
-        # Check for workspaceState file
-        workspace_state = workspace_dir / "workspace.json"
-        if workspace_state.exists():
-            yield workspace_dir, workspace_id, edition
-
-
 def find_copilot_chat_dirs(
     storage_paths: list[tuple[str, str]] | None = None,
 ) -> Iterator[tuple[Path, str, str]]:
     """Find directories containing Copilot chat sessions.
-
-    On Windows with Everything installed and running, uses Everything for
-    faster indexed search. Otherwise falls back to standard directory traversal.
-    Set COPILOT_NO_EVERYTHING=1 to disable Everything optimization.
 
     Args:
         storage_paths: Optional list of (path, edition) tuples to search.
@@ -384,24 +301,35 @@ def find_copilot_chat_dirs(
     if storage_paths is None:
         storage_paths = get_vscode_storage_paths()
 
-    # Check if Everything optimization is available (lazy import)
-    use_everything = False
-    try:
-        from copilot_repository_tools_common.everything_scanner import is_everything_available
-
-        use_everything = is_everything_available()
-    except ImportError:
-        pass
-
     for storage_path, edition in storage_paths:
-        if use_everything:
-            try:
-                yield from _find_chat_dirs_everything(storage_path, edition)
-            except (RuntimeError, Exception):
-                # Fall back to standard if Everything fails mid-search
-                yield from _find_chat_dirs_standard(storage_path, edition)
-        else:
-            yield from _find_chat_dirs_standard(storage_path, edition)
+        storage_dir = Path(storage_path)
+        if not storage_dir.exists():
+            continue
+
+        # Each subdirectory is a workspace
+        for workspace_dir in storage_dir.iterdir():
+            if not workspace_dir.is_dir():
+                continue
+
+            workspace_id = workspace_dir.name
+
+            # Look for Copilot chat sessions - they may be in different locations
+            # depending on the VS Code and Copilot extension versions
+
+            # Check for github.copilot-chat extension storage
+            copilot_chat_dir = workspace_dir / "state.vscdb.backup"  # Some versions use this
+            if copilot_chat_dir.exists():
+                yield copilot_chat_dir.parent, workspace_id, edition
+
+            # Check for chatSessions directory (newer format)
+            chat_sessions_dir = workspace_dir / "chatSessions"
+            if chat_sessions_dir.exists() and chat_sessions_dir.is_dir():
+                yield chat_sessions_dir, workspace_id, edition
+
+            # Check for workspaceState file
+            workspace_state = workspace_dir / "workspace.json"
+            if workspace_state.exists():
+                yield workspace_dir, workspace_id, edition
 
 
 def _parse_workspace_json(workspace_dir: Path) -> tuple[str | None, str | None]:

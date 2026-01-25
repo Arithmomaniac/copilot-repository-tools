@@ -158,17 +158,8 @@ dependencies = [
     { name = "orjson" },
 ]
 
-[package.optional-dependencies]
-everything = [
-    { name = "everytools" },
-]
-
 [package.metadata]
-requires-dist = [
-    { name = "everytools", marker = "extra == 'everything'", specifier = ">=0.2.0" },
-    { name = "orjson", specifier = ">=3.9.0" },
-]
-provides-extras = ["everything"]
+requires-dist = [{ name = "orjson", specifier = ">=3.9.0" }]
 
 [[package]]
 name = "copilot-repository-tools-web"
@@ -261,15 +252,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/05/0e/c0a0c4678cb30dac735811db529b321d7e1c9120b79bd728d4f4d6b010e9/coverage-7.13.1-cp314-cp314t-win_amd64.whl", hash = "sha256:0e42e0ec0cd3e0d851cb3c91f770c9301f48647cb2877cb78f74bdaa07639a79", size = 223670, upload-time = "2025-12-28T15:42:51.218Z" },
     { url = "https://files.pythonhosted.org/packages/f5/5f/b177aa0011f354abf03a8f30a85032686d290fdeed4222b27d36b4372a50/coverage-7.13.1-cp314-cp314t-win_arm64.whl", hash = "sha256:eaecf47ef10c72ece9a2a92118257da87e460e113b83cc0d2905cbbe931792b4", size = 221707, upload-time = "2025-12-28T15:42:53.034Z" },
     { url = "https://files.pythonhosted.org/packages/cc/48/d9f421cb8da5afaa1a64570d9989e00fb7955e6acddc5a12979f7666ef60/coverage-7.13.1-py3-none-any.whl", hash = "sha256:2016745cb3ba554469d02819d78958b571792bb68e31302610e898f80dd3a573", size = 210722, upload-time = "2025-12-28T15:42:54.901Z" },
-]
-
-[[package]]
-name = "everytools"
-version = "0.2.2"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/6c/13/b005c4aaeb00c531af73adf0ab19b380a537462af260246366f7dbabffab/everytools-0.2.2.tar.gz", hash = "sha256:732ff51c5e3cbc12c640aff2071703e5c86dcf58ea7e831f7ebbc0f56f62aeed", size = 135201, upload-time = "2025-07-20T00:13:31.539Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/a7/31/8f1941d7080905b3f035fc31e8e8274d60e582b493e80d196b1e23a1cdc9/everytools-0.2.2-py3-none-any.whl", hash = "sha256:431551eda275173836870d9d27903e7c4ad41fad1bd2a36bd6809542effe685e", size = 121174, upload-time = "2025-07-20T00:13:29.386Z" },
 ]
 
 [[package]]
