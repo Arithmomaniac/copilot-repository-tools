@@ -203,22 +203,34 @@ def scan(
             with ThreadPoolExecutor(max_workers=PARSE_WORKERS) as executor:
                 parse_results = list(executor.map(parse_session_file, files_to_update))
 
-            # Write to database sequentially (SQLite requires single writer)
+            # Separate new sessions from updates
+            sessions_to_add: list[ChatSession] = []
+            sessions_to_update: list[ChatSession] = []
+
             for sessions in parse_results:
                 for session in sessions:
                     existing = database.get_session(session.session_id)
                     if existing:
-                        database.update_session(session)
-                        updated += 1
-                        if verbose:
-                            workspace = session.workspace_name or "Unknown workspace"
-                            console.print(f"  Updated: {workspace} ({len(session.messages)} messages)")
+                        sessions_to_update.append(session)
                     else:
-                        database.add_session(session)
-                        added += 1
-                        if verbose:
-                            workspace = session.workspace_name or "Unknown workspace"
-                            console.print(f"  Added: {workspace} ({len(session.messages)} messages)")
+                        sessions_to_add.append(session)
+
+            # Batch insert new sessions (single transaction)
+            if sessions_to_add:
+                batch_added, _batch_skipped = database.add_sessions_batch(sessions_to_add)
+                added += batch_added
+                if verbose:
+                    for session in sessions_to_add:
+                        workspace = session.workspace_name or "Unknown workspace"
+                        console.print(f"  Added: {workspace} ({len(session.messages)} messages)")
+
+            # Update existing sessions (must be individual due to delete+insert)
+            for session in sessions_to_update:
+                database.update_session(session)
+                updated += 1
+                if verbose:
+                    workspace = session.workspace_name or "Unknown workspace"
+                    console.print(f"  Updated: {workspace} ({len(session.messages)} messages)")
 
     console.print("\n[green]Import complete:[/green]")
     console.print(f"  Added: {added} sessions")

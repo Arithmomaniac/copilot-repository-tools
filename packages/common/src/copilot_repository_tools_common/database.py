@@ -395,7 +395,7 @@ class Database:
     DERIVED_TRIGGERS: ClassVar[list[str]] = ["messages_ai", "messages_ad", "messages_au"]
 
     # Compression level for zlib (0-9, 6 is a good balance of speed and compression)
-    COMPRESSION_LEVEL = 6
+    COMPRESSION_LEVEL = 1  # Fast compression; level 1 is 2x faster than 6 with similar ratio for JSON
 
     def __init__(self, db_path: str | Path):
         """Initialize the database connection.
@@ -633,6 +633,197 @@ class Database:
                     )
 
             return True
+
+    def add_sessions_batch(self, sessions: list[ChatSession]) -> tuple[int, int]:
+        """Add multiple sessions in a single transaction.
+
+        Much faster than calling add_session() repeatedly as it uses
+        a single connection and commit.
+
+        Args:
+            sessions: List of ChatSession objects to add.
+
+        Returns:
+            Tuple of (added_count, skipped_count).
+        """
+        added = 0
+        skipped = 0
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            for session in sessions:
+                # Check if session already exists
+                cursor.execute("SELECT id FROM raw_sessions WHERE session_id = ?", (session.session_id,))
+                if cursor.fetchone():
+                    skipped += 1
+                    continue
+
+                # Add the session within this transaction
+                self._add_session_impl(cursor, session)
+                added += 1
+
+        return added, skipped
+
+    def _add_session_impl(self, cursor, session: ChatSession):
+        """Internal implementation of add_session that uses an existing cursor.
+
+        Used by add_sessions_batch for efficient batch inserts.
+        """
+        # Store compressed raw JSON
+        if session.raw_json:
+            compressed_json = zlib.compress(session.raw_json, level=self.COMPRESSION_LEVEL)
+        else:
+            compressed_json = zlib.compress(b"{}", level=self.COMPRESSION_LEVEL)
+
+        cursor.execute(
+            """
+            INSERT INTO raw_sessions 
+            (session_id, raw_json_compressed, workspace_name, workspace_path, 
+             source_file, vscode_edition, source_file_mtime, source_file_size, repository_url)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                session.session_id,
+                compressed_json,
+                session.workspace_name,
+                session.workspace_path,
+                session.source_file,
+                session.vscode_edition,
+                session.source_file_mtime,
+                session.source_file_size,
+                session.repository_url,
+            ),
+        )
+
+        # Insert into derived sessions table
+        cursor.execute(
+            """
+            INSERT INTO sessions 
+            (session_id, workspace_name, workspace_path, created_at, updated_at, 
+             source_file, vscode_edition, custom_title, requester_username, responder_username,
+             source_file_mtime, source_file_size, type, repository_url)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                session.session_id,
+                session.workspace_name,
+                session.workspace_path,
+                session.created_at,
+                session.updated_at,
+                session.source_file,
+                session.vscode_edition,
+                session.custom_title,
+                session.requester_username,
+                session.responder_username,
+                session.source_file_mtime,
+                session.source_file_size,
+                session.type,
+                session.repository_url,
+            ),
+        )
+
+        # Insert messages and related data
+        for idx, msg in enumerate(session.messages):
+            cached_markdown = message_to_markdown(msg)
+
+            cursor.execute(
+                """
+                INSERT INTO messages 
+                (session_id, message_index, role, content, timestamp, cached_markdown)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session.session_id,
+                    idx,
+                    msg.role,
+                    msg.content,
+                    msg.timestamp,
+                    cached_markdown,
+                ),
+            )
+            message_id = cursor.lastrowid
+
+            # Insert FTS entry
+            cursor.execute(
+                "INSERT INTO messages_fts (rowid, content) VALUES (?, ?)",
+                (message_id, msg.content),
+            )
+
+            # Insert tool invocations
+            for tool in msg.tool_invocations:
+                cursor.execute(
+                    """
+                    INSERT INTO tool_invocations
+                    (message_id, name, input, result, status, start_time, end_time, source_type, invocation_message)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        message_id,
+                        tool.name,
+                        tool.input,
+                        tool.result,
+                        tool.status,
+                        tool.start_time,
+                        tool.end_time,
+                        tool.source_type,
+                        tool.invocation_message,
+                    ),
+                )
+
+            # Insert file changes
+            for change in msg.file_changes:
+                cursor.execute(
+                    """
+                    INSERT INTO file_changes
+                    (message_id, path, diff, content, explanation, language_id)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        message_id,
+                        change.path,
+                        change.diff,
+                        change.content,
+                        change.explanation,
+                        change.language_id,
+                    ),
+                )
+
+            # Insert command runs
+            for cmd in msg.command_runs:
+                cursor.execute(
+                    """
+                    INSERT INTO command_runs
+                    (message_id, command, title, result, status, output, timestamp)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        message_id,
+                        cmd.command,
+                        cmd.title,
+                        cmd.result,
+                        cmd.status,
+                        cmd.output,
+                        cmd.timestamp,
+                    ),
+                )
+
+            # Insert content blocks
+            for block_idx, block in enumerate(msg.content_blocks):
+                cursor.execute(
+                    """
+                    INSERT INTO content_blocks
+                    (message_id, block_index, kind, content, description)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        message_id,
+                        block_idx,
+                        block.kind,
+                        block.content,
+                        block.description,
+                    ),
+                )
 
     def update_session(self, session: ChatSession):
         """Update an existing session or add it if it doesn't exist.
