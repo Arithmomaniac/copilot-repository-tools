@@ -4,6 +4,7 @@ This module provides a modern CLI built with Typer for scanning, searching,
 and exporting VS Code GitHub Copilot chat history.
 """
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated
@@ -20,6 +21,7 @@ from copilot_repository_tools_common import (
     scan_chat_sessions,
 )
 from copilot_repository_tools_common.scanner import (
+    SessionFileInfo,
     parse_session_file,
     scan_session_files,
 )
@@ -31,6 +33,9 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
+
+# Number of threads for parallel file parsing
+PARSE_WORKERS = 4
 
 
 def version_callback(value: bool):
@@ -171,11 +176,12 @@ def scan(
         # Incremental mode: load all file metadata upfront for fast comparison
         stored_metadata = database.get_all_file_metadata()
 
+        # Collect files that need updating
+        files_to_update: list[SessionFileInfo] = []
         for file_info in scan_session_files(paths):
             source_file = str(file_info.file_path)
             stored = stored_metadata.get(source_file)
 
-            # Check if file needs update
             needs_update = (
                 stored is None
                 or stored[0] is None
@@ -185,8 +191,20 @@ def scan(
             )
 
             if needs_update:
-                # File changed or new - parse and process
-                sessions = parse_session_file(file_info)
+                files_to_update.append(file_info)
+            else:
+                skipped += 1
+                if verbose:
+                    workspace = file_info.workspace_name or "Unknown workspace"
+                    console.print(f"  Skipped (unchanged): {workspace}")
+
+        # Parse files in parallel (I/O + CPU bound)
+        if files_to_update:
+            with ThreadPoolExecutor(max_workers=PARSE_WORKERS) as executor:
+                parse_results = list(executor.map(parse_session_file, files_to_update))
+
+            # Write to database sequentially (SQLite requires single writer)
+            for sessions in parse_results:
                 for session in sessions:
                     existing = database.get_session(session.session_id)
                     if existing:
@@ -201,11 +219,6 @@ def scan(
                         if verbose:
                             workspace = session.workspace_name or "Unknown workspace"
                             console.print(f"  Added: {workspace} ({len(session.messages)} messages)")
-            else:
-                skipped += 1
-                if verbose:
-                    workspace = file_info.workspace_name or "Unknown workspace"
-                    console.print(f"  Skipped (unchanged): {workspace}")
 
     console.print("\n[green]Import complete:[/green]")
     console.print(f"  Added: {added} sessions")
