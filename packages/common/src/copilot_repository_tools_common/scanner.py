@@ -138,8 +138,19 @@ class SessionFileInfo:
     workspace_path: str | None = None
 
 
+# Cache for detect_repository_url to avoid repeated subprocess calls
+_repository_url_cache: dict[str, str | None] = {}
+
+
+def _clear_repository_url_cache() -> None:
+    """Clear the repository URL cache (for testing)."""
+    _repository_url_cache.clear()
+
+
 def detect_repository_url(workspace_path: str | None) -> str | None:
     """Detect the git repository URL from a workspace path.
+
+    Results are cached to avoid repeated subprocess calls for the same workspace.
 
     This function looks for a .git directory and reads the remote origin URL.
     This enables repository-scoped memories that work across multiple worktrees
@@ -155,7 +166,12 @@ def detect_repository_url(workspace_path: str | None) -> str | None:
     if not workspace_path:
         return None
 
+    # Check cache first
+    if workspace_path in _repository_url_cache:
+        return _repository_url_cache[workspace_path]
+
     workspace = Path(workspace_path)
+    result_url: str | None = None
 
     # Check if this is a git repository (handles both regular repos and worktrees)
     try:
@@ -169,30 +185,27 @@ def detect_repository_url(workspace_path: str | None) -> str | None:
             timeout=5,
             check=False,
         )
-        if result.returncode != 0:
-            return None
-
-        # Get the remote origin URL
-        result = subprocess.run(
-            ["git", "config", "--get", "remote.origin.url"],  # noqa: S607 - trusted git command
-            cwd=str(workspace),
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-        if result.returncode != 0:
-            return None
-
-        remote_url = result.stdout.strip()
-        if not remote_url:
-            return None
-
-        # Normalize the URL to a consistent format (e.g., "github.com/owner/repo")
-        return _normalize_git_url(remote_url)
+        if result.returncode == 0:
+            # Get the remote origin URL
+            result = subprocess.run(
+                ["git", "config", "--get", "remote.origin.url"],  # noqa: S607 - trusted git command
+                cwd=str(workspace),
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+            if result.returncode == 0:
+                remote_url = result.stdout.strip()
+                if remote_url:
+                    result_url = _normalize_git_url(remote_url)
 
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        return None
+        pass
+
+    # Cache the result (including None)
+    _repository_url_cache[workspace_path] = result_url
+    return result_url
 
 
 def _normalize_git_url(url: str) -> str:
