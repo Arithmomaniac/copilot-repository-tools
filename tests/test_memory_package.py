@@ -47,12 +47,12 @@ class TestMemoryPackageImports:
 
         config = get_default_config()
 
-        # Should have llm config
+        # Should have llm config (github_copilot via our patch)
         assert "llm" in config
-        assert config["llm"]["provider"] == "litellm"
-        assert config["llm"]["config"]["model"] == "github_copilot/gpt-4"
+        assert config["llm"]["provider"] == "github_copilot"
+        assert config["llm"]["config"]["model"] == "github_copilot/gpt-4o"
 
-        # Should have embedder config
+        # Should have embedder config (litellm for embeddings)
         assert "embedder" in config
         assert config["embedder"]["provider"] == "litellm"
 

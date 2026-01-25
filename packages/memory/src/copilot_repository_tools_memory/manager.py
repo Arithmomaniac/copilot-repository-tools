@@ -21,10 +21,46 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+# Apply LiteLLM embeddings patch before importing Memory
+from copilot_repository_tools_memory.litellm_embeddings import patch_mem0_for_litellm
+
+patch_mem0_for_litellm()
+
+from copilot_repository_tools_common.scanner import detect_repository_url
 from mem0 import Memory
 
 if TYPE_CHECKING:
     from copilot_repository_tools_common import ChatSession
+
+
+def _normalize_path(path: str) -> str:
+    """Normalize a file path for consistent scope matching.
+
+    Handles Windows path quirks:
+    - Converts backslashes to forward slashes
+    - Lowercases drive letters (C: -> c:)
+    - Removes trailing slashes
+    - Preserves the rest of the path case (some systems are case-sensitive)
+
+    Args:
+        path: The path to normalize.
+
+    Returns:
+        Normalized path string.
+    """
+    import sys
+
+    # Convert backslashes to forward slashes
+    normalized = path.replace("\\", "/")
+
+    # On Windows, lowercase the drive letter for consistency
+    if sys.platform == "win32" and len(normalized) >= 2 and normalized[1] == ":":
+        normalized = normalized[0].lower() + normalized[1:]
+
+    # Remove trailing slash
+    normalized = normalized.rstrip("/")
+
+    return normalized
 
 
 def _get_scope_id(repository_url: str | None, workspace_path: str | None) -> str:
@@ -32,7 +68,7 @@ def _get_scope_id(repository_url: str | None, workspace_path: str | None) -> str
 
     Memories are scoped to:
     1. Repository (if workspace is in a git repo) - normalized URL
-    2. Workspace/folder (if not in a git repo) - workspace path
+    2. Workspace/folder (if not in a git repo) - workspace path (normalized)
 
     Args:
         repository_url: The normalized git repository URL (e.g., 'github.com/owner/repo').
@@ -45,8 +81,9 @@ def _get_scope_id(repository_url: str | None, workspace_path: str | None) -> str
         # Use repository URL as scope (allows memories to be shared across worktrees)
         return f"repo:{repository_url}"
     elif workspace_path:
-        # Use workspace path as scope (folder-scoped memories)
-        return f"folder:{workspace_path}"
+        # Normalize the path for consistent matching across sessions
+        normalized_path = _normalize_path(workspace_path)
+        return f"folder:{normalized_path}"
     else:
         return "unknown"
 
@@ -81,6 +118,11 @@ def get_default_config(data_dir: Path | None = None) -> dict:
     Returns:
         Mem0 configuration dictionary.
     """
+    import litellm
+
+    # GitHub Copilot doesn't support all OpenAI params, so drop unsupported ones
+    litellm.drop_params = True
+
     if data_dir is None:
         data_dir = Path.home() / ".copilot-memory"
 
@@ -88,9 +130,9 @@ def get_default_config(data_dir: Path | None = None) -> dict:
 
     return {
         "llm": {
-            "provider": "litellm",
+            "provider": "github_copilot",
             "config": {
-                "model": "github_copilot/gpt-4",
+                "model": "github_copilot/gpt-4o",
                 "temperature": 0,
             },
         },
@@ -227,7 +269,12 @@ class MemoryManager:
             Returns empty list if session was skipped (already indexed).
         """
         # Determine the scope for this session
-        scope_id = _get_scope_id(session.repository_url, session.workspace_path)
+        # If repository_url is missing, try to detect it from workspace path
+        # This handles worktrees and sessions imported before detection was added
+        repository_url = session.repository_url
+        if not repository_url and session.workspace_path:
+            repository_url = detect_repository_url(session.workspace_path)
+        scope_id = _get_scope_id(repository_url, session.workspace_path)
         current_message_count = len(session.messages)
 
         # Check if already indexed (skip if same message count, unless forced)

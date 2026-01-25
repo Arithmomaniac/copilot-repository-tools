@@ -9,7 +9,7 @@ description = "Semantic memory layer for Copilot Repository Tools using Mem0"
 requires-python = ">=3.12"
 dependencies = [
     "copilot-repository-tools-common",
-    "mem0ai>=0.1.0",
+    "mem0ai>=1.0.0",
     "litellm>=1.0.0",
     "chromadb>=0.4.0",
     "typer>=0.12.0",

@@ -27,14 +27,46 @@ from rich.table import Table
 from .manager import MemoryManager, get_default_config
 
 
+def _normalize_path(path: str) -> str:
+    """Normalize a file path for consistent scope matching.
+
+    Handles Windows path quirks:
+    - Converts backslashes to forward slashes
+    - Lowercases drive letters (C: -> c:)
+    - Removes trailing slashes
+
+    Args:
+        path: The path to normalize.
+
+    Returns:
+        Normalized path string.
+    """
+    import sys
+
+    # Convert backslashes to forward slashes
+    normalized = path.replace("\\", "/")
+
+    # On Windows, lowercase the drive letter for consistency
+    if sys.platform == "win32" and len(normalized) >= 2 and normalized[1] == ":":
+        normalized = normalized[0].lower() + normalized[1:]
+
+    # Remove trailing slash
+    normalized = normalized.rstrip("/")
+
+    return normalized
+
+
 def _parse_scope(scope: str | None) -> str:
     """Parse a scope string and return a normalized scope ID.
 
     Accepts:
     - 'repo:github.com/owner/repo' -> 'repo:github.com/owner/repo'
     - 'folder:/path/to/project' -> 'folder:/path/to/project'
+    - 'folder:C:/path/to/project' -> 'folder:c:/path/to/project' (Windows, normalized)
     - 'github.com/owner/repo' -> 'repo:github.com/owner/repo' (assumes repo)
     - '/path/to/project' -> 'folder:/path/to/project' (assumes folder if starts with /)
+    - 'C:/path' or 'c:\\path' -> 'folder:c:/path' (Windows absolute path, normalized)
+    - 'unknown' -> 'unknown' (special case for unscoped sessions)
 
     Args:
         scope: The scope string to parse.
@@ -45,14 +77,24 @@ def _parse_scope(scope: str | None) -> str:
     if not scope:
         return "unknown"
 
-    # Already has prefix
-    if scope.startswith("repo:") or scope.startswith("folder:"):
+    # Special case for 'unknown' scope (sessions with no workspace/repo)
+    if scope == "unknown":
+        return "unknown"
+
+    # Already has prefix - normalize folder paths
+    if scope.startswith("folder:"):
+        path_part = scope[7:]  # Remove 'folder:' prefix
+        return f"folder:{_normalize_path(path_part)}"
+    if scope.startswith("repo:"):
         return scope
 
     # Infer type from format
     if scope.startswith("/"):
-        # Absolute path - treat as folder scope
-        return f"folder:{scope}"
+        # Unix absolute path - treat as folder scope
+        return f"folder:{_normalize_path(scope)}"
+    elif len(scope) >= 2 and scope[1] == ":" and scope[0].isalpha():
+        # Windows absolute path (C:\... or C:/...)
+        return f"folder:{_normalize_path(scope)}"
     else:
         # Assume repository URL (e.g., github.com/owner/repo)
         return f"repo:{scope}"
@@ -65,35 +107,42 @@ app = typer.Typer(
 )
 console = Console()
 
-# Default data directory
-DEFAULT_DATA_DIR = Path.home() / ".copilot-memory"
+# Default database path
+DEFAULT_DB_PATH = Path("copilot_chats.db")
 
 
-def _get_memory_manager(data_dir: Path | None = None) -> MemoryManager:
+def _get_data_dir_from_db(db_path: Path) -> Path:
+    """Get data directory colocated with the database.
+
+    The vector database is stored in a 'copilot_memory' subdirectory
+    alongside the SQLite database.
+    """
+    return db_path.parent / "copilot_memory"
+
+
+def _get_memory_manager(db_path: Path) -> MemoryManager:
     """Get a MemoryManager instance, setting up if needed."""
-    if data_dir is None:
-        data_dir = DEFAULT_DATA_DIR
-
+    data_dir = _get_data_dir_from_db(db_path)
     data_dir.mkdir(parents=True, exist_ok=True)
-
     return MemoryManager(data_dir=data_dir)
 
 
 @app.command("setup")
 def setup_memory(
-    data_dir: Annotated[
+    db: Annotated[
         Path,
-        typer.Option("--data-dir", "-d", help="Directory for storing memory data."),
-    ] = DEFAULT_DATA_DIR,
+        typer.Option("--db", "-d", help="Path to copilot_chats.db SQLite database."),
+    ] = DEFAULT_DB_PATH,
 ):
     """Initialize Mem0 with local resources.
 
     This sets up:
-    - Local ChromaDB for vector storage
+    - Local ChromaDB for vector storage (colocated with the database)
     - LiteLLM configuration for GitHub Copilot models
 
     This command is optional - setup happens automatically on first use.
     """
+    data_dir = _get_data_dir_from_db(db.resolve())
     data_dir.mkdir(parents=True, exist_ok=True)
 
     console.print(f"[cyan]Setting up Mem0 in {data_dir}...[/cyan]")
@@ -118,7 +167,7 @@ def index_memories(
     db: Annotated[
         Path,
         typer.Option("--db", "-d", help="Path to copilot_chats.db SQLite database."),
-    ] = Path("copilot_chats.db"),
+    ] = DEFAULT_DB_PATH,
     workspace: Annotated[
         str | None,
         typer.Option("--workspace", "-w", help="Only index sessions from this workspace."),
@@ -135,10 +184,6 @@ def index_memories(
         bool,
         typer.Option("--force", "-f", help="Force re-index all sessions."),
     ] = False,
-    data_dir: Annotated[
-        Path,
-        typer.Option("--data-dir", help="Directory for storing memory data."),
-    ] = DEFAULT_DATA_DIR,
 ):
     """Index chat sessions into Mem0 for semantic search.
 
@@ -155,12 +200,13 @@ def index_memories(
     """
     from copilot_repository_tools_common import Database
 
+    db = db.resolve()
     if not db.exists():
         console.print(f"[red]Database not found: {db}[/red]")
         console.print("Run 'copilot-chat-archive scan' first to import sessions.")
         raise typer.Exit(1)
 
-    manager = _get_memory_manager(data_dir)
+    manager = _get_memory_manager(db)
     database = Database(str(db))
 
     sessions = database.list_sessions(workspace_name=workspace, limit=limit)
@@ -215,6 +261,10 @@ def index_memories(
 @app.command("search")
 def search_memories(
     query: Annotated[str, typer.Argument(help="Natural language search query.")],
+    db: Annotated[
+        Path,
+        typer.Option("--db", "-d", help="Path to copilot_chats.db SQLite database."),
+    ] = DEFAULT_DB_PATH,
     limit: Annotated[
         int,
         typer.Option("--limit", "-l", help="Maximum results to return."),
@@ -227,10 +277,6 @@ def search_memories(
             help="Scope to search within (e.g., 'repo:github.com/owner/repo' or 'folder:/path/to/project').",
         ),
     ] = None,
-    data_dir: Annotated[
-        Path,
-        typer.Option("--data-dir", help="Directory for storing memory data."),
-    ] = DEFAULT_DATA_DIR,
 ):
     """Semantic search through memories within a scope.
 
@@ -249,7 +295,7 @@ def search_memories(
         copilot-memory search "how did I handle authentication?" --scope repo:github.com/owner/repo
         copilot-memory search "async patterns" --scope /path/to/project
     """
-    manager = _get_memory_manager(data_dir)
+    manager = _get_memory_manager(db.resolve())
 
     # Determine scope
     scope_id = _parse_scope(scope)
@@ -278,6 +324,10 @@ def search_memories(
 
 @app.command("list")
 def list_memories(
+    db: Annotated[
+        Path,
+        typer.Option("--db", "-d", help="Path to copilot_chats.db SQLite database."),
+    ] = DEFAULT_DB_PATH,
     scope: Annotated[
         str | None,
         typer.Option(
@@ -290,10 +340,6 @@ def list_memories(
         int,
         typer.Option("--limit", "-l", help="Maximum results to show."),
     ] = 50,
-    data_dir: Annotated[
-        Path,
-        typer.Option("--data-dir", help="Directory for storing memory data."),
-    ] = DEFAULT_DATA_DIR,
 ):
     """List all stored memories within a scope.
 
@@ -301,7 +347,7 @@ def list_memories(
     - Repository: --scope repo:github.com/owner/repo
     - Folder: --scope folder:/path/to/project
     """
-    manager = _get_memory_manager(data_dir)
+    manager = _get_memory_manager(db.resolve())
 
     # Determine scope
     scope_id = _parse_scope(scope)
@@ -339,6 +385,10 @@ def list_memories(
 
 @app.command("clear")
 def clear_memories(
+    db: Annotated[
+        Path,
+        typer.Option("--db", "-d", help="Path to copilot_chats.db SQLite database."),
+    ] = DEFAULT_DB_PATH,
     scope: Annotated[
         str | None,
         typer.Option(
@@ -351,10 +401,6 @@ def clear_memories(
         bool,
         typer.Option("--yes", "-y", help="Skip confirmation prompt."),
     ] = False,
-    data_dir: Annotated[
-        Path,
-        typer.Option("--data-dir", help="Directory for storing memory data."),
-    ] = DEFAULT_DATA_DIR,
 ):
     """Clear stored memories within a scope.
 
@@ -374,7 +420,7 @@ def clear_memories(
             console.print("[yellow]Cancelled.[/yellow]")
             raise typer.Exit(0)
 
-    manager = _get_memory_manager(data_dir)
+    manager = _get_memory_manager(db.resolve())
     count = manager.clear(scope_id=scope_id)
 
     if count == -1:
@@ -385,6 +431,10 @@ def clear_memories(
 
 @app.command("stats")
 def show_stats(
+    db: Annotated[
+        Path,
+        typer.Option("--db", "-d", help="Path to copilot_chats.db SQLite database."),
+    ] = DEFAULT_DB_PATH,
     scope: Annotated[
         str | None,
         typer.Option(
@@ -393,10 +443,6 @@ def show_stats(
             help="Scope to show stats for (e.g., 'repo:github.com/owner/repo' or 'folder:/path/to/project').",
         ),
     ] = None,
-    data_dir: Annotated[
-        Path,
-        typer.Option("--data-dir", help="Directory for storing memory data."),
-    ] = DEFAULT_DATA_DIR,
 ):
     """Show memory statistics for a scope.
 
@@ -409,7 +455,7 @@ def show_stats(
         console.print("Example: copilot-memory stats --scope repo:github.com/owner/repo")
         raise typer.Exit(1)
 
-    manager = _get_memory_manager(data_dir)
+    manager = _get_memory_manager(db.resolve())
 
     stats = manager.get_scope_stats(scope_id)
 

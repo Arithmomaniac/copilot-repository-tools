@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.12"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -466,7 +466,7 @@ requires-dist = [
     { name = "chromadb", specifier = ">=0.4.0" },
     { name = "copilot-repository-tools-common", editable = "packages/common" },
     { name = "litellm", specifier = ">=1.0.0" },
-    { name = "mem0ai", specifier = ">=0.1.0" },
+    { name = "mem0ai", specifier = ">=1.0.0" },
     { name = "rich", specifier = ">=13.0.0" },
     { name = "typer", specifier = ">=0.12.0" },
 ]
