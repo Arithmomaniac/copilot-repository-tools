@@ -297,3 +297,36 @@ class TestRebuildCommand:
         # Verbose output shows progress - check for expected patterns
         assert "Processed:" in result.output
         assert "Rebuild complete" in result.output
+
+
+class TestOptimizeCommand:
+    """Tests for the optimize CLI command."""
+
+    def test_optimize_command_success(self, runner, tmp_path):
+        """Test optimize command with valid database."""
+        db_path = tmp_path / "optimize_test.db"
+        db = Database(db_path)
+
+        # Add a session to have some data in FTS index
+        session = ChatSession(
+            session_id="optimize-cli-test",
+            workspace_name="optimize-workspace",
+            workspace_path="/optimize/path",
+            messages=[
+                ChatMessage(role="user", content="Test for optimization"),
+                ChatMessage(role="assistant", content="Response for optimization"),
+            ],
+        )
+        db.add_session(session)
+
+        result = runner.invoke(app, ["optimize", "--db", str(db_path)])
+        assert result.exit_code == 0
+        assert "Optimizing" in result.output
+        assert "Optimization complete" in result.output
+        assert "Index segments" in result.output
+
+    def test_optimize_command_missing_db(self, runner, tmp_path):
+        """Test optimize command with non-existent database."""
+        result = runner.invoke(app, ["optimize", "--db", str(tmp_path / "nonexistent.db")])
+        # Typer returns exit code 2 for validation errors (exists=True on file path)
+        assert result.exit_code == 2

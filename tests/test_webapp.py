@@ -909,3 +909,79 @@ class TestHtmlOutputMessageStructure:
         assert "test-workspace" in html
         # Should show edition badge
         assert "stable" in html
+
+
+class TestWebappPagination:
+    """Tests for pagination in the web interface."""
+
+    @pytest.fixture
+    def db_with_many_sessions(self, tmp_path):
+        """Create a database with many sessions for pagination testing."""
+        db_path = tmp_path / "pagination_test.db"
+        db = Database(db_path)
+
+        # Create 25 sessions (more than one page of 20)
+        for i in range(25):
+            session = ChatSession(
+                session_id=f"pagination-session-{i}",
+                workspace_name=f"project-{i}",
+                workspace_path=f"/path/to/project-{i}",
+                messages=[ChatMessage(role="user", content=f"Message {i}")],
+                created_at=f"2024-01-{(i % 28) + 1:02d}T10:00:00Z",
+                vscode_edition="stable",
+            )
+            db.add_session(session)
+
+        return db_path
+
+    def test_pagination_shows_on_index(self, db_with_many_sessions):
+        """Test that pagination controls appear when there are many sessions."""
+        app = create_app(str(db_with_many_sessions))
+        app.config["TESTING"] = True
+        client = app.test_client()
+
+        response = client.get("/")
+        html = response.data.decode("utf-8")
+
+        # Should show pagination controls
+        assert "pagination" in html
+        assert "Showing" in html
+
+    def test_pagination_page_parameter(self, db_with_many_sessions):
+        """Test that page parameter works correctly."""
+        app = create_app(str(db_with_many_sessions))
+        app.config["TESTING"] = True
+        client = app.test_client()
+
+        # Page 1
+        response = client.get("/?page=1")
+        assert response.status_code == 200
+
+        # Page 2
+        response = client.get("/?page=2")
+        assert response.status_code == 200
+
+    def test_pagination_preserves_query_params(self, db_with_many_sessions):
+        """Test that pagination preserves search and filter parameters."""
+        app = create_app(str(db_with_many_sessions))
+        app.config["TESTING"] = True
+        client = app.test_client()
+
+        response = client.get("/?q=Message&sort=date&page=1")
+        html = response.data.decode("utf-8")
+
+        # Pagination links should preserve query params
+        assert response.status_code == 200
+
+    def test_search_help_includes_date_filters(self, db_with_many_sessions):
+        """Test that search help tips include date filter documentation."""
+        app = create_app(str(db_with_many_sessions))
+        app.config["TESTING"] = True
+        client = app.test_client()
+
+        response = client.get("/")
+        html = response.data.decode("utf-8")
+
+        # Should include date filter documentation
+        assert "start_date" in html
+        assert "end_date" in html

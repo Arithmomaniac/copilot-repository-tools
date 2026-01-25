@@ -621,6 +621,67 @@ footer a {
 .refresh-notification strong {
     font-weight: 600;
 }
+
+/* Pagination styles */
+.pagination {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 8px;
+    margin: 20px 0;
+    flex-wrap: wrap;
+}
+
+.pagination-info {
+    color: var(--text-secondary);
+    font-size: 0.9em;
+    margin-right: 12px;
+}
+
+.pagination-controls {
+    display: flex;
+    gap: 4px;
+    align-items: center;
+}
+
+.pagination-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 36px;
+    height: 36px;
+    padding: 0 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background-color: var(--bg-secondary);
+    color: var(--text-primary);
+    font-size: 0.9em;
+    text-decoration: none;
+    cursor: pointer;
+    transition: background-color 0.2s, border-color 0.2s;
+}
+
+.pagination-btn:hover {
+    background-color: var(--bg-tertiary);
+    border-color: var(--link-color);
+}
+
+.pagination-btn.active {
+    background-color: var(--link-color);
+    border-color: var(--link-color);
+    color: white;
+}
+
+.pagination-btn.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+.pagination-ellipsis {
+    color: var(--text-secondary);
+    padding: 0 8px;
+}
     </style>
 </head>
 <body>
@@ -662,7 +723,7 @@ footer a {
             {% endfor %}
         </form>
         <div class="search-help">
-            💡 Tips: Use <code>"exact phrase"</code> for exact match, <code>role:user</code> or <code>role:assistant</code> to filter by role, <code>workspace:name</code> to filter by workspace, <code>edition:cli</code> to filter by edition, <code>repo:name</code> to filter by repository
+            💡 Tips: Use <code>"exact phrase"</code> for exact match, <code>role:user</code> or <code>role:assistant</code> to filter by role, <code>workspace:name</code> to filter by workspace, <code>edition:cli</code> to filter by edition, <code>repo:name</code> to filter by repository, <code>start_date:2024-01-01</code> and <code>end_date:2024-12-31</code> to filter by date
         </div>
 
         {% if refresh_result %}
@@ -800,6 +861,50 @@ footer a {
             <li class="no-results">No sessions found. Import some chat history first!</li>
             {% endfor %}
         </ul>
+
+        {% if total_pages > 1 %}
+        <div class="pagination">
+            <span class="pagination-info">
+                Showing {{ (page - 1) * per_page + 1 }}-{{ [(page - 1) * per_page + sessions|length, total_sessions] | min }} of {{ total_sessions }} sessions
+            </span>
+            <div class="pagination-controls">
+                {% if page > 1 %}
+                <a href="?page=1{% if query %}&q={{ query | urlencode }}{% endif %}{% if sort_by %}&sort={{ sort_by }}{% endif %}{% for ws in selected_workspaces %}&workspace={{ ws | urlencode }}{% endfor %}{% for repo in selected_repositories %}&repository={{ repo | urlencode }}{% endfor %}{% for ed in selected_editions %}&edition={{ ed }}{% endfor %}" class="pagination-btn" title="First page">&laquo;</a>
+                <a href="?page={{ page - 1 }}{% if query %}&q={{ query | urlencode }}{% endif %}{% if sort_by %}&sort={{ sort_by }}{% endif %}{% for ws in selected_workspaces %}&workspace={{ ws | urlencode }}{% endfor %}{% for repo in selected_repositories %}&repository={{ repo | urlencode }}{% endfor %}{% for ed in selected_editions %}&edition={{ ed }}{% endfor %}" class="pagination-btn" title="Previous page">&lsaquo;</a>
+                {% else %}
+                <span class="pagination-btn disabled">&laquo;</span>
+                <span class="pagination-btn disabled">&lsaquo;</span>
+                {% endif %}
+
+                {% set start_page = [1, page - 2] | max %}
+                {% set end_page = [total_pages, page + 2] | min %}
+
+                {% if start_page > 1 %}
+                <span class="pagination-ellipsis">...</span>
+                {% endif %}
+
+                {% for p in range(start_page, end_page + 1) %}
+                {% if p == page %}
+                <span class="pagination-btn active">{{ p }}</span>
+                {% else %}
+                <a href="?page={{ p }}{% if query %}&q={{ query | urlencode }}{% endif %}{% if sort_by %}&sort={{ sort_by }}{% endif %}{% for ws in selected_workspaces %}&workspace={{ ws | urlencode }}{% endfor %}{% for repo in selected_repositories %}&repository={{ repo | urlencode }}{% endfor %}{% for ed in selected_editions %}&edition={{ ed }}{% endfor %}" class="pagination-btn">{{ p }}</a>
+                {% endif %}
+                {% endfor %}
+
+                {% if end_page < total_pages %}
+                <span class="pagination-ellipsis">...</span>
+                {% endif %}
+
+                {% if page < total_pages %}
+                <a href="?page={{ page + 1 }}{% if query %}&q={{ query | urlencode }}{% endif %}{% if sort_by %}&sort={{ sort_by }}{% endif %}{% for ws in selected_workspaces %}&workspace={{ ws | urlencode }}{% endfor %}{% for repo in selected_repositories %}&repository={{ repo | urlencode }}{% endfor %}{% for ed in selected_editions %}&edition={{ ed }}{% endfor %}" class="pagination-btn" title="Next page">&rsaquo;</a>
+                <a href="?page={{ total_pages }}{% if query %}&q={{ query | urlencode }}{% endif %}{% if sort_by %}&sort={{ sort_by }}{% endif %}{% for ws in selected_workspaces %}&workspace={{ ws | urlencode }}{% endfor %}{% for repo in selected_repositories %}&repository={{ repo | urlencode }}{% endfor %}{% for ed in selected_editions %}&edition={{ ed }}{% endfor %}" class="pagination-btn" title="Last page">&raquo;</a>
+                {% else %}
+                <span class="pagination-btn disabled">&rsaquo;</span>
+                <span class="pagination-btn disabled">&raquo;</span>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
     </main>
 
     <footer>

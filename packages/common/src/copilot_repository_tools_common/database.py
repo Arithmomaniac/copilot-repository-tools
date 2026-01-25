@@ -32,6 +32,32 @@ class ParsedQuery:
     title: str | None = None  # Extracted title filter
     repository: str | None = None  # Extracted repository filter
     edition: str | None = None  # Extracted edition filter (stable/insider/cli)
+    start_date: str | None = None  # Extracted start date filter (yyyy-mm-dd format, inclusive)
+    end_date: str | None = None  # Extracted end date filter (yyyy-mm-dd format, inclusive)
+
+
+def _validate_date_format(date_str: str) -> str | None:
+    """Validate date string is in yyyy-mm-dd format.
+
+    Args:
+        date_str: Date string to validate.
+
+    Returns:
+        The validated date string if valid, None otherwise.
+    """
+    if not date_str:
+        return None
+    # Check format: yyyy-mm-dd
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", date_str):
+        return None
+    # Basic validation of month/day ranges
+    try:
+        _year, month, day = map(int, date_str.split("-"))
+        if month < 1 or month > 12 or day < 1 or day > 31:
+            return None
+        return date_str
+    except (ValueError, AttributeError):
+        return None
 
 
 def parse_search_query(query: str) -> ParsedQuery:
@@ -41,6 +67,7 @@ def parse_search_query(query: str) -> ParsedQuery:
     - Multiple words: "python function" → matches both words (AND logic)
     - Exact phrases: '"python function"' → matches exact phrase
     - Field prefixes: 'role:user workspace:myproject title:something repository:github.com/owner/repo edition:cli'
+    - Date filters: 'start_date:2024-01-01 end_date:2024-12-31' (yyyy-mm-dd format, inclusive)
 
     Args:
         query: The raw search query string.
@@ -53,18 +80,20 @@ def parse_search_query(query: str) -> ParsedQuery:
 
     query = query.strip()
 
-    # Extract field prefixes (role:, workspace:, title:, repository:, edition:)
+    # Extract field prefixes (role:, workspace:, title:, repository:, edition:, start_date:, end_date:)
     role = None
     workspace = None
     title = None
     repository = None
     edition = None
+    start_date = None
+    end_date = None
 
     # Pattern for field:value (value can be quoted or unquoted)
-    field_pattern = r'\b(role|workspace|title|repository|repo|edition):(?:"([^"]*)"|(\S+))'
+    field_pattern = r'\b(role|workspace|title|repository|repo|edition|start_date|end_date):(?:"([^"]*)"|(\S+))'
 
     def extract_field(match):
-        nonlocal role, workspace, title, repository, edition
+        nonlocal role, workspace, title, repository, edition, start_date, end_date
         field_name = match.group(1).lower()
         # Value is either in group 2 (quoted) or group 3 (unquoted)
         value = match.group(2) if match.group(2) is not None else match.group(3)
@@ -79,6 +108,14 @@ def parse_search_query(query: str) -> ParsedQuery:
             repository = value
         elif field_name == "edition":
             edition = value.lower()
+        elif field_name == "start_date":
+            validated = _validate_date_format(value)
+            if validated:
+                start_date = validated
+        elif field_name == "end_date":
+            validated = _validate_date_format(value)
+            if validated:
+                end_date = validated
 
         return ""  # Remove the field prefix from the query
 
@@ -116,7 +153,62 @@ def parse_search_query(query: str) -> ParsedQuery:
         title=title,
         repository=repository,
         edition=edition,
+        start_date=start_date,
+        end_date=end_date,
     )
+
+
+# SQL LIKE pattern to detect ISO timestamp format (e.g., "2025-01-15T10:30:00Z")
+# Pattern matches "YYYY-MM-DD" prefix which is common to all ISO timestamps
+_ISO_TIMESTAMP_PATTERN = "____-__-__%"
+
+
+def _build_date_filter_clause(start_date: str | None, end_date: str | None, date_column: str = "s.created_at") -> tuple[str, list]:
+    """Build SQL WHERE clause fragments for date filtering.
+
+    The created_at field can be:
+    1. ISO timestamp string like "2025-01-15T10:30:00Z"
+    2. Millisecond epoch timestamp like "1704067200000"
+
+    This function handles both formats by using SQLite's date/datetime functions.
+
+    Args:
+        start_date: Start date in yyyy-mm-dd format (inclusive).
+        end_date: End date in yyyy-mm-dd format (inclusive).
+        date_column: The SQL column name to filter on.
+
+    Returns:
+        Tuple of (SQL clause string, list of parameters).
+    """
+    clauses = []
+    params = []
+
+    if start_date:
+        # Handle both ISO timestamps and millisecond epochs
+        # For ISO: compare directly using date extraction
+        # For epoch ms: convert to date using SQLite's datetime functions
+        clauses.append(f"""
+            (
+                (TYPEOF({date_column}) = 'text' AND (
+                    ({date_column} LIKE '{_ISO_TIMESTAMP_PATTERN}' AND DATE(SUBSTR({date_column}, 1, 10)) >= ?) OR
+                    ({date_column} NOT LIKE '{_ISO_TIMESTAMP_PATTERN}' AND DATE({date_column} / 1000, 'unixepoch') >= ?)
+                ))
+            )
+        """)
+        params.extend([start_date, start_date])
+
+    if end_date:
+        clauses.append(f"""
+            (
+                (TYPEOF({date_column}) = 'text' AND (
+                    ({date_column} LIKE '{_ISO_TIMESTAMP_PATTERN}' AND DATE(SUBSTR({date_column}, 1, 10)) <= ?) OR
+                    ({date_column} NOT LIKE '{_ISO_TIMESTAMP_PATTERN}' AND DATE({date_column} / 1000, 'unixepoch') <= ?)
+                ))
+            )
+        """)
+        params.extend([end_date, end_date])
+
+    return " AND ".join(clauses) if clauses else "", params
 
 
 # Allowed sort options with their SQL ORDER BY clauses (whitelist for security)
@@ -254,8 +346,11 @@ class Database:
     CREATE INDEX IF NOT EXISTS idx_sessions_workspace ON sessions(workspace_name);
     CREATE INDEX IF NOT EXISTS idx_sessions_created ON sessions(created_at);
     CREATE INDEX IF NOT EXISTS idx_sessions_repository ON sessions(repository_url);
+    CREATE INDEX IF NOT EXISTS idx_sessions_edition ON sessions(vscode_edition);
     CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
     CREATE INDEX IF NOT EXISTS idx_messages_role ON messages(role);
+    CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
+    CREATE INDEX IF NOT EXISTS idx_messages_session_index ON messages(session_id, message_index);
     CREATE INDEX IF NOT EXISTS idx_tool_invocations_message ON tool_invocations(message_id);
     CREATE INDEX IF NOT EXISTS idx_file_changes_message ON file_changes(message_id);
     CREATE INDEX IF NOT EXISTS idx_command_runs_message ON command_runs(message_id);
@@ -336,9 +431,7 @@ class Database:
         with self._get_connection() as conn:
             # Check if raw_sessions exists and needs migration
             cursor = conn.cursor()
-            cursor.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='raw_sessions'"
-            )
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='raw_sessions'")
             raw_sessions_exists = cursor.fetchone() is not None
 
             if raw_sessions_exists:
@@ -350,9 +443,7 @@ class Database:
                     conn.commit()
 
             # Check if sessions table exists and needs migration
-            cursor.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'"
-            )
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'")
             sessions_exists = cursor.fetchone() is not None
 
             if sessions_exists:
@@ -955,6 +1046,7 @@ class Database:
         self,
         query: str,
         limit: int = 50,
+        skip: int = 0,
         role: str | None = None,
         include_messages: bool = True,
         include_tool_calls: bool = True,
@@ -962,6 +1054,8 @@ class Database:
         session_title: str | None = None,
         sort_by: str = "relevance",
         repository: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
     ) -> list[dict]:
         """Search messages using full-text search with field filtering.
 
@@ -969,10 +1063,12 @@ class Database:
         - Multiple words: "python function" → matches both words (AND logic)
         - Exact phrases: '"python function"' → matches exact phrase
         - Field prefixes: 'role:user', 'workspace:myproject', 'title:something', 'repository:github.com/owner/repo'
+        - Date filters: 'start_date:2024-01-01 end_date:2024-12-31' (yyyy-mm-dd format, inclusive)
 
         Args:
             query: The search query (supports field prefixes and quoted phrases).
-            limit: Maximum number of results to return.
+            limit: Maximum number of results to return (top).
+            skip: Number of results to skip (for pagination).
             role: Filter by message role ('user', 'assistant', or None for both).
                   Can also be specified in query as 'role:user' or 'role:assistant'.
             include_messages: Whether to search message content.
@@ -983,6 +1079,10 @@ class Database:
             sort_by: Sort order - 'relevance' (default) or 'date'.
             repository: Filter by repository URL.
                         Can also be specified in query as 'repository:...' or 'repo:...'.
+            start_date: Filter results on or after this date (yyyy-mm-dd format, inclusive).
+                        Can also be specified in query as 'start_date:yyyy-mm-dd'.
+            end_date: Filter results on or before this date (yyyy-mm-dd format, inclusive).
+                      Can also be specified in query as 'end_date:yyyy-mm-dd'.
 
         Returns:
             List of matching messages with session info.
@@ -998,13 +1098,15 @@ class Database:
         effective_workspace = parsed.workspace  # Only from query parsing
         effective_repository = repository if repository else parsed.repository
         effective_edition = parsed.edition  # Only from query parsing
+        effective_start_date = start_date if start_date else parsed.start_date
+        effective_end_date = end_date if end_date else parsed.end_date
 
         # If no FTS query after parsing, we can't do FTS search
         # But we might still have field filters to apply
         fts_query = parsed.fts_query
 
         # Check if we have any filters to apply (even without FTS query)
-        has_filters = effective_role or effective_title or effective_workspace or effective_repository or effective_edition
+        has_filters = effective_role or effective_title or effective_workspace or effective_repository or effective_edition or effective_start_date or effective_end_date
 
         # Get the safe order clause from whitelist (defaults to relevance)
         order_clause = _SORT_ORDER_CLAUSES.get(sort_by, _SORT_ORDER_CLAUSES["relevance"])
@@ -1057,10 +1159,16 @@ class Database:
                         message_query += " AND s.vscode_edition = ?"
                         params.append(effective_edition)
 
+                    # Add date filters
+                    date_clause, date_params = _build_date_filter_clause(effective_start_date, effective_end_date, "s.created_at")
+                    if date_clause:
+                        message_query += f" AND {date_clause}"
+                        params.extend(date_params)
+
                     # Note: order_clause is safe because it comes from _SORT_ORDER_CLAUSES whitelist
 
-                    message_query += f" {order_clause} LIMIT ?"
-                    params.append(limit)
+                    message_query += f" {order_clause} LIMIT ? OFFSET ?"
+                    params.extend([limit, skip])
 
                     cursor.execute(message_query, params)
                     results.extend([dict(row) for row in cursor.fetchall()])
@@ -1106,8 +1214,14 @@ class Database:
                         message_query += " AND s.vscode_edition = ?"
                         params.append(effective_edition)
 
-                    message_query += " ORDER BY s.created_at DESC LIMIT ?"
-                    params.append(limit)
+                    # Add date filters
+                    date_clause, date_params = _build_date_filter_clause(effective_start_date, effective_end_date, "s.created_at")
+                    if date_clause:
+                        message_query += f" AND {date_clause}"
+                        params.extend(date_params)
+
+                    message_query += " ORDER BY s.created_at DESC LIMIT ? OFFSET ?"
+                    params.extend([limit, skip])
 
                     cursor.execute(message_query, params)
                     results.extend([dict(row) for row in cursor.fetchall()])
@@ -1152,6 +1266,12 @@ class Database:
                     tool_query += " AND s.vscode_edition = ?"
                     params.append(effective_edition)
 
+                # Add date filters
+                date_clause, date_params = _build_date_filter_clause(effective_start_date, effective_end_date, "s.created_at")
+                if date_clause:
+                    tool_query += f" AND {date_clause}"
+                    params.extend(date_params)
+
                 tool_query += " LIMIT ?"
                 params.append(remaining)
 
@@ -1195,6 +1315,12 @@ class Database:
                 if effective_edition:
                     file_query += " AND s.vscode_edition = ?"
                     params.append(effective_edition)
+
+                # Add date filters
+                date_clause, date_params = _build_date_filter_clause(effective_start_date, effective_end_date, "s.created_at")
+                if date_clause:
+                    file_query += f" AND {date_clause}"
+                    params.extend(date_params)
 
                 file_query += " LIMIT ?"
                 params.append(remaining)
@@ -1583,3 +1709,37 @@ class Database:
             if row:
                 return zlib.decompress(row[0])
             return None
+
+    def optimize_fts(self) -> dict:
+        """Optimize the FTS5 full-text search index for better query performance.
+
+        This merges FTS index segments, reducing fragmentation and improving
+        search speed. Should be run periodically, especially after bulk imports.
+
+        Returns:
+            Dictionary with optimization results including segment counts before/after.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Get segment count before optimization
+            cursor.execute("SELECT COUNT(*) FROM messages_fts_data")
+            segments_before = cursor.fetchone()[0]
+
+            # Run FTS5 optimize command - merges all segments into one
+            cursor.execute("INSERT INTO messages_fts(messages_fts) VALUES('optimize')")
+
+            # Get segment count after optimization
+            cursor.execute("SELECT COUNT(*) FROM messages_fts_data")
+            segments_after = cursor.fetchone()[0]
+
+            # Also run integrity check
+            cursor.execute("INSERT INTO messages_fts(messages_fts) VALUES('integrity-check')")
+
+            conn.commit()
+
+            return {
+                "segments_before": segments_before,
+                "segments_after": segments_after,
+                "optimized": True,
+            }

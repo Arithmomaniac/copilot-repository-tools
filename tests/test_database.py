@@ -959,3 +959,201 @@ class TestRepositoryUrlSupport:
         # Search with repository: prefix
         results = temp_db.search("repository:other Hello")
         assert len(results) == 1
+
+
+class TestDateFiltering:
+    """Tests for date filtering in search queries."""
+
+    @pytest.fixture
+    def db_with_dated_sessions(self, tmp_path):
+        """Create a database with sessions having different dates."""
+        db = Database(tmp_path / "date_test.db")
+
+        # Session 1: 2024-01-15 (ISO timestamp format)
+        session1 = ChatSession(
+            session_id="session-jan-15",
+            workspace_name="project1",
+            workspace_path="/path/to/project1",
+            messages=[ChatMessage(role="user", content="January 15 message")],
+            created_at="2024-01-15T10:30:00Z",
+        )
+        db.add_session(session1)
+
+        # Session 2: 2024-02-20 (ISO timestamp format)
+        session2 = ChatSession(
+            session_id="session-feb-20",
+            workspace_name="project2",
+            workspace_path="/path/to/project2",
+            messages=[ChatMessage(role="user", content="February 20 message")],
+            created_at="2024-02-20T14:00:00Z",
+        )
+        db.add_session(session2)
+
+        # Session 3: 2024-03-10 (millisecond timestamp format: 1710057600000)
+        session3 = ChatSession(
+            session_id="session-mar-10",
+            workspace_name="project3",
+            workspace_path="/path/to/project3",
+            messages=[ChatMessage(role="user", content="March 10 message")],
+            created_at="1710057600000",  # 2024-03-10 00:00:00 UTC
+        )
+        db.add_session(session3)
+
+        return db
+
+    def test_parse_search_query_start_date(self):
+        """Test parsing start_date from search query."""
+        result = parse_search_query("python start_date:2024-01-01")
+        assert result.fts_query == "python"
+        assert result.start_date == "2024-01-01"
+
+    def test_parse_search_query_end_date(self):
+        """Test parsing end_date from search query."""
+        result = parse_search_query("python end_date:2024-12-31")
+        assert result.fts_query == "python"
+        assert result.end_date == "2024-12-31"
+
+    def test_parse_search_query_both_dates(self):
+        """Test parsing both start and end dates from search query."""
+        result = parse_search_query("python start_date:2024-01-01 end_date:2024-06-30")
+        assert result.fts_query == "python"
+        assert result.start_date == "2024-01-01"
+        assert result.end_date == "2024-06-30"
+
+    def test_parse_search_query_invalid_date_format(self):
+        """Test that invalid date formats are ignored."""
+        result = parse_search_query("python start_date:01-01-2024")  # Wrong format
+        assert result.fts_query == "python"
+        assert result.start_date is None
+
+        result = parse_search_query("python start_date:2024/01/01")  # Wrong separator
+        assert result.fts_query == "python"
+        assert result.start_date is None
+
+    def test_parse_search_query_date_only(self):
+        """Test parsing date-only filters without search terms."""
+        result = parse_search_query("start_date:2024-01-01 end_date:2024-12-31")
+        assert result.fts_query == ""
+        assert result.start_date == "2024-01-01"
+        assert result.end_date == "2024-12-31"
+
+    def test_search_with_start_date_filter(self, db_with_dated_sessions):
+        """Test search with start_date filter."""
+        # Search for messages from Feb 1 onwards (should find Feb 20 and Mar 10)
+        results = db_with_dated_sessions.search("message start_date:2024-02-01")
+        session_ids = {r["session_id"] for r in results}
+        assert "session-jan-15" not in session_ids
+        assert "session-feb-20" in session_ids
+        assert "session-mar-10" in session_ids
+
+    def test_search_with_end_date_filter(self, db_with_dated_sessions):
+        """Test search with end_date filter."""
+        # Search for messages up to Feb 28 (should find Jan 15 and Feb 20)
+        results = db_with_dated_sessions.search("message end_date:2024-02-28")
+        session_ids = {r["session_id"] for r in results}
+        assert "session-jan-15" in session_ids
+        assert "session-feb-20" in session_ids
+        assert "session-mar-10" not in session_ids
+
+    def test_search_with_date_range_filter(self, db_with_dated_sessions):
+        """Test search with both start and end date filters."""
+        # Search for messages between Feb 1 and Feb 28 (should only find Feb 20)
+        results = db_with_dated_sessions.search("message start_date:2024-02-01 end_date:2024-02-28")
+        assert len(results) == 1
+        assert results[0]["session_id"] == "session-feb-20"
+
+
+class TestSkipAndPagination:
+    """Tests for skip/offset pagination in search."""
+
+    @pytest.fixture
+    def db_with_many_sessions(self, tmp_path):
+        """Create a database with multiple sessions for pagination testing."""
+        db = Database(tmp_path / "pagination_test.db")
+
+        # Create 5 sessions with searchable content
+        for i in range(5):
+            session = ChatSession(
+                session_id=f"session-{i}",
+                workspace_name=f"project-{i}",
+                workspace_path=f"/path/to/project-{i}",
+                messages=[ChatMessage(role="user", content=f"Test pagination message number {i}")],
+                created_at=f"2024-01-{10 + i:02d}T10:00:00Z",
+            )
+            db.add_session(session)
+
+        return db
+
+    def test_search_with_skip_parameter(self, db_with_many_sessions):
+        """Test search with skip parameter."""
+        # Get all results first
+        all_results = db_with_many_sessions.search("pagination", limit=10, skip=0)
+        assert len(all_results) == 5
+
+        # Skip first 2 results
+        skipped_results = db_with_many_sessions.search("pagination", limit=10, skip=2)
+        assert len(skipped_results) == 3
+
+        # Skip first 4 results
+        skipped_results = db_with_many_sessions.search("pagination", limit=10, skip=4)
+        assert len(skipped_results) == 1
+
+    def test_search_with_limit_and_skip(self, db_with_many_sessions):
+        """Test search with both limit and skip for pagination."""
+        # First page: limit=2, skip=0
+        page1 = db_with_many_sessions.search("pagination", limit=2, skip=0)
+        assert len(page1) == 2
+
+        # Second page: limit=2, skip=2
+        page2 = db_with_many_sessions.search("pagination", limit=2, skip=2)
+        assert len(page2) == 2
+
+        # Pages should have different sessions
+        page1_ids = {r["session_id"] for r in page1}
+        page2_ids = {r["session_id"] for r in page2}
+        assert page1_ids.isdisjoint(page2_ids)
+
+    def test_search_skip_exceeds_results(self, db_with_many_sessions):
+        """Test search when skip exceeds total results."""
+        results = db_with_many_sessions.search("pagination", limit=10, skip=100)
+        assert len(results) == 0
+
+
+class TestFTSOptimization:
+    """Tests for FTS5 index optimization."""
+
+    def test_optimize_fts_empty_database(self, temp_db):
+        """Test optimize_fts on empty database."""
+        result = temp_db.optimize_fts()
+        assert result["optimized"] is True
+        assert "segments_before" in result
+        assert "segments_after" in result
+
+    def test_optimize_fts_with_data(self, temp_db, sample_session):
+        """Test optimize_fts after adding data."""
+        temp_db.add_session(sample_session)
+        
+        result = temp_db.optimize_fts()
+        assert result["optimized"] is True
+        assert result["segments_before"] >= 0
+        assert result["segments_after"] >= 0
+
+    def test_optimize_fts_multiple_sessions(self, tmp_path):
+        """Test optimize_fts with multiple sessions (more fragmentation)."""
+        db = Database(tmp_path / "multi_session.db")
+        
+        # Add multiple sessions to create FTS fragmentation
+        for i in range(5):
+            session = ChatSession(
+                session_id=f"optimize-test-{i}",
+                workspace_name=f"project-{i}",
+                workspace_path=f"/path/to/project-{i}",
+                messages=[
+                    ChatMessage(role="user", content=f"Test message number {i} for optimization"),
+                    ChatMessage(role="assistant", content=f"Response to message {i}"),
+                ],
+            )
+            db.add_session(session)
+        
+        result = db.optimize_fts()
+        assert result["optimized"] is True
