@@ -228,6 +228,23 @@ The GitHub Copilot CLI stores chat history in JSONL format:
 
 The scanner automatically detects and imports both VS Code and CLI sessions by default.
 
+## Performance Optimization (Windows)
+
+On Windows, you can speed up scanning significantly by installing the [Everything](https://www.voidtools.com/) search utility:
+
+```bash
+# Install with Everything support
+pip install copilot-repository-tools-cli[everything]
+# or with uv
+uv tool install copilot-repository-tools-cli[everything]
+```
+
+**Requirements:**
+- [Everything](https://www.voidtools.com/) must be installed and running
+- Works automatically when Everything is available; falls back to standard scanning when not
+
+**Disable:** Set environment variable `COPILOT_NO_EVERYTHING=1` to force standard directory traversal.
+
 ## Database Schema
 
 The SQLite database uses a two-layer design:

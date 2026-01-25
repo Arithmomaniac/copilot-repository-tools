@@ -666,3 +666,51 @@ class TestRepositoryUrlDetection:
 
         # Should be callable
         assert callable(detect_repository_url)
+
+
+class TestEverythingScanner:
+    """Tests for the Everything scanner optimization."""
+
+    def test_is_everything_available_returns_bool(self):
+        """Test that is_everything_available returns a boolean."""
+        from copilot_repository_tools_common.everything_scanner import is_everything_available
+
+        result = is_everything_available()
+        assert isinstance(result, bool)
+
+    def test_is_everything_available_respects_env_override(self, monkeypatch):
+        """Test that COPILOT_NO_EVERYTHING disables Everything."""
+        from copilot_repository_tools_common.everything_scanner import is_everything_available
+
+        monkeypatch.setenv("COPILOT_NO_EVERYTHING", "1")
+        assert is_everything_available() is False
+
+    def test_everytools_loader_handles_missing_package(self):
+        """Test that _EverytoolsLoader handles missing everytools gracefully."""
+        from copilot_repository_tools_common.everything_scanner import _EverytoolsLoader
+
+        # Reset loader state for test
+        _EverytoolsLoader._checked = False
+        _EverytoolsLoader._module = None
+
+        # Should not raise, returns module or None
+        result = _EverytoolsLoader.get()
+        # Result depends on whether everytools is installed
+        assert result is None or hasattr(result, "search")
+
+    def test_find_chat_dirs_standard_fallback(self, mock_workspace_storage):
+        """Test that standard directory traversal works as fallback."""
+        from copilot_repository_tools_common.scanner import _find_chat_dirs_standard
+
+        # mock_workspace_storage is the workspaceStorage directory
+        results = list(_find_chat_dirs_standard(str(mock_workspace_storage), "test"))
+        # Should find at least the chatSessions dir we created
+        assert len(results) >= 1
+
+    def test_find_copilot_chat_dirs_with_env_override(self, mock_workspace_storage, monkeypatch):
+        """Test that find_copilot_chat_dirs respects COPILOT_NO_EVERYTHING."""
+        monkeypatch.setenv("COPILOT_NO_EVERYTHING", "1")
+
+        # Should still work using standard fallback
+        results = list(find_copilot_chat_dirs([(str(mock_workspace_storage), "test")]))
+        assert len(results) >= 1

@@ -11,5 +11,8 @@ dependencies = [
     "orjson>=3.9.0",
 ]
 
+[project.optional-dependencies]
+everything = ["everytools>=0.2.0"]
+
 [tool.uv]
 package = true
