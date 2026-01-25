@@ -691,6 +691,54 @@ class Database:
             # Compare with provided values
             return stored_mtime != file_mtime or stored_size != file_size
 
+    def needs_update_by_file(self, source_file: str, file_mtime: float, file_size: int) -> bool:
+        """Check if a file needs to be parsed based on its metadata.
+
+        This is more efficient than needs_update() as it doesn't require
+        parsing the file first to get the session_id.
+
+        Returns True if:
+        - No session exists with this source_file, OR
+        - Stored mtime/size differs from provided values
+
+        Args:
+            source_file: The path to the source file.
+            file_mtime: The current file modification time.
+            file_size: The current file size in bytes.
+
+        Returns:
+            True if the file needs to be parsed, False otherwise.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT source_file_mtime, source_file_size FROM raw_sessions WHERE source_file = ?",
+                (source_file,),
+            )
+            row = cursor.fetchone()
+
+            if row is None:
+                return True
+
+            stored_mtime, stored_size = row[0], row[1]
+            if stored_mtime is None or stored_size is None:
+                return True
+
+            return stored_mtime != file_mtime or stored_size != file_size
+
+    def get_all_file_metadata(self) -> dict[str, tuple[float, int]]:
+        """Get all stored file metadata in one query.
+
+        Returns a dict mapping source_file -> (mtime, size) for all sessions.
+        This is much faster than calling needs_update_by_file for each file.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT source_file, source_file_mtime, source_file_size FROM raw_sessions WHERE source_file IS NOT NULL"
+            )
+            return {row[0]: (row[1], row[2]) for row in cursor.fetchall()}
+
     def get_session(self, session_id: str) -> ChatSession | None:
         """Get a session by its ID.
 

@@ -19,6 +19,10 @@ from copilot_repository_tools_common import (
     get_vscode_storage_paths,
     scan_chat_sessions,
 )
+from copilot_repository_tools_common.scanner import (
+    parse_session_file,
+    scan_session_files,
+)
 from rich.console import Console
 
 app = typer.Typer(
@@ -147,8 +151,9 @@ def scan(
     updated = 0
     skipped = 0
 
-    for session in scan_chat_sessions(paths):
-        if full:
+    if full:
+        # Full mode: parse and update all sessions
+        for session in scan_chat_sessions(paths):
             existing = database.get_session(session.session_id)
             if existing:
                 database.update_session(session)
@@ -162,25 +167,44 @@ def scan(
                 if verbose:
                     workspace = session.workspace_name or "Unknown workspace"
                     console.print(f"  Added: {workspace} ({len(session.messages)} messages)")
-        else:
-            if database.needs_update(session.session_id, session.source_file_mtime, session.source_file_size):
-                existing = database.get_session(session.session_id)
-                if existing:
-                    database.update_session(session)
-                    updated += 1
-                    if verbose:
-                        workspace = session.workspace_name or "Unknown workspace"
-                        console.print(f"  Updated: {workspace} ({len(session.messages)} messages)")
-                else:
-                    database.add_session(session)
-                    added += 1
-                    if verbose:
-                        workspace = session.workspace_name or "Unknown workspace"
-                        console.print(f"  Added: {workspace} ({len(session.messages)} messages)")
+    else:
+        # Incremental mode: load all file metadata upfront for fast comparison
+        stored_metadata = database.get_all_file_metadata()
+
+        for file_info in scan_session_files(paths):
+            source_file = str(file_info.file_path)
+            stored = stored_metadata.get(source_file)
+
+            # Check if file needs update
+            needs_update = (
+                stored is None
+                or stored[0] is None
+                or stored[1] is None
+                or stored[0] != file_info.mtime
+                or stored[1] != file_info.size
+            )
+
+            if needs_update:
+                # File changed or new - parse and process
+                sessions = parse_session_file(file_info)
+                for session in sessions:
+                    existing = database.get_session(session.session_id)
+                    if existing:
+                        database.update_session(session)
+                        updated += 1
+                        if verbose:
+                            workspace = session.workspace_name or "Unknown workspace"
+                            console.print(f"  Updated: {workspace} ({len(session.messages)} messages)")
+                    else:
+                        database.add_session(session)
+                        added += 1
+                        if verbose:
+                            workspace = session.workspace_name or "Unknown workspace"
+                            console.print(f"  Added: {workspace} ({len(session.messages)} messages)")
             else:
                 skipped += 1
                 if verbose:
-                    workspace = session.workspace_name or "Unknown workspace"
+                    workspace = file_info.workspace_name or "Unknown workspace"
                     console.print(f"  Skipped (unchanged): {workspace}")
 
     console.print("\n[green]Import complete:[/green]")

@@ -23,21 +23,50 @@ if TYPE_CHECKING:
 class _EverytoolsLoader:
     """Lazy loader for everytools module to avoid import errors when not installed."""
 
-    _module: Any = None
     _checked: bool = False
+    _search_class: Any = None
+    _service_available: bool | None = None  # Cache service availability
 
     @classmethod
     def get(cls):
-        """Get everytools module, or None if not available."""
+        """Get everytools Search class, or None if not available."""
         if not cls._checked:
             cls._checked = True
             try:
-                import everytools
+                from everytools import Search
 
-                cls._module = everytools
+                cls._search_class = Search
             except ImportError:
-                cls._module = None
-        return cls._module
+                cls._search_class = None
+        return cls._search_class
+
+    @classmethod
+    def is_service_running(cls) -> bool:
+        """Check if Everything service is running. Result is cached."""
+        if cls._service_available is not None:
+            return cls._service_available
+
+        Search = cls.get()
+        if Search is None:
+            cls._service_available = False
+            return False
+
+        try:
+            # This is slow (~5s) on first call due to DLL loading
+            search = Search("*")
+            search.execute()
+            cls._service_available = True
+        except (OSError, RuntimeError, Exception):
+            cls._service_available = False
+
+        return cls._service_available
+
+    @classmethod
+    def reset(cls):
+        """Reset cached state (for testing)."""
+        cls._checked = False
+        cls._search_class = None
+        cls._service_available = None
 
 
 def is_everything_available() -> bool:
@@ -47,30 +76,24 @@ def is_everything_available() -> bool:
     1. Running on Windows
     2. everytools package is installed
     3. Everything service is currently running
-    4. COPILOT_NO_EVERYTHING env var is not set
+    4. COPILOT_USE_EVERYTHING env var is set to '1'
+
+    Note: Everything is disabled by default because standard directory traversal
+    is faster for typical workspaceStorage sizes. Set COPILOT_USE_EVERYTHING=1
+    to enable it for very large directory structures.
 
     Returns:
         True if Everything can be used for searching, False otherwise.
     """
-    # Check for disable override
-    if os.environ.get("COPILOT_NO_EVERYTHING"):
+    # Must explicitly opt-in (Everything is slower for typical use cases)
+    if os.environ.get("COPILOT_USE_EVERYTHING") != "1":
         return False
 
     # Only works on Windows
     if os.name != "nt":
         return False
 
-    everytools = _EverytoolsLoader.get()
-    if everytools is None:
-        return False
-
-    # Check if Everything service is running by attempting a simple query
-    try:
-        # everytools.search() returns number of results, raises if service not available
-        everytools.search("")
-        return True
-    except (OSError, RuntimeError, Exception):
-        return False
+    return _EverytoolsLoader.is_service_running()
 
 
 def search_files(query: str, path: str | None = None) -> list[Path]:
@@ -87,31 +110,22 @@ def search_files(query: str, path: str | None = None) -> list[Path]:
     Raises:
         RuntimeError: If Everything is not available.
     """
-    everytools = _EverytoolsLoader.get()
-    if everytools is None:
+    Search = _EverytoolsLoader.get()
+    if Search is None:
         raise RuntimeError("everytools package not installed")
 
     # Build query with path constraint if provided
     full_query = query
     if path:
-        # Everything syntax: path:\"C:\\path\\to\\search\"
-        # Escape backslashes and wrap in quotes for paths with spaces
-        escaped_path = path.replace("\\", "\\\\")
-        full_query = f'{query} path:"{escaped_path}"'
+        # Everything syntax: path:"C:\path\to\search"
+        full_query = f'{query} path:"{path}"'
 
     # Execute search
     try:
-        count = everytools.search(full_query)
-        if count == 0:
-            return []
-
-        # Get results
-        results = []
-        for i in range(count):
-            result_path = everytools.get_result_full_path_name(i)
-            if result_path:
-                results.append(Path(result_path))
-        return results
+        search = Search(full_query)
+        search.execute()
+        results = search.get_results()
+        return [Path(r.full_path) for r in results]
     except (OSError, RuntimeError) as e:
         raise RuntimeError(f"Everything search failed: {e}") from e
 
