@@ -120,12 +120,22 @@ def scan(
             help="Full scan: update all sessions regardless of file changes.",
         ),
     ] = False,
+    store_raw: Annotated[
+        bool,
+        typer.Option(
+            "--store-raw",
+            help="Store raw JSON in database (enables rebuild command, increases DB size).",
+        ),
+    ] = False,
 ):
     """Scan for and import Copilot chat sessions into the database.
 
     By default, uses incremental refresh: only updates sessions whose source files
     have changed (based on file mtime and size). Use --full to force a complete
     re-import of all sessions.
+
+    Raw JSON is not stored by default to save space. Use --store-raw to enable
+    storing raw JSON, which allows using the 'rebuild' and 'raw-json' commands.
     """
     if edition not in ("stable", "insider", "both"):
         console.print("[red]Error: edition must be 'stable', 'insider', or 'both'[/red]")
@@ -148,6 +158,8 @@ def scan(
         console.print("  (Full mode: will update all sessions)")
     else:
         console.print("  (Incremental mode: skipping unchanged sessions)")
+    if store_raw:
+        console.print("  (Storing raw JSON in database)")
     if verbose:
         for path, ed in paths:
             console.print(f"  Checking: {path} ({ed})")
@@ -161,13 +173,13 @@ def scan(
         for session in scan_chat_sessions(paths):
             existing = database.get_session(session.session_id)
             if existing:
-                database.update_session(session)
+                database.update_session(session, store_raw=store_raw)
                 updated += 1
                 if verbose:
                     workspace = session.workspace_name or "Unknown workspace"
                     console.print(f"  Updated: {workspace} ({len(session.messages)} messages)")
             else:
-                database.add_session(session)
+                database.add_session(session, store_raw=store_raw)
                 added += 1
                 if verbose:
                     workspace = session.workspace_name or "Unknown workspace"
@@ -182,13 +194,7 @@ def scan(
             source_file = str(file_info.file_path)
             stored = stored_metadata.get(source_file)
 
-            needs_update = (
-                stored is None
-                or stored[0] is None
-                or stored[1] is None
-                or stored[0] != file_info.mtime
-                or stored[1] != file_info.size
-            )
+            needs_update = stored is None or stored[0] is None or stored[1] is None or stored[0] != file_info.mtime or stored[1] != file_info.size
 
             if needs_update:
                 files_to_update.append(file_info)
@@ -217,7 +223,7 @@ def scan(
 
             # Batch insert new sessions (single transaction)
             if sessions_to_add:
-                batch_added, _batch_skipped = database.add_sessions_batch(sessions_to_add)
+                batch_added, _batch_skipped = database.add_sessions_batch(sessions_to_add, store_raw=store_raw)
                 added += batch_added
                 if verbose:
                     for session in sessions_to_add:
@@ -226,7 +232,7 @@ def scan(
 
             # Update existing sessions (must be individual due to delete+insert)
             for session in sessions_to_update:
-                database.update_session(session)
+                database.update_session(session, store_raw=store_raw)
                 updated += 1
                 if verbose:
                     workspace = session.workspace_name or "Unknown workspace"
@@ -778,6 +784,66 @@ def optimize(
         console.print(f"  [cyan]Merged {reduction} segments for faster queries[/cyan]")
     else:
         console.print("  [dim]Index was already optimized[/dim]")
+
+
+@app.command("raw-json")
+def raw_json(
+    session_id: Annotated[
+        str,
+        typer.Argument(help="Session ID to retrieve raw JSON for."),
+    ],
+    db: Annotated[
+        Path,
+        typer.Option(
+            "--db",
+            "-d",
+            help="Path to SQLite database file.",
+            exists=True,
+        ),
+    ] = Path("copilot_chats.db"),
+    output: Annotated[
+        Path | None,
+        typer.Option(
+            "--output",
+            "-o",
+            help="Output file path. If not specified, prints to stdout.",
+        ),
+    ] = None,
+    db_only: Annotated[
+        bool,
+        typer.Option(
+            "--db-only",
+            help="Only use database copy, don't try reading from source file.",
+        ),
+    ] = False,
+):
+    """Get the raw JSON for a specific session.
+
+    By default, tries to read from the original source file first (if it exists),
+    falling back to the compressed database copy. Use --db-only to always use
+    the database copy.
+
+    This is useful for debugging, data recovery, or inspecting the original
+    session data format.
+    """
+    database = Database(db)
+
+    raw_data = database.get_raw_json(session_id, prefer_file=not db_only)
+
+    if raw_data is None:
+        console.print(f"[red]Session not found: {session_id}[/red]")
+        raise typer.Exit(1)
+
+    if output:
+        output.write_bytes(raw_data)
+        console.print(f"[green]Wrote {len(raw_data)} bytes to {output}[/green]")
+    else:
+        # Print to stdout (decode as UTF-8 for display)
+        try:
+            print(raw_data.decode("utf-8"))
+        except UnicodeDecodeError as err:
+            console.print("[red]Error: Raw data is not valid UTF-8. Use --output to save to file.[/red]")
+            raise typer.Exit(1) from err
 
 
 def run():

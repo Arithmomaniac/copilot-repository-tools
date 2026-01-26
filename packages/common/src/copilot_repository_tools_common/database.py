@@ -244,7 +244,7 @@ class Database:
     CREATE TABLE IF NOT EXISTS raw_sessions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         session_id TEXT UNIQUE NOT NULL,
-        raw_json_compressed BLOB NOT NULL,
+        raw_json_compressed BLOB,
         workspace_name TEXT,
         workspace_path TEXT,
         source_file TEXT,
@@ -459,11 +459,14 @@ class Database:
             # Create derived tables
             conn.executescript(self.DERIVED_SCHEMA)
 
-    def add_session(self, session: ChatSession) -> bool:
+    def add_session(self, session: ChatSession, store_raw: bool = False) -> bool:
         """Add a chat session to the database.
 
         Args:
             session: The ChatSession to add.
+            store_raw: If True, store the raw JSON in the database. If False (default),
+                      only store metadata and derived tables. Raw JSON can still be
+                      retrieved from the source file if it exists.
 
         Returns:
             True if the session was added, False if it already exists.
@@ -476,12 +479,10 @@ class Database:
             if cursor.fetchone():
                 return False
 
-            # Store compressed raw JSON in raw_sessions table
-            if session.raw_json:
+            # Store compressed raw JSON only if requested
+            compressed_json = None
+            if store_raw and session.raw_json:
                 compressed_json = zlib.compress(session.raw_json, level=self.COMPRESSION_LEVEL)
-            else:
-                # Create minimal JSON from session data if no raw JSON available
-                compressed_json = zlib.compress(b"{}", level=self.COMPRESSION_LEVEL)
 
             cursor.execute(
                 """
@@ -634,7 +635,7 @@ class Database:
 
             return True
 
-    def add_sessions_batch(self, sessions: list[ChatSession]) -> tuple[int, int]:
+    def add_sessions_batch(self, sessions: list[ChatSession], store_raw: bool = False) -> tuple[int, int]:
         """Add multiple sessions in a single transaction.
 
         Much faster than calling add_session() repeatedly as it uses
@@ -642,6 +643,7 @@ class Database:
 
         Args:
             sessions: List of ChatSession objects to add.
+            store_raw: If True, store the raw JSON in the database.
 
         Returns:
             Tuple of (added_count, skipped_count).
@@ -660,21 +662,20 @@ class Database:
                     continue
 
                 # Add the session within this transaction
-                self._add_session_impl(cursor, session)
+                self._add_session_impl(cursor, session, store_raw=store_raw)
                 added += 1
 
         return added, skipped
 
-    def _add_session_impl(self, cursor, session: ChatSession):
+    def _add_session_impl(self, cursor, session: ChatSession, store_raw: bool = False):
         """Internal implementation of add_session that uses an existing cursor.
 
         Used by add_sessions_batch for efficient batch inserts.
         """
-        # Store compressed raw JSON
-        if session.raw_json:
+        # Store compressed raw JSON only if requested
+        compressed_json = None
+        if store_raw and session.raw_json:
             compressed_json = zlib.compress(session.raw_json, level=self.COMPRESSION_LEVEL)
-        else:
-            compressed_json = zlib.compress(b"{}", level=self.COMPRESSION_LEVEL)
 
         cursor.execute(
             """
@@ -825,11 +826,12 @@ class Database:
                     ),
                 )
 
-    def update_session(self, session: ChatSession):
+    def update_session(self, session: ChatSession, store_raw: bool = False):
         """Update an existing session or add it if it doesn't exist.
 
         Args:
             session: The ChatSession to update.
+            store_raw: If True, store the raw JSON in the database.
         """
         with self._get_connection() as conn:
             cursor = conn.cursor()
@@ -841,7 +843,7 @@ class Database:
             cursor.execute("DELETE FROM sessions WHERE session_id = ?", (session.session_id,))
 
         # Add the session (this will add to both raw_sessions and derived tables)
-        self.add_session(session)
+        self.add_session(session, store_raw=store_raw)
 
     def needs_update(self, session_id: str, file_mtime: float | None, file_size: int | None) -> bool:
         """Check if a session needs to be updated based on file metadata.
@@ -925,9 +927,7 @@ class Database:
         """
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute(
-                "SELECT source_file, source_file_mtime, source_file_size FROM raw_sessions WHERE source_file IS NOT NULL"
-            )
+            cursor.execute("SELECT source_file, source_file_mtime, source_file_size FROM raw_sessions WHERE source_file IS NOT NULL")
             return {row[0]: (row[1], row[2]) for row in cursor.fetchall()}
 
     def get_session(self, session_id: str) -> ChatSession | None:
@@ -1732,7 +1732,7 @@ class Database:
 
             for row in cursor.fetchall():
                 try:
-                    _session_id = row[0]  # Session ID from DB, used for logging if needed
+                    _session_id = row[0]  # Unused but kept for reference
                     compressed_json = row[1]
                     workspace_name = row[2]
                     workspace_path = row[3]
@@ -1741,8 +1741,25 @@ class Database:
                     source_file_mtime = row[6]
                     source_file_size = row[7]
 
-                    # Decompress and parse raw JSON
-                    raw_json = zlib.decompress(compressed_json)
+                    # Get raw JSON: try source file first, then database
+                    raw_json = None
+                    if source_file:
+                        try:
+                            source_path = Path(source_file)
+                            if source_path.exists() and source_path.is_file():
+                                raw_json = source_path.read_bytes()
+                        except (OSError, PermissionError):
+                            pass
+
+                    if raw_json is None and compressed_json is not None:
+                        raw_json = zlib.decompress(compressed_json)
+
+                    if raw_json is None:
+                        # Cannot rebuild this session - no source available
+                        errors += 1
+                        processed += 1
+                        continue
+
                     data = orjson.loads(raw_json)
 
                     # Re-parse session from raw JSON
@@ -1929,11 +1946,17 @@ class Database:
             cursor.execute("SELECT COUNT(*) FROM raw_sessions")
             return cursor.fetchone()[0]
 
-    def get_raw_json(self, session_id: str) -> bytes | None:
-        """Get the decompressed raw JSON for a specific session.
+    def get_raw_json(self, session_id: str, prefer_file: bool = True) -> bytes | None:
+        """Get the raw JSON for a specific session.
+
+        By default, tries to read from the original source file first (if it exists
+        and is accessible), falling back to the compressed database copy. Set
+        prefer_file=False to always use the database copy.
 
         Args:
             session_id: The session ID to retrieve.
+            prefer_file: If True (default), try reading from source file first.
+                        If False, always use database copy.
 
         Returns:
             Raw JSON bytes if found, None otherwise.
@@ -1941,12 +1964,30 @@ class Database:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT raw_json_compressed FROM raw_sessions WHERE session_id = ?",
+                "SELECT raw_json_compressed, source_file FROM raw_sessions WHERE session_id = ?",
                 (session_id,),
             )
             row = cursor.fetchone()
-            if row:
-                return zlib.decompress(row[0])
+            if not row:
+                return None
+
+            compressed_json = row[0]
+            source_file = row[1]
+
+            # Try reading from original file first
+            if prefer_file and source_file:
+                try:
+                    source_path = Path(source_file)
+                    if source_path.exists() and source_path.is_file():
+                        return source_path.read_bytes()
+                except (OSError, PermissionError):
+                    # Fall back to database copy on any file access error
+                    pass
+
+            # Fall back to database copy (if stored)
+            if compressed_json is not None:
+                return zlib.decompress(compressed_json)
+
             return None
 
     def optimize_fts(self) -> dict:

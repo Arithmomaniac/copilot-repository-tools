@@ -443,7 +443,7 @@ class TestRawJsonStorage:
     """Tests for raw JSON storage and rebuild functionality."""
 
     def test_raw_json_stored_compressed(self, temp_db):
-        """Test that raw JSON is stored in compressed form."""
+        """Test that raw JSON is stored in compressed form when store_raw=True."""
         raw_json = b'{"sessionId": "raw-test", "requests": [{"message": {"text": "Hello"}, "response": [{"kind": "text", "value": "Hi"}]}]}'
         session = ChatSession(
             session_id="raw-test",
@@ -453,12 +453,29 @@ class TestRawJsonStorage:
             source_file="/test/session.json",
             raw_json=raw_json,
         )
-        temp_db.add_session(session)
+        temp_db.add_session(session, store_raw=True)
 
         # Retrieve raw JSON
         retrieved_raw = temp_db.get_raw_json("raw-test")
         assert retrieved_raw is not None
         assert retrieved_raw == raw_json
+
+    def test_raw_json_not_stored_by_default(self, temp_db):
+        """Test that raw JSON is NOT stored by default (store_raw=False)."""
+        raw_json = b'{"sessionId": "no-store-test", "requests": []}'
+        session = ChatSession(
+            session_id="no-store-test",
+            workspace_name="test-workspace",
+            workspace_path="/test/path",
+            messages=[ChatMessage(role="user", content="Hello")],
+            source_file="/test/session.json",
+            raw_json=raw_json,
+        )
+        temp_db.add_session(session)  # store_raw defaults to False
+
+        # Raw JSON should not be retrievable from DB (only from file, which doesn't exist)
+        retrieved_raw = temp_db.get_raw_json("no-store-test", prefer_file=False)
+        assert retrieved_raw is None
 
     def test_raw_session_count(self, temp_db, sample_session):
         """Test getting raw session count."""
@@ -485,7 +502,7 @@ class TestRawJsonStorage:
             source_file="/rebuild/session.json",
             raw_json=raw_json,
         )
-        temp_db.add_session(session)
+        temp_db.add_session(session, store_raw=True)
 
         # Verify session exists
         assert temp_db.get_stats()["session_count"] == 1
@@ -516,7 +533,7 @@ class TestRawJsonStorage:
         assert temp_db.get_raw_session_count() == initial_raw_count
 
     def test_update_session_updates_raw_json(self, temp_db):
-        """Test that update_session also updates raw_sessions."""
+        """Test that update_session also updates raw_sessions when store_raw=True."""
         raw_json_v1 = b'{"sessionId": "update-raw-test", "requests": [{"message": {"text": "V1"}, "response": []}]}'
         session_v1 = ChatSession(
             session_id="update-raw-test",
@@ -525,7 +542,7 @@ class TestRawJsonStorage:
             messages=[ChatMessage(role="user", content="V1")],
             raw_json=raw_json_v1,
         )
-        temp_db.add_session(session_v1)
+        temp_db.add_session(session_v1, store_raw=True)
 
         # Verify V1 is stored
         retrieved_v1 = temp_db.get_raw_json("update-raw-test")
@@ -540,14 +557,14 @@ class TestRawJsonStorage:
             messages=[ChatMessage(role="user", content="V2")],
             raw_json=raw_json_v2,
         )
-        temp_db.update_session(session_v2)
+        temp_db.update_session(session_v2, store_raw=True)
 
         # Verify V2 is now stored
         retrieved_v2 = temp_db.get_raw_json("update-raw-test")
         assert retrieved_v2 == raw_json_v2
 
     def test_session_without_raw_json(self, temp_db, sample_session):
-        """Test that sessions without raw_json still work (stores empty compressed JSON)."""
+        """Test that sessions without raw_json still work."""
         # sample_session doesn't have raw_json set
         assert sample_session.raw_json is None
 
