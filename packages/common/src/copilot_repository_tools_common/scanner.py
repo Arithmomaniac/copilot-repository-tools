@@ -121,8 +121,36 @@ class ChatSession:
     repository_url: str | None = None  # Git remote URL for repository-scoped memories
 
 
+@dataclass
+class SessionFileInfo:
+    """Lightweight metadata about a session file for incremental scanning.
+
+    This allows checking mtime/size before expensive parsing.
+    """
+
+    file_path: Path
+    file_type: str  # 'json', 'vscdb', 'jsonl'
+    session_type: str  # 'vscode' or 'cli'
+    vscode_edition: str  # 'stable', 'insider', or 'cli'
+    mtime: float
+    size: int
+    workspace_name: str | None = None
+    workspace_path: str | None = None
+
+
+# Cache for detect_repository_url to avoid repeated subprocess calls
+_repository_url_cache: dict[str, str | None] = {}
+
+
+def _clear_repository_url_cache() -> None:
+    """Clear the repository URL cache (for testing)."""
+    _repository_url_cache.clear()
+
+
 def detect_repository_url(workspace_path: str | None) -> str | None:
     """Detect the git repository URL from a workspace path.
+
+    Results are cached to avoid repeated subprocess calls for the same workspace.
 
     This function looks for a .git directory and reads the remote origin URL.
     This enables repository-scoped memories that work across multiple worktrees
@@ -138,7 +166,12 @@ def detect_repository_url(workspace_path: str | None) -> str | None:
     if not workspace_path:
         return None
 
+    # Check cache first
+    if workspace_path in _repository_url_cache:
+        return _repository_url_cache[workspace_path]
+
     workspace = Path(workspace_path)
+    result_url: str | None = None
 
     # Check if this is a git repository (handles both regular repos and worktrees)
     try:
@@ -152,30 +185,27 @@ def detect_repository_url(workspace_path: str | None) -> str | None:
             timeout=5,
             check=False,
         )
-        if result.returncode != 0:
-            return None
-
-        # Get the remote origin URL
-        result = subprocess.run(
-            ["git", "config", "--get", "remote.origin.url"],  # noqa: S607 - trusted git command
-            cwd=str(workspace),
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-        if result.returncode != 0:
-            return None
-
-        remote_url = result.stdout.strip()
-        if not remote_url:
-            return None
-
-        # Normalize the URL to a consistent format (e.g., "github.com/owner/repo")
-        return _normalize_git_url(remote_url)
+        if result.returncode == 0:
+            # Get the remote origin URL
+            result = subprocess.run(
+                ["git", "config", "--get", "remote.origin.url"],  # noqa: S607 - trusted git command
+                cwd=str(workspace),
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+            if result.returncode == 0:
+                remote_url = result.stdout.strip()
+                if remote_url:
+                    result_url = _normalize_git_url(remote_url)
 
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-        return None
+        pass
+
+    # Cache the result (including None)
+    _repository_url_cache[workspace_path] = result_url
+    return result_url
 
 
 def _normalize_git_url(url: str) -> str:
@@ -2015,3 +2045,140 @@ def scan_chat_sessions(
                         session = _parse_cli_jsonl_file(events_file)
                         if session:
                             yield session
+
+
+def scan_session_files(
+    storage_paths: list[tuple[str, str]] | None = None,
+    include_cli: bool = True,
+) -> Iterator[SessionFileInfo]:
+    """Scan for session files and yield metadata without parsing content.
+
+    This allows callers to check mtime/size before expensive parsing.
+    Use parse_session_file() to parse a specific file.
+
+    Args:
+        storage_paths: Optional list of (path, edition) tuples to search for VS Code sessions.
+        include_cli: Whether to also scan for CLI sessions (default: True).
+
+    Yields:
+        SessionFileInfo objects with file metadata.
+    """
+    # Scan VS Code chat session files
+    for chat_dir, _workspace_id, edition in find_copilot_chat_dirs(storage_paths):
+        workspace_name, workspace_path = _parse_workspace_json(chat_dir.parent)
+
+        # Process files in the chat directory
+        for item in chat_dir.iterdir():
+            if item.is_file():
+                try:
+                    stat = item.stat()
+                    if item.suffix == ".json":
+                        yield SessionFileInfo(
+                            file_path=item,
+                            file_type="json",
+                            session_type="vscode",
+                            vscode_edition=edition,
+                            mtime=stat.st_mtime,
+                            size=stat.st_size,
+                            workspace_name=workspace_name,
+                            workspace_path=workspace_path,
+                        )
+                    elif item.suffix == ".vscdb":
+                        yield SessionFileInfo(
+                            file_path=item,
+                            file_type="vscdb",
+                            session_type="vscode",
+                            vscode_edition=edition,
+                            mtime=stat.st_mtime,
+                            size=stat.st_size,
+                            workspace_name=workspace_name,
+                            workspace_path=workspace_path,
+                        )
+                except OSError:
+                    continue
+
+        # Check for state.vscdb in parent directory
+        state_db = chat_dir.parent / "state.vscdb"
+        if state_db.exists():
+            try:
+                stat = state_db.stat()
+                yield SessionFileInfo(
+                    file_path=state_db,
+                    file_type="vscdb",
+                    session_type="vscode",
+                    vscode_edition=edition,
+                    mtime=stat.st_mtime,
+                    size=stat.st_size,
+                    workspace_name=workspace_name,
+                    workspace_path=workspace_path,
+                )
+            except OSError:
+                pass
+
+    # Scan CLI session files
+    if include_cli:
+        for cli_dir in get_cli_storage_paths():
+            if not cli_dir.exists() or not cli_dir.is_dir():
+                continue
+
+            for item in cli_dir.iterdir():
+                try:
+                    if item.is_file() and item.suffix == ".jsonl":
+                        stat = item.stat()
+                        yield SessionFileInfo(
+                            file_path=item,
+                            file_type="jsonl",
+                            session_type="cli",
+                            vscode_edition="cli",
+                            mtime=stat.st_mtime,
+                            size=stat.st_size,
+                        )
+                    elif item.is_dir():
+                        events_file = item / "events.jsonl"
+                        if events_file.exists():
+                            stat = events_file.stat()
+                            yield SessionFileInfo(
+                                file_path=events_file,
+                                file_type="jsonl",
+                                session_type="cli",
+                                vscode_edition="cli",
+                                mtime=stat.st_mtime,
+                                size=stat.st_size,
+                            )
+                except OSError:
+                    continue
+
+
+def parse_session_file(file_info: SessionFileInfo) -> list[ChatSession]:
+    """Parse a session file and return ChatSession objects.
+
+    Args:
+        file_info: SessionFileInfo from scan_session_files().
+
+    Returns:
+        List of ChatSession objects (may be multiple for vscdb files).
+    """
+    if file_info.file_type == "json":
+        session = _parse_chat_session_file(
+            file_info.file_path,
+            file_info.workspace_name,
+            file_info.workspace_path,
+            file_info.vscode_edition,
+        )
+        return [session] if session else []
+
+    elif file_info.file_type == "vscdb":
+        return list(
+            _parse_vscdb_file(
+                file_info.file_path,
+                file_info.workspace_name,
+                file_info.workspace_path,
+                file_info.vscode_edition,
+            )
+        )
+
+    elif file_info.file_type == "jsonl":
+        session = _parse_cli_jsonl_file(file_info.file_path)
+        return [session] if session else []
+
+    return []

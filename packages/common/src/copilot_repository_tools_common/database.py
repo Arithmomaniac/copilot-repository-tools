@@ -244,7 +244,7 @@ class Database:
     CREATE TABLE IF NOT EXISTS raw_sessions (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         session_id TEXT UNIQUE NOT NULL,
-        raw_json_compressed BLOB NOT NULL,
+        raw_json_compressed BLOB,
         workspace_name TEXT,
         workspace_path TEXT,
         source_file TEXT,
@@ -395,7 +395,7 @@ class Database:
     DERIVED_TRIGGERS: ClassVar[list[str]] = ["messages_ai", "messages_ad", "messages_au"]
 
     # Compression level for zlib (0-9, 6 is a good balance of speed and compression)
-    COMPRESSION_LEVEL = 6
+    COMPRESSION_LEVEL = 1  # Fast compression; level 1 is 2x faster than 6 with similar ratio for JSON
 
     def __init__(self, db_path: str | Path):
         """Initialize the database connection.
@@ -459,11 +459,14 @@ class Database:
             # Create derived tables
             conn.executescript(self.DERIVED_SCHEMA)
 
-    def add_session(self, session: ChatSession) -> bool:
+    def add_session(self, session: ChatSession, store_raw: bool = False) -> bool:
         """Add a chat session to the database.
 
         Args:
             session: The ChatSession to add.
+            store_raw: If True, store the raw JSON in the database. If False (default),
+                      only store metadata and derived tables. Raw JSON can still be
+                      retrieved from the source file if it exists.
 
         Returns:
             True if the session was added, False if it already exists.
@@ -476,12 +479,10 @@ class Database:
             if cursor.fetchone():
                 return False
 
-            # Store compressed raw JSON in raw_sessions table
-            if session.raw_json:
+            # Store compressed raw JSON only if requested
+            compressed_json = None
+            if store_raw and session.raw_json:
                 compressed_json = zlib.compress(session.raw_json, level=self.COMPRESSION_LEVEL)
-            else:
-                # Create minimal JSON from session data if no raw JSON available
-                compressed_json = zlib.compress(b"{}", level=self.COMPRESSION_LEVEL)
 
             cursor.execute(
                 """
@@ -634,11 +635,203 @@ class Database:
 
             return True
 
-    def update_session(self, session: ChatSession):
+    def add_sessions_batch(self, sessions: list[ChatSession], store_raw: bool = False) -> tuple[int, int]:
+        """Add multiple sessions in a single transaction.
+
+        Much faster than calling add_session() repeatedly as it uses
+        a single connection and commit.
+
+        Args:
+            sessions: List of ChatSession objects to add.
+            store_raw: If True, store the raw JSON in the database.
+
+        Returns:
+            Tuple of (added_count, skipped_count).
+        """
+        added = 0
+        skipped = 0
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            for session in sessions:
+                # Check if session already exists
+                cursor.execute("SELECT id FROM raw_sessions WHERE session_id = ?", (session.session_id,))
+                if cursor.fetchone():
+                    skipped += 1
+                    continue
+
+                # Add the session within this transaction
+                self._add_session_impl(cursor, session, store_raw=store_raw)
+                added += 1
+
+        return added, skipped
+
+    def _add_session_impl(self, cursor, session: ChatSession, store_raw: bool = False):
+        """Internal implementation of add_session that uses an existing cursor.
+
+        Used by add_sessions_batch for efficient batch inserts.
+        """
+        # Store compressed raw JSON only if requested
+        compressed_json = None
+        if store_raw and session.raw_json:
+            compressed_json = zlib.compress(session.raw_json, level=self.COMPRESSION_LEVEL)
+
+        cursor.execute(
+            """
+            INSERT INTO raw_sessions 
+            (session_id, raw_json_compressed, workspace_name, workspace_path, 
+             source_file, vscode_edition, source_file_mtime, source_file_size, repository_url)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                session.session_id,
+                compressed_json,
+                session.workspace_name,
+                session.workspace_path,
+                session.source_file,
+                session.vscode_edition,
+                session.source_file_mtime,
+                session.source_file_size,
+                session.repository_url,
+            ),
+        )
+
+        # Insert into derived sessions table
+        cursor.execute(
+            """
+            INSERT INTO sessions 
+            (session_id, workspace_name, workspace_path, created_at, updated_at, 
+             source_file, vscode_edition, custom_title, requester_username, responder_username,
+             source_file_mtime, source_file_size, type, repository_url)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                session.session_id,
+                session.workspace_name,
+                session.workspace_path,
+                session.created_at,
+                session.updated_at,
+                session.source_file,
+                session.vscode_edition,
+                session.custom_title,
+                session.requester_username,
+                session.responder_username,
+                session.source_file_mtime,
+                session.source_file_size,
+                session.type,
+                session.repository_url,
+            ),
+        )
+
+        # Insert messages and related data
+        for idx, msg in enumerate(session.messages):
+            cached_markdown = message_to_markdown(msg)
+
+            cursor.execute(
+                """
+                INSERT INTO messages 
+                (session_id, message_index, role, content, timestamp, cached_markdown)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session.session_id,
+                    idx,
+                    msg.role,
+                    msg.content,
+                    msg.timestamp,
+                    cached_markdown,
+                ),
+            )
+            message_id = cursor.lastrowid
+
+            # Insert FTS entry
+            cursor.execute(
+                "INSERT INTO messages_fts (rowid, content) VALUES (?, ?)",
+                (message_id, msg.content),
+            )
+
+            # Insert tool invocations
+            for tool in msg.tool_invocations:
+                cursor.execute(
+                    """
+                    INSERT INTO tool_invocations
+                    (message_id, name, input, result, status, start_time, end_time, source_type, invocation_message)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        message_id,
+                        tool.name,
+                        tool.input,
+                        tool.result,
+                        tool.status,
+                        tool.start_time,
+                        tool.end_time,
+                        tool.source_type,
+                        tool.invocation_message,
+                    ),
+                )
+
+            # Insert file changes
+            for change in msg.file_changes:
+                cursor.execute(
+                    """
+                    INSERT INTO file_changes
+                    (message_id, path, diff, content, explanation, language_id)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        message_id,
+                        change.path,
+                        change.diff,
+                        change.content,
+                        change.explanation,
+                        change.language_id,
+                    ),
+                )
+
+            # Insert command runs
+            for cmd in msg.command_runs:
+                cursor.execute(
+                    """
+                    INSERT INTO command_runs
+                    (message_id, command, title, result, status, output, timestamp)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        message_id,
+                        cmd.command,
+                        cmd.title,
+                        cmd.result,
+                        cmd.status,
+                        cmd.output,
+                        cmd.timestamp,
+                    ),
+                )
+
+            # Insert content blocks
+            for block_idx, block in enumerate(msg.content_blocks):
+                cursor.execute(
+                    """
+                    INSERT INTO content_blocks
+                    (message_id, block_index, kind, content, description)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (
+                        message_id,
+                        block_idx,
+                        block.kind,
+                        block.content,
+                        block.description,
+                    ),
+                )
+
+    def update_session(self, session: ChatSession, store_raw: bool = False):
         """Update an existing session or add it if it doesn't exist.
 
         Args:
             session: The ChatSession to update.
+            store_raw: If True, store the raw JSON in the database.
         """
         with self._get_connection() as conn:
             cursor = conn.cursor()
@@ -650,7 +843,7 @@ class Database:
             cursor.execute("DELETE FROM sessions WHERE session_id = ?", (session.session_id,))
 
         # Add the session (this will add to both raw_sessions and derived tables)
-        self.add_session(session)
+        self.add_session(session, store_raw=store_raw)
 
     def needs_update(self, session_id: str, file_mtime: float | None, file_size: int | None) -> bool:
         """Check if a session needs to be updated based on file metadata.
@@ -690,6 +883,52 @@ class Database:
 
             # Compare with provided values
             return stored_mtime != file_mtime or stored_size != file_size
+
+    def needs_update_by_file(self, source_file: str, file_mtime: float, file_size: int) -> bool:
+        """Check if a file needs to be parsed based on its metadata.
+
+        This is more efficient than needs_update() as it doesn't require
+        parsing the file first to get the session_id.
+
+        Returns True if:
+        - No session exists with this source_file, OR
+        - Stored mtime/size differs from provided values
+
+        Args:
+            source_file: The path to the source file.
+            file_mtime: The current file modification time.
+            file_size: The current file size in bytes.
+
+        Returns:
+            True if the file needs to be parsed, False otherwise.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT source_file_mtime, source_file_size FROM raw_sessions WHERE source_file = ?",
+                (source_file,),
+            )
+            row = cursor.fetchone()
+
+            if row is None:
+                return True
+
+            stored_mtime, stored_size = row[0], row[1]
+            if stored_mtime is None or stored_size is None:
+                return True
+
+            return stored_mtime != file_mtime or stored_size != file_size
+
+    def get_all_file_metadata(self) -> dict[str, tuple[float, int]]:
+        """Get all stored file metadata in one query.
+
+        Returns a dict mapping source_file -> (mtime, size) for all sessions.
+        This is much faster than calling needs_update_by_file for each file.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT source_file, source_file_mtime, source_file_size FROM raw_sessions WHERE source_file IS NOT NULL")
+            return {row[0]: (row[1], row[2]) for row in cursor.fetchall()}
 
     def get_session(self, session_id: str) -> ChatSession | None:
         """Get a session by its ID.
@@ -1493,7 +1732,7 @@ class Database:
 
             for row in cursor.fetchall():
                 try:
-                    _session_id = row[0]  # Session ID from DB, used for logging if needed
+                    _session_id = row[0]  # Unused but kept for reference
                     compressed_json = row[1]
                     workspace_name = row[2]
                     workspace_path = row[3]
@@ -1502,8 +1741,25 @@ class Database:
                     source_file_mtime = row[6]
                     source_file_size = row[7]
 
-                    # Decompress and parse raw JSON
-                    raw_json = zlib.decompress(compressed_json)
+                    # Get raw JSON: try source file first, then database
+                    raw_json = None
+                    if source_file:
+                        try:
+                            source_path = Path(source_file)
+                            if source_path.exists() and source_path.is_file():
+                                raw_json = source_path.read_bytes()
+                        except (OSError, PermissionError):
+                            pass
+
+                    if raw_json is None and compressed_json is not None:
+                        raw_json = zlib.decompress(compressed_json)
+
+                    if raw_json is None:
+                        # Cannot rebuild this session - no source available
+                        errors += 1
+                        processed += 1
+                        continue
+
                     data = orjson.loads(raw_json)
 
                     # Re-parse session from raw JSON
@@ -1690,11 +1946,17 @@ class Database:
             cursor.execute("SELECT COUNT(*) FROM raw_sessions")
             return cursor.fetchone()[0]
 
-    def get_raw_json(self, session_id: str) -> bytes | None:
-        """Get the decompressed raw JSON for a specific session.
+    def get_raw_json(self, session_id: str, prefer_file: bool = True) -> bytes | None:
+        """Get the raw JSON for a specific session.
+
+        By default, tries to read from the original source file first (if it exists
+        and is accessible), falling back to the compressed database copy. Set
+        prefer_file=False to always use the database copy.
 
         Args:
             session_id: The session ID to retrieve.
+            prefer_file: If True (default), try reading from source file first.
+                        If False, always use database copy.
 
         Returns:
             Raw JSON bytes if found, None otherwise.
@@ -1702,12 +1964,30 @@ class Database:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT raw_json_compressed FROM raw_sessions WHERE session_id = ?",
+                "SELECT raw_json_compressed, source_file FROM raw_sessions WHERE session_id = ?",
                 (session_id,),
             )
             row = cursor.fetchone()
-            if row:
-                return zlib.decompress(row[0])
+            if not row:
+                return None
+
+            compressed_json = row[0]
+            source_file = row[1]
+
+            # Try reading from original file first
+            if prefer_file and source_file:
+                try:
+                    source_path = Path(source_file)
+                    if source_path.exists() and source_path.is_file():
+                        return source_path.read_bytes()
+                except (OSError, PermissionError):
+                    # Fall back to database copy on any file access error
+                    pass
+
+            # Fall back to database copy (if stored)
+            if compressed_json is not None:
+                return zlib.decompress(compressed_json)
+
             return None
 
     def optimize_fts(self) -> dict:

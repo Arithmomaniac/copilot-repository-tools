@@ -633,6 +633,11 @@ class TestRepositoryUrlDetection:
             check=True,
         )
 
+        # Clear cache so we re-check after adding remote
+        from copilot_repository_tools_common.scanner import _clear_repository_url_cache
+
+        _clear_repository_url_cache()
+
         # Now should return the normalized URL
         result = detect_repository_url(str(workspace))
         assert result == "github.com/test-owner/test-repo"
