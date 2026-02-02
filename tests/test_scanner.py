@@ -619,15 +619,15 @@ class TestRepositoryUrlDetection:
         workspace.mkdir()
 
         # Initialize git repo
-        subprocess.run(["git", "init"], cwd=workspace, capture_output=True, check=True)  # noqa: S607, S603
+        subprocess.run(["git", "init"], cwd=workspace, capture_output=True, check=True)  # noqa: S607
 
         # Without a remote, should return None
         result = detect_repository_url(str(workspace))
         assert result is None
 
         # Add a remote
-        subprocess.run(  # noqa: S603, S607
-            ["git", "remote", "add", "origin", "https://github.com/test-owner/test-repo.git"],
+        subprocess.run(
+            ["git", "remote", "add", "origin", "https://github.com/test-owner/test-repo.git"],  # noqa: S607
             cwd=workspace,
             capture_output=True,
             check=True,

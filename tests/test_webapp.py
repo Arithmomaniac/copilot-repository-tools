@@ -6,7 +6,12 @@ from pathlib import Path
 import pytest
 from copilot_repository_tools_common import ChatMessage, ChatSession, Database
 from copilot_repository_tools_web import create_app
-from copilot_repository_tools_web.webapp import _extract_filename, _markdown_to_html, _parse_diff_stats
+from copilot_repository_tools_web.webapp import (
+    _extract_filename,
+    _markdown_to_html,
+    _parse_diff_stats,
+    _strip_ansi,
+)
 
 
 @pytest.fixture
@@ -166,6 +171,54 @@ class TestExtractFilename:
     def test_filename_only(self):
         """Test extracting when input is just a filename."""
         assert _extract_filename("file.py") == "file.py"
+
+
+class TestStripAnsi:
+    """Tests for the ANSI escape code stripper."""
+
+    def test_empty_string(self):
+        """Test stripping empty string returns empty."""
+        assert _strip_ansi("") == ""
+        assert _strip_ansi(None) == ""
+
+    def test_no_ansi_codes(self):
+        """Test text without ANSI codes is unchanged."""
+        text = "Hello, world!"
+        assert _strip_ansi(text) == text
+
+    def test_sgr_color_codes(self):
+        """Test stripping SGR color codes like [32;1m."""
+        # Green bold text: ESC[32;1m ... ESC[0m
+        text = "\x1b[32;1mGreen bold text\x1b[0m"
+        assert _strip_ansi(text) == "Green bold text"
+
+    def test_multiple_color_codes(self):
+        """Test stripping multiple color codes from terminal output."""
+        # Simulating typical colored terminal output
+        text = "\x1b[32;1mBytesSentSrcToDest\x1b[0m : \x1b[0m218530"
+        assert _strip_ansi(text) == "BytesSentSrcToDest : 218530"
+
+    def test_cursor_control_codes(self):
+        """Test stripping cursor control codes like [2J."""
+        text = "\x1b[2J\x1b[HHello"
+        assert _strip_ansi(text) == "Hello"
+
+    def test_real_terminal_output(self):
+        """Test stripping ANSI from realistic PowerShell/terminal output."""
+        # Example from the bug report
+        text = """\x1b[32;1m1mBytesSentSrcToDest\x1b[0m  : \x1b[0m218530
+\x1b[32;1m1mPacketsSentSrcToDest\x1b[0m : \x1b[0m2460
+\x1b[32;1m1mStartTime\x1b[0m           : \x1b[0m10/12/2025 6:00:00"""
+        result = _strip_ansi(text)
+        assert "\x1b[" not in result
+        assert "BytesSentSrcToDest" in result
+        assert "218530" in result
+
+    def test_preserves_newlines(self):
+        """Test that newlines are preserved after stripping ANSI."""
+        text = "\x1b[32mLine 1\x1b[0m\nLine 2\n\x1b[31mLine 3\x1b[0m"
+        result = _strip_ansi(text)
+        assert result == "Line 1\nLine 2\nLine 3"
 
 
 class TestWebappRoutes:

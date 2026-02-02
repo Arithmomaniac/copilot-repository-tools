@@ -1127,7 +1127,7 @@ footer a {
                                         {% if matched_cmd.output or matched_cmd.result %}
                                         <div class="tool-section">
                                             <span class="tool-label">Output:</span>
-                                            <pre><code>{{ matched_cmd.output or matched_cmd.result }}</code></pre>
+                                            <pre><code>{{ (matched_cmd.output or matched_cmd.result) | strip_ansi }}</code></pre>
                                         </div>
                                         {% endif %}
                                     </div>
@@ -1170,7 +1170,7 @@ footer a {
                                         {% if matched_tool.result %}
                                         <div class="tool-section">
                                             <span class="tool-label">Output:</span>
-                                            <pre><code>{{ matched_tool.result }}</code></pre>
+                                            <pre><code>{{ matched_tool.result | strip_ansi }}</code></pre>
                                         </div>
                                         {% endif %}
                                     </div>
@@ -1249,7 +1249,7 @@ footer a {
                                 {% if tool.result %}
                                 <div class="tool-section">
                                     <span class="tool-label">Output:</span>
-                                    <pre><code>{{ tool.result }}</code></pre>
+                                    <pre><code>{{ tool.result | strip_ansi }}</code></pre>
                                 </div>
                                 {% endif %}
                             </div>
@@ -1329,7 +1329,7 @@ footer a {
                                     <span class="collapsible-icon" aria-hidden="true">▶</span>
                                     Show output
                                 </summary>
-                                <div class="terminal-output-content">{{ cmd.output }}</div>
+                                <div class="terminal-output-content">{{ cmd.output | strip_ansi }}</div>
                             </details>
                             {% endif %}
                         </div>
