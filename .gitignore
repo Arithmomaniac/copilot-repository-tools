@@ -75,3 +75,4 @@ sample_files/
 
 # macOS
 .DS_Store
+temp_export/

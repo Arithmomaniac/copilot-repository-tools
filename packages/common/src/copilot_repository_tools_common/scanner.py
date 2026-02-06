@@ -809,6 +809,9 @@ def _merge_content_blocks(blocks: list[tuple[str, str, str | None]]) -> list[Con
     current_content = []
     current_description = None
 
+    # Kinds that should never be merged - each gets its own block
+    standalone_kinds = {"toolInvocation", "status", "ask_user", "intent", "skill"}
+
     for block in blocks:
         # Handle both 2-tuples and 3-tuples for backward compatibility
         if len(block) == 3:
@@ -817,17 +820,16 @@ def _merge_content_blocks(blocks: list[tuple[str, str, str | None]]) -> list[Con
             kind, content = block
             description = None
 
-        # Never merge toolInvocation blocks - each should be separate for individual italic formatting
-        # Keep thinking separate, merge other text-like content
-        if kind == "toolInvocation":
+        # Never merge standalone kinds - each should be separate
+        if kind in standalone_kinds:
             # Flush any accumulated content first
             if current_content:
                 merged.append(ContentBlock(kind=current_kind or "text", content="".join(current_content), description=current_description))
                 current_content = []
                 current_kind = None
                 current_description = None
-            # Add toolInvocation as standalone block
-            merged.append(ContentBlock(kind="toolInvocation", content=content))
+            # Add as standalone block
+            merged.append(ContentBlock(kind=kind, content=content, description=description))
         elif kind == "thinking":
             effective_kind = "thinking"
             if effective_kind == current_kind:
@@ -1166,6 +1168,16 @@ def _parse_chat_session_file(file_path: Path, workspace_name: str | None, worksp
                                 if edit_text:
                                     response_content.append(edit_text)
                                     raw_blocks.append(("toolInvocation", edit_text, None))
+                            # Handle progress indicators
+                            elif kind == "progressTaskSerialized":
+                                content = item.get("content", {})
+                                progress_text = content.get("value", "") if isinstance(content, dict) else str(content)
+                                if progress_text and progress_text.strip():
+                                    response_content.append(progress_text)
+                                    raw_blocks.append(("status", progress_text.strip(), "progress"))
+                            # Skip internal/metadata kinds (no user-visible content)
+                            elif kind in ("prepareToolInvocation", "mcpServersStarting", "undoStop"):
+                                pass  # These are internal markers, skip them
 
                             # Extract tool invocations (legacy format - nested array)
                             if item.get("toolInvocations"):
@@ -1421,6 +1433,16 @@ def _extract_session_from_dict(
                                 if edit_text:
                                     response_content.append(edit_text)
                                     raw_blocks.append(("toolInvocation", edit_text, None))
+                            # Handle progress indicators
+                            elif kind == "progressTaskSerialized":
+                                content = item.get("content", {})
+                                progress_text = content.get("value", "") if isinstance(content, dict) else str(content)
+                                if progress_text and progress_text.strip():
+                                    response_content.append(progress_text)
+                                    raw_blocks.append(("status", progress_text.strip(), "progress"))
+                            # Skip internal/metadata kinds (no user-visible content)
+                            elif kind in ("prepareToolInvocation", "mcpServersStarting", "undoStop"):
+                                pass  # These are internal markers, skip them
 
                             # Extract tool invocations (legacy format)
                             if item.get("toolInvocations"):
@@ -1833,6 +1855,26 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                     )
                 return
 
+            if tool_name == "ask_user":
+                # User interaction - show question and choices
+                question = arguments.get("question", "")
+                choices = arguments.get("choices", [])
+                if question:
+                    content = f"❓ {question}"
+                    if choices:
+                        choices_text = ", ".join(str(c) for c in choices[:5])  # Limit to 5 choices
+                        if len(choices) > 5:
+                            choices_text += f", ... (+{len(choices) - 5} more)"
+                        content += f"\n   Options: {choices_text}"
+                    current_assistant_content_blocks.append(
+                        ContentBlock(
+                            kind="ask_user",
+                            content=content,
+                            description="user-input",
+                        )
+                    )
+                return
+
             # Skip truly internal tools with no user-visible output
             internal_tools = {
                 # Terminal output reading - internal helper, not user-facing action
@@ -1980,6 +2022,57 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                         kind="status",
                         content=f"Switched to {new_model}",
                         description="model-change",  # hyphenated for CSS class
+                    )
+                )
+
+            elif event_type == "assistant.reasoning":
+                # Reasoning content - similar to VS Code thinking blocks
+                reasoning_content = event_data.get("content", "")
+                if reasoning_content and reasoning_content.strip():
+                    current_assistant_content_blocks.append(
+                        ContentBlock(
+                            kind="thinking",  # Use existing kind for consistency
+                            content=reasoning_content.strip(),
+                            description="reasoning",
+                        )
+                    )
+
+            elif event_type == "skill.invoked":
+                # Skill was loaded - show name and content summary
+                skill_name = event_data.get("name", "unknown")
+                skill_content = event_data.get("content", "")
+                # Extract description from YAML frontmatter if present
+                skill_desc = None
+                if skill_content and "description:" in skill_content:
+                    for line in skill_content.split("\n"):
+                        if line.strip().startswith("description:"):
+                            skill_desc = line.split("description:", 1)[1].strip()
+                            break
+                current_assistant_content_blocks.append(
+                    ContentBlock(
+                        kind="skill",
+                        content=f"Loaded skill: {skill_name}",
+                        description=skill_desc,
+                    )
+                )
+
+            elif event_type == "session.compaction_complete":
+                # Session was compacted - show checkpoint info
+                checkpoint_num = event_data.get("checkpointNumber", 0)
+                summary = event_data.get("summaryContent", "")
+                # Extract overview section if present
+                overview = None
+                if "<overview>" in summary and "</overview>" in summary:
+                    overview = summary.split("<overview>")[1].split("</overview>")[0].strip()
+                    if len(overview) > 200:
+                        overview = overview[:197] + "..."
+                if not overview:
+                    overview = f"Session compacted to checkpoint {checkpoint_num}"
+                current_assistant_content_blocks.append(
+                    ContentBlock(
+                        kind="status",
+                        content=overview,
+                        description="compaction",
                     )
                 )
 
