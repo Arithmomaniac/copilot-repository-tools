@@ -5,8 +5,8 @@ from datetime import datetime
 from urllib.parse import unquote
 
 import markdown
-from copilot_repository_tools_common import Database, get_vscode_storage_paths, scan_chat_sessions
-from flask import Flask, jsonify, redirect, render_template, request, session, url_for
+from copilot_repository_tools_common import Database, generate_session_filename, get_vscode_storage_paths, scan_chat_sessions
+from flask import Flask, jsonify, make_response, redirect, render_template, request, session, url_for
 
 # Create a reusable markdown converter with extensions
 _md_converter = markdown.Markdown(
@@ -515,16 +515,18 @@ def create_app(
 
     @app.route("/api/markdown/<session_id>", methods=["GET"])
     def get_markdown(session_id: str):
-        """Get cached markdown for a session's messages.
+        """Get markdown for a session's messages.
 
         Query parameters:
         - start: Start message number (1-based, optional, defaults to 1)
         - end: End message number (1-based, optional, defaults to last message)
         - include_diffs: Whether to include file diffs (default: true)
         - include_tool_inputs: Whether to include tool inputs (default: true)
+        - include_thinking: Whether to include thinking blocks (default: false)
+        - download: If true, return as a file attachment instead of JSON (default: false)
 
         Returns:
-            JSON with 'markdown' field containing the combined markdown.
+            JSON with 'markdown' field, or a .md file download if download=true.
         """
         db = Database(app.config["DB_PATH"])
 
@@ -535,6 +537,8 @@ def create_app(
         # Parse boolean options
         include_diffs = request.args.get("include_diffs", "true").lower() == "true"
         include_tool_inputs = request.args.get("include_tool_inputs", "true").lower() == "true"
+        include_thinking = request.args.get("include_thinking", "false").lower() == "true"
+        download = request.args.get("download", "false").lower() == "true"
 
         start = None
         end = None
@@ -551,16 +555,30 @@ def create_app(
             except ValueError:
                 return jsonify({"error": "Invalid end value"}), 400
 
+        # For download mode, we need the session object for filename generation
+        if download:
+            chat_session = db.get_session(session_id)
+            if chat_session is None:
+                return jsonify({"error": "Session not found"}), 404
+
         markdown_content = db.get_messages_markdown(
             session_id,
             start=start,
             end=end,
             include_diffs=include_diffs,
             include_tool_inputs=include_tool_inputs,
+            include_thinking=include_thinking,
         )
 
         if not markdown_content:
             return jsonify({"error": "No messages found"}), 404
+
+        if download:
+            filename = generate_session_filename(chat_session)
+            response = make_response(markdown_content)
+            response.headers["Content-Type"] = "text/markdown; charset=utf-8"
+            response.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+            return response
 
         return jsonify({"markdown": markdown_content})
 

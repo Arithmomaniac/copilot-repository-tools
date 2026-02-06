@@ -1057,10 +1057,20 @@ footer a {
                     <input type="checkbox" id="include-tool-inputs" checked>
                     Tool inputs
                 </label>
+                <label title="Include thinking/reasoning blocks in the markdown">
+                    <input type="checkbox" id="include-thinking">
+                    Thinking
+                </label>
             </div>
             
             <button type="button" class="copy-markdown-btn" id="copy-markdown-btn" data-session-id="{{ session.session_id }}" data-message-count="{{ message_count }}">
                 <i class="fa-regular fa-copy"></i> Copy Markdown
+            </button>
+            <button type="button" class="copy-markdown-btn" id="download-markdown-btn" data-session-id="{{ session.session_id }}" data-message-count="{{ message_count }}">
+                <i class="fa-solid fa-download"></i> Download
+            </button>
+            <button type="button" class="copy-markdown-btn" id="copy-url-btn" data-session-id="{{ session.session_id }}" data-message-count="{{ message_count }}">
+                <i class="fa-solid fa-link"></i> Copy URL
             </button>
             <span class="copy-status" id="copy-status"></span>
         </div>
@@ -1401,73 +1411,111 @@ footer a {
                 }
             });
 
-            // Copy Markdown functionality (toolbar)
-            const copyBtn = document.getElementById('copy-markdown-btn');
-            const rangeStart = document.getElementById('range-start');
-            const rangeEnd = document.getElementById('range-end');
-            const includeDiffs = document.getElementById('include-diffs');
-            const includeToolInputs = document.getElementById('include-tool-inputs');
+            // Shared helper to build query params from toolbar state
+            function buildMarkdownParams() {
+                const messageCount = parseInt(document.getElementById('copy-markdown-btn').dataset.messageCount, 10);
+                const rangeStart = document.getElementById('range-start');
+                const rangeEnd = document.getElementById('range-end');
+                const includeDiffs = document.getElementById('include-diffs');
+                const includeToolInputs = document.getElementById('include-tool-inputs');
+                const includeThinking = document.getElementById('include-thinking');
+
+                const start = rangeStart.value ? parseInt(rangeStart.value, 10) : 1;
+                const end = rangeEnd.value ? parseInt(rangeEnd.value, 10) : messageCount;
+
+                // Validate range
+                if (start < 1 || start > messageCount || end < 1 || end > messageCount || start > end) {
+                    return null; // invalid range
+                }
+
+                const params = new URLSearchParams();
+                if (start !== 1 || end !== messageCount) {
+                    params.set('start', start);
+                    params.set('end', end);
+                }
+                params.set('include_diffs', includeDiffs.checked);
+                params.set('include_tool_inputs', includeToolInputs.checked);
+                params.set('include_thinking', includeThinking.checked);
+
+                return params;
+            }
+
             const copyStatus = document.getElementById('copy-status');
 
+            function showStatus(text, type) {
+                copyStatus.textContent = text;
+                copyStatus.className = 'copy-status' + (type ? ' ' + type : '');
+                if (type === 'success') {
+                    setTimeout(() => { copyStatus.textContent = ''; }, 3000);
+                }
+            }
+
+            // Copy Markdown button
+            const copyBtn = document.getElementById('copy-markdown-btn');
             if (copyBtn) {
                 copyBtn.addEventListener('click', async function() {
-                    const sessionId = this.dataset.sessionId;
-                    const messageCount = parseInt(this.dataset.messageCount, 10);
-                    
-                    // Get range values (default to full range)
-                    const start = rangeStart.value ? parseInt(rangeStart.value, 10) : 1;
-                    const end = rangeEnd.value ? parseInt(rangeEnd.value, 10) : messageCount;
-                    
-                    // Validate range
-                    if (start < 1 || start > messageCount || end < 1 || end > messageCount || start > end) {
-                        copyStatus.textContent = '✗ Invalid range';
-                        copyStatus.className = 'copy-status error';
+                    const params = buildMarkdownParams();
+                    if (!params) {
+                        showStatus('✗ Invalid range', 'error');
                         return;
                     }
-                    
-                    // Build query parameters
-                    const params = new URLSearchParams();
-                    
-                    // Only add range if not full range
-                    if (start !== 1 || end !== messageCount) {
-                        params.set('start', start);
-                        params.set('end', end);
-                    }
-                    
-                    // Add options
-                    params.set('include_diffs', includeDiffs.checked);
-                    params.set('include_tool_inputs', includeToolInputs.checked);
-                    
+                    const sessionId = this.dataset.sessionId;
                     const queryString = params.toString() ? '?' + params.toString() : '';
-                    
-                    // Disable button during fetch
+
                     copyBtn.disabled = true;
-                    copyStatus.textContent = 'Fetching...';
-                    copyStatus.className = 'copy-status';
-                    
+                    showStatus('Fetching...', '');
+
                     try {
                         const response = await fetch('/api/markdown/' + sessionId + queryString);
                         const data = await response.json();
-                        
                         if (response.ok && data.markdown) {
-                            // Copy to clipboard
                             await navigator.clipboard.writeText(data.markdown);
-                            copyStatus.textContent = '✓ Copied to clipboard!';
-                            copyStatus.className = 'copy-status success';
-                            
-                            // Clear status after 3 seconds
-                            setTimeout(() => {
-                                copyStatus.textContent = '';
-                            }, 3000);
+                            showStatus('✓ Copied to clipboard!', 'success');
                         } else {
-                            copyStatus.textContent = '✗ ' + (data.error || 'Failed to get markdown');
-                            copyStatus.className = 'copy-status error';
+                            showStatus('✗ ' + (data.error || 'Failed to get markdown'), 'error');
                         }
                     } catch (err) {
-                        copyStatus.textContent = '✗ Error: ' + err.message;
-                        copyStatus.className = 'copy-status error';
+                        showStatus('✗ Error: ' + err.message, 'error');
                     } finally {
                         copyBtn.disabled = false;
+                    }
+                });
+            }
+
+            // Download Markdown button
+            const downloadBtn = document.getElementById('download-markdown-btn');
+            if (downloadBtn) {
+                downloadBtn.addEventListener('click', function() {
+                    const params = buildMarkdownParams();
+                    if (!params) {
+                        showStatus('✗ Invalid range', 'error');
+                        return;
+                    }
+                    const sessionId = this.dataset.sessionId;
+                    const queryString = params.toString() ? '?' + params.toString() : '';
+                    const sep = queryString ? '&' : '?';
+                    window.location.href = '/api/markdown/' + sessionId + queryString + sep + 'download=true';
+                });
+            }
+
+            // Copy URL button
+            const copyUrlBtn = document.getElementById('copy-url-btn');
+            if (copyUrlBtn) {
+                copyUrlBtn.addEventListener('click', async function() {
+                    const params = buildMarkdownParams();
+                    if (!params) {
+                        showStatus('✗ Invalid range', 'error');
+                        return;
+                    }
+                    const sessionId = this.dataset.sessionId;
+                    const queryString = params.toString() ? '?' + params.toString() : '';
+                    const url = window.location.origin + '/api/markdown/' + sessionId + queryString;
+
+                    try {
+                        await navigator.clipboard.writeText(url);
+                        showStatus('✓ URL copied!', 'success');
+                    } catch (err) {
+                        showStatus('✗ Error: ' + err.message, 'error');
                     }
                 });
             }

@@ -1079,6 +1079,7 @@ class Database:
         end: int | None = None,
         include_diffs: bool = True,
         include_tool_inputs: bool = True,
+        include_thinking: bool = False,
     ) -> str:
         """Get markdown for specific messages or all messages in a session.
 
@@ -1088,6 +1089,7 @@ class Database:
             end: Optional 1-based end message index (inclusive).
             include_diffs: Whether to include file diffs in the markdown.
             include_tool_inputs: Whether to include tool inputs in the markdown.
+            include_thinking: Whether to include thinking/reasoning blocks.
 
         Returns:
             Combined markdown string for the selected messages.
@@ -1127,7 +1129,7 @@ class Database:
             markdown_parts = []
 
             # If both options are enabled, use cached markdown
-            if include_diffs and include_tool_inputs:
+            if include_diffs and include_tool_inputs and not include_thinking:
                 for row in rows:
                     md = row["cached_markdown"]
                     if md:
@@ -1224,6 +1226,7 @@ class Database:
                         message_number=message_index,
                         include_diffs=include_diffs,
                         include_tool_inputs=include_tool_inputs,
+                        include_thinking=include_thinking,
                     )
                     markdown_parts.append(md)
 

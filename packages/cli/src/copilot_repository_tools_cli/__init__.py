@@ -571,6 +571,13 @@ def export_markdown(
             help="Include tool inputs as code blocks in the markdown output.",
         ),
     ] = False,
+    include_thinking: Annotated[
+        bool,
+        typer.Option(
+            "--include-thinking/--no-thinking",
+            help="Include thinking/reasoning block content in the markdown output.",
+        ),
+    ] = False,
 ):
     """Export sessions as markdown files.
 
@@ -598,6 +605,7 @@ def export_markdown(
             file_path,
             include_diffs=include_diffs,
             include_tool_inputs=include_tool_inputs,
+            include_thinking=include_thinking,
         )
         console.print(f"[green]Exported: {file_path}[/green]")
     else:
@@ -614,6 +622,7 @@ def export_markdown(
                     file_path,
                     include_diffs=include_diffs,
                     include_tool_inputs=include_tool_inputs,
+                    include_thinking=include_thinking,
                 )
                 exported += 1
                 if verbose:

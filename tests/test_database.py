@@ -1174,3 +1174,37 @@ class TestFTSOptimization:
         
         result = db.optimize_fts()
         assert result["optimized"] is True
+
+
+class TestGetMessagesMarkdownIncludeThinking:
+    """Tests for get_messages_markdown with include_thinking parameter."""
+
+    def test_include_thinking_passes_through(self, temp_db):
+        """Test that include_thinking parameter is accepted and changes output."""
+        from copilot_repository_tools_common import ContentBlock
+
+        session = ChatSession(
+            session_id="thinking-md-test",
+            workspace_name="test-project",
+            workspace_path="/test",
+            messages=[
+                ChatMessage(role="user", content="Think about this"),
+                ChatMessage(
+                    role="assistant",
+                    content="The answer.",
+                    content_blocks=[
+                        ContentBlock(kind="thinking", content="Internal reasoning..."),
+                        ContentBlock(kind="text", content="The answer."),
+                    ],
+                ),
+            ],
+        )
+        temp_db.add_session(session)
+
+        # With include_thinking=False (default), thinking content should be omitted
+        md_without = temp_db.get_messages_markdown("thinking-md-test", include_thinking=False)
+        assert "Internal reasoning..." not in md_without
+
+        # With include_thinking=True, thinking content should be included
+        md_with = temp_db.get_messages_markdown("thinking-md-test", include_thinking=True)
+        assert "Internal reasoning..." in md_with

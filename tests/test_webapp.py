@@ -4,7 +4,7 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from copilot_repository_tools_common import ChatMessage, ChatSession, Database
+from copilot_repository_tools_common import ChatMessage, ChatSession, ContentBlock, Database
 from copilot_repository_tools_web import create_app
 from copilot_repository_tools_web.webapp import (
     _extract_filename,
@@ -1021,7 +1021,6 @@ class TestWebappPagination:
         client = app.test_client()
 
         response = client.get("/?q=Message&sort=date&page=1")
-        html = response.data.decode("utf-8")
 
         # Pagination links should preserve query params
         assert response.status_code == 200
@@ -1038,3 +1037,131 @@ class TestWebappPagination:
         # Should include date filter documentation
         assert "start_date" in html
         assert "end_date" in html
+
+
+class TestMarkdownApiIncludeThinking:
+    """Tests for include_thinking parameter on the markdown API endpoint."""
+
+    @pytest.fixture
+    def thinking_db(self, tmp_path):
+        """Create a database with a session that has thinking blocks."""
+        db_path = tmp_path / "thinking_test.db"
+        db = Database(str(db_path))
+
+        session = ChatSession(
+            session_id="thinking-api-session",
+            workspace_name="test-workspace",
+            workspace_path="/home/user/test",
+            messages=[
+                ChatMessage(role="user", content="Think about this"),
+                ChatMessage(
+                    role="assistant",
+                    content="Here's the answer.",
+                    content_blocks=[
+                        ContentBlock(kind="thinking", content="Deep reasoning here..."),
+                        ContentBlock(kind="text", content="Here's the answer."),
+                    ],
+                ),
+            ],
+            created_at="2025-01-15T10:00:00Z",
+            vscode_edition="stable",
+        )
+        db.add_session(session)
+        return str(db_path)
+
+    @pytest.fixture
+    def thinking_client(self, thinking_db):
+        """Create a Flask test client with the thinking session database."""
+        app = create_app(thinking_db, storage_paths=[], include_cli=False)
+        app.config["TESTING"] = True
+        return app.test_client()
+
+    def test_get_markdown_include_thinking_true(self, thinking_client):
+        """Test that include_thinking=true includes thinking content."""
+        response = thinking_client.get(
+            "/api/markdown/thinking-api-session?include_thinking=true"
+        )
+        assert response.status_code == 200
+        data = response.get_json()
+        assert "markdown" in data
+        assert "Deep reasoning here..." in data["markdown"]
+
+    def test_get_markdown_include_thinking_false(self, thinking_client):
+        """Test that include_thinking=false omits thinking content."""
+        response = thinking_client.get(
+            "/api/markdown/thinking-api-session?include_thinking=false"
+        )
+        assert response.status_code == 200
+        data = response.get_json()
+        assert "markdown" in data
+        assert "Deep reasoning here..." not in data["markdown"]
+
+    def test_get_markdown_include_thinking_default(self, thinking_client):
+        """Test that thinking content is omitted by default."""
+        response = thinking_client.get("/api/markdown/thinking-api-session")
+        assert response.status_code == 200
+        data = response.get_json()
+        assert "markdown" in data
+        assert "Deep reasoning here..." not in data["markdown"]
+
+
+class TestDownloadMarkdownEndpoint:
+    """Tests for the download=true query parameter on the markdown API."""
+
+    def test_download_returns_200(self, client):
+        """Test that the download mode returns 200."""
+        response = client.get("/api/markdown/webapp-test-session?download=true")
+        assert response.status_code == 200
+
+    def test_download_content_type(self, client):
+        """Test that the download returns text/markdown content type."""
+        response = client.get("/api/markdown/webapp-test-session?download=true")
+        assert "text/markdown" in response.content_type
+
+    def test_download_content_disposition(self, client):
+        """Test that the download has attachment Content-Disposition with .md filename."""
+        response = client.get("/api/markdown/webapp-test-session?download=true")
+        disposition = response.headers.get("Content-Disposition", "")
+        assert "attachment" in disposition
+        assert ".md" in disposition
+
+    def test_download_returns_markdown_not_json(self, client):
+        """Test that the download returns raw markdown, not JSON."""
+        response = client.get("/api/markdown/webapp-test-session?download=true")
+        content = response.data.decode("utf-8")
+        # Should contain markdown formatting, not JSON
+        assert "Message" in content
+        assert "USER" in content or "ASSISTANT" in content or "user" in content.lower()
+
+    def test_download_accepts_include_diffs(self, client):
+        """Test that download mode works with include_diffs param."""
+        response = client.get(
+            "/api/markdown/webapp-test-session?download=true&include_diffs=false"
+        )
+        assert response.status_code == 200
+
+    def test_download_accepts_include_tool_inputs(self, client):
+        """Test that download mode works with include_tool_inputs param."""
+        response = client.get(
+            "/api/markdown/webapp-test-session?download=true&include_tool_inputs=false"
+        )
+        assert response.status_code == 200
+
+    def test_download_accepts_include_thinking(self, client):
+        """Test that download mode works with include_thinking param."""
+        response = client.get(
+            "/api/markdown/webapp-test-session?download=true&include_thinking=true"
+        )
+        assert response.status_code == 200
+
+    def test_download_404_for_nonexistent_session(self, client):
+        """Test that download returns 404 for a non-existent session."""
+        response = client.get("/api/markdown/nonexistent-session?download=true")
+        assert response.status_code == 404
+
+    def test_without_download_returns_json(self, client):
+        """Test that without download=true, response is JSON as before."""
+        response = client.get("/api/markdown/webapp-test-session")
+        assert response.status_code == 200
+        data = response.get_json()
+        assert "markdown" in data
