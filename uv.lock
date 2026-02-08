@@ -1,14 +1,6 @@
 version = 1
-revision = 2
+revision = 3
 requires-python = ">=3.12"
-
-[manifest]
-members = [
-    "copilot-repository-tools",
-    "copilot-repository-tools-cli",
-    "copilot-repository-tools-common",
-    "copilot-repository-tools-web",
-]
 
 [[package]]
 name = "blinker"
@@ -109,7 +101,24 @@ wheels = [
 [[package]]
 name = "copilot-repository-tools"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
+dependencies = [
+    { name = "orjson" },
+    { name = "rich" },
+    { name = "typer" },
+]
+
+[package.optional-dependencies]
+all = [
+    { name = "flask" },
+    { name = "jinja2" },
+    { name = "markdown" },
+]
+web = [
+    { name = "flask" },
+    { name = "jinja2" },
+    { name = "markdown" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -122,6 +131,16 @@ dev = [
 ]
 
 [package.metadata]
+requires-dist = [
+    { name = "copilot-repository-tools", extras = ["web"], marker = "extra == 'all'" },
+    { name = "flask", marker = "extra == 'web'", specifier = ">=3.0.0" },
+    { name = "jinja2", marker = "extra == 'web'", specifier = ">=3.0.0" },
+    { name = "markdown", marker = "extra == 'web'", specifier = ">=3.4.0" },
+    { name = "orjson", specifier = ">=3.9.0" },
+    { name = "rich", specifier = ">=13.0.0" },
+    { name = "typer", specifier = ">=0.12.0" },
+]
+provides-extras = ["web", "all"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -131,53 +150,6 @@ dev = [
     { name = "pytest-playwright", specifier = ">=0.4.0" },
     { name = "ruff", specifier = ">=0.14.11" },
     { name = "ty", specifier = ">=0.0.12" },
-]
-
-[[package]]
-name = "copilot-repository-tools-cli"
-version = "0.1.0"
-source = { editable = "packages/cli" }
-dependencies = [
-    { name = "copilot-repository-tools-common" },
-    { name = "rich" },
-    { name = "typer" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "copilot-repository-tools-common", editable = "packages/common" },
-    { name = "rich", specifier = ">=13.0.0" },
-    { name = "typer", specifier = ">=0.12.0" },
-]
-
-[[package]]
-name = "copilot-repository-tools-common"
-version = "0.1.0"
-source = { editable = "packages/common" }
-dependencies = [
-    { name = "orjson" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "orjson", specifier = ">=3.9.0" }]
-
-[[package]]
-name = "copilot-repository-tools-web"
-version = "0.1.0"
-source = { editable = "packages/web" }
-dependencies = [
-    { name = "copilot-repository-tools-common" },
-    { name = "flask" },
-    { name = "jinja2" },
-    { name = "markdown" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "copilot-repository-tools-common", editable = "packages/common" },
-    { name = "flask", specifier = ">=3.0.0" },
-    { name = "jinja2", specifier = ">=3.0.0" },
-    { name = "markdown", specifier = ">=3.4.0" },
 ]
 
 [[package]]

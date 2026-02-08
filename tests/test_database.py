@@ -5,7 +5,8 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from copilot_repository_tools_common import ChatMessage, ChatSession, Database, parse_search_query
+
+from copilot_repository_tools import ChatMessage, ChatSession, Database, parse_search_query
 
 
 @pytest.fixture
@@ -287,7 +288,7 @@ class TestCLISupport:
 
     def test_add_cli_session(self, tmp_path):
         """Test adding a CLI session to database."""
-        from copilot_repository_tools_common import ChatMessage, ChatSession, Database
+        from copilot_repository_tools import ChatMessage, ChatSession, Database
 
         db = Database(tmp_path / "test.db")
 
@@ -316,7 +317,7 @@ class TestCLISupport:
 
     def test_vscode_session_type_default(self, tmp_path):
         """Test that VS Code sessions default to 'vscode' type."""
-        from copilot_repository_tools_common import ChatMessage, ChatSession, Database
+        from copilot_repository_tools import ChatMessage, ChatSession, Database
 
         db = Database(tmp_path / "test.db")
 
@@ -342,7 +343,7 @@ class TestCLISupport:
         """Test the full workflow: parse CLI file, add to DB, retrieve."""
         from pathlib import Path
 
-        from copilot_repository_tools_common.scanner import _parse_cli_jsonl_file
+        from copilot_repository_tools.scanner import _parse_cli_jsonl_file
 
         # Use the real sample CLI file with event-based format
         sample_file = Path(__file__).parent / "sample_files" / "66b821d4-af6f-4518-a394-6d95a4d0f96b.jsonl"
@@ -1149,7 +1150,7 @@ class TestFTSOptimization:
     def test_optimize_fts_with_data(self, temp_db, sample_session):
         """Test optimize_fts after adding data."""
         temp_db.add_session(sample_session)
-        
+
         result = temp_db.optimize_fts()
         assert result["optimized"] is True
         assert result["segments_before"] >= 0
@@ -1158,7 +1159,7 @@ class TestFTSOptimization:
     def test_optimize_fts_multiple_sessions(self, tmp_path):
         """Test optimize_fts with multiple sessions (more fragmentation)."""
         db = Database(tmp_path / "multi_session.db")
-        
+
         # Add multiple sessions to create FTS fragmentation
         for i in range(5):
             session = ChatSession(
@@ -1171,7 +1172,7 @@ class TestFTSOptimization:
                 ],
             )
             db.add_session(session)
-        
+
         result = db.optimize_fts()
         assert result["optimized"] is True
 
@@ -1181,7 +1182,7 @@ class TestGetMessagesMarkdownIncludeThinking:
 
     def test_include_thinking_passes_through(self, temp_db):
         """Test that include_thinking parameter is accepted and changes output."""
-        from copilot_repository_tools_common import ContentBlock
+        from copilot_repository_tools import ContentBlock
 
         session = ChatSession(
             session_id="thinking-md-test",

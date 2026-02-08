@@ -4,9 +4,10 @@ import json
 from unittest.mock import patch
 
 import pytest
-from copilot_repository_tools_cli import app
-from copilot_repository_tools_common import ChatMessage, ChatSession, Database
 from typer.testing import CliRunner
+
+from copilot_repository_tools import ChatMessage, ChatSession, Database
+from copilot_repository_tools.cli import app
 
 
 @pytest.fixture
@@ -21,7 +22,7 @@ def mock_no_vscode_paths():
 
     We patch at the CLI module level since that's where scan_chat_sessions is imported.
     """
-    with patch("copilot_repository_tools_cli.get_vscode_storage_paths", return_value=[]), patch("copilot_repository_tools_cli.scan_chat_sessions", return_value=iter([])):
+    with patch("copilot_repository_tools.cli.get_vscode_storage_paths", return_value=[]), patch("copilot_repository_tools.cli.scan_chat_sessions", return_value=iter([])):
         yield
 
 

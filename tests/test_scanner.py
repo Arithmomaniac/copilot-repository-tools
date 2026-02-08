@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 from conftest import requires_sample_files
-from copilot_repository_tools_common import (
+
+from copilot_repository_tools import (
     ChatMessage,
     ChatSession,
     CommandRun,
@@ -15,7 +16,7 @@ from copilot_repository_tools_common import (
     find_copilot_chat_dirs,
     scan_chat_sessions,
 )
-from copilot_repository_tools_common.scanner import (
+from copilot_repository_tools.scanner import (
     _extract_edit_group_text,
     _extract_inline_reference_name,
     _merge_content_blocks,
@@ -345,7 +346,7 @@ class TestSampleFilesParsing:
     @requires_sample_files
     def test_sample_session_scan_integration(self, sample_session_path, tmp_path):
         """Test that sample session can be scanned using the scanner module."""
-        from copilot_repository_tools_common.scanner import _parse_chat_session_file
+        from copilot_repository_tools.scanner import _parse_chat_session_file
 
         session = _parse_chat_session_file(sample_session_path, workspace_name="test-workspace", workspace_path=str(tmp_path), edition="stable")
         assert session is not None
@@ -362,7 +363,7 @@ class TestPerformanceBenchmarks:
     @requires_sample_files
     def test_large_session_parsing_time(self, all_sample_session_paths):
         """Test that large session files parse within acceptable time limits."""
-        from copilot_repository_tools_common.scanner import _parse_chat_session_file
+        from copilot_repository_tools.scanner import _parse_chat_session_file
 
         for sample_path in all_sample_session_paths:
             file_size = sample_path.stat().st_size
@@ -419,7 +420,7 @@ class TestCLIParsing:
         Tests parsing the actual copilot-cli JSONL format with event types like
         session.start, user.message, assistant.message, tool.execution_*, etc.
         """
-        from copilot_repository_tools_common.scanner import _parse_cli_jsonl_file
+        from copilot_repository_tools.scanner import _parse_cli_jsonl_file
 
         # Use the real sample file from copilot-cli
         sample_file = Path(__file__).parent / "sample_files" / "66b821d4-af6f-4518-a394-6d95a4d0f96b.jsonl"
@@ -477,7 +478,7 @@ class TestCLIParsing:
 
     def test_parse_cli_jsonl_file_simple_format(self):
         """Test parsing CLI JSONL session file with simple format (for backwards compatibility)."""
-        from copilot_repository_tools_common.scanner import _parse_cli_jsonl_file
+        from copilot_repository_tools.scanner import _parse_cli_jsonl_file
 
         # Use the simple sample file
         sample_file = Path(__file__).parent / "sample_files" / "cli-session-001.jsonl"
@@ -495,7 +496,7 @@ class TestCLIParsing:
 
     def test_get_cli_storage_paths(self):
         """Test getting CLI storage paths."""
-        from copilot_repository_tools_common import get_cli_storage_paths
+        from copilot_repository_tools import get_cli_storage_paths
 
         paths = get_cli_storage_paths()
 
@@ -509,7 +510,7 @@ class TestCLIParsing:
     def test_scan_includes_cli_by_default(self, tmp_path):
         """Test that scan_chat_sessions includes CLI sessions by default."""
 
-        from copilot_repository_tools_common import scan_chat_sessions
+        from copilot_repository_tools import scan_chat_sessions
 
         # Mock an empty VS Code storage
         storage_paths = [(str(tmp_path / "nonexistent"), "stable")]
@@ -527,7 +528,7 @@ class TestRepositoryUrlDetection:
 
     def test_normalize_git_url_https(self):
         """Test normalizing HTTPS git URLs."""
-        from copilot_repository_tools_common.scanner import _normalize_git_url
+        from copilot_repository_tools.scanner import _normalize_git_url
 
         # Standard HTTPS URL
         result = _normalize_git_url("https://github.com/owner/repo.git")
@@ -543,7 +544,7 @@ class TestRepositoryUrlDetection:
 
     def test_normalize_git_url_ssh(self):
         """Test normalizing SSH git URLs."""
-        from copilot_repository_tools_common.scanner import _normalize_git_url
+        from copilot_repository_tools.scanner import _normalize_git_url
 
         # Standard SSH URL
         result = _normalize_git_url("git@github.com:owner/repo.git")
@@ -559,7 +560,7 @@ class TestRepositoryUrlDetection:
 
     def test_normalize_git_url_ssh_protocol(self):
         """Test normalizing SSH protocol URLs."""
-        from copilot_repository_tools_common.scanner import _normalize_git_url
+        from copilot_repository_tools.scanner import _normalize_git_url
 
         # SSH protocol URL
         result = _normalize_git_url("ssh://git@github.com/owner/repo.git")
@@ -571,35 +572,35 @@ class TestRepositoryUrlDetection:
 
     def test_normalize_git_url_trailing_slash(self):
         """Test that trailing slashes are handled."""
-        from copilot_repository_tools_common.scanner import _normalize_git_url
+        from copilot_repository_tools.scanner import _normalize_git_url
 
         result = _normalize_git_url("https://github.com/owner/repo/")
         assert result == "github.com/owner/repo"
 
     def test_normalize_git_url_unknown_format(self):
         """Test that unknown formats are returned as-is."""
-        from copilot_repository_tools_common.scanner import _normalize_git_url
+        from copilot_repository_tools.scanner import _normalize_git_url
 
         result = _normalize_git_url("some-unknown-format")
         assert result == "some-unknown-format"
 
     def test_detect_repository_url_none_workspace(self):
         """Test that None workspace path returns None."""
-        from copilot_repository_tools_common.scanner import detect_repository_url
+        from copilot_repository_tools.scanner import detect_repository_url
 
         result = detect_repository_url(None)
         assert result is None
 
     def test_detect_repository_url_empty_workspace(self):
         """Test that empty workspace path returns None."""
-        from copilot_repository_tools_common.scanner import detect_repository_url
+        from copilot_repository_tools.scanner import detect_repository_url
 
         result = detect_repository_url("")
         assert result is None
 
     def test_detect_repository_url_not_git_repo(self, tmp_path):
         """Test that non-git directory returns None."""
-        from copilot_repository_tools_common.scanner import detect_repository_url
+        from copilot_repository_tools.scanner import detect_repository_url
 
         # Create a regular directory that's not a git repo
         workspace = tmp_path / "not-a-repo"
@@ -612,7 +613,7 @@ class TestRepositoryUrlDetection:
         """Test detection in an actual git repository."""
         import subprocess
 
-        from copilot_repository_tools_common.scanner import detect_repository_url
+        from copilot_repository_tools.scanner import detect_repository_url
 
         # Create a git repo
         workspace = tmp_path / "test-repo"
@@ -634,7 +635,7 @@ class TestRepositoryUrlDetection:
         )
 
         # Clear cache so we re-check after adding remote
-        from copilot_repository_tools_common.scanner import _clear_repository_url_cache
+        from copilot_repository_tools.scanner import _clear_repository_url_cache
 
         _clear_repository_url_cache()
 
@@ -667,7 +668,7 @@ class TestRepositoryUrlDetection:
 
     def test_detect_repository_url_exported_from_common(self):
         """Test that detect_repository_url is exported from the common package."""
-        from copilot_repository_tools_common import detect_repository_url
+        from copilot_repository_tools import detect_repository_url
 
         # Should be callable
         assert callable(detect_repository_url)

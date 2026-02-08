@@ -4,9 +4,10 @@ import tempfile
 from pathlib import Path
 
 import pytest
-from copilot_repository_tools_common import ChatMessage, ChatSession, ContentBlock, Database
-from copilot_repository_tools_web import create_app
-from copilot_repository_tools_web.webapp import (
+
+from copilot_repository_tools import ChatMessage, ChatSession, ContentBlock, Database
+from copilot_repository_tools.web import create_app
+from copilot_repository_tools.web.webapp import (
     _extract_filename,
     _markdown_to_html,
     _parse_diff_stats,
@@ -426,7 +427,7 @@ class TestRefreshWithTestData:
         assert stats["session_count"] == 0
 
         # Manually import the session using the scanner
-        from copilot_repository_tools_common.scanner import scan_chat_sessions
+        from copilot_repository_tools.scanner import scan_chat_sessions
 
         storage_paths = [(str(tmp_path / "workspaceStorage"), "stable")]
         sessions = list(scan_chat_sessions(storage_paths, include_cli=False))
@@ -472,7 +473,7 @@ class TestRefreshWithTestData:
         )
 
         # Import initial session
-        from copilot_repository_tools_common.scanner import scan_chat_sessions
+        from copilot_repository_tools.scanner import scan_chat_sessions
 
         storage_paths = [(str(tmp_path / "workspaceStorage"), "stable")]
         sessions = list(scan_chat_sessions(storage_paths, include_cli=False))
@@ -545,7 +546,7 @@ class TestRefreshWithTestData:
         )
 
         # Import session
-        from copilot_repository_tools_common.scanner import scan_chat_sessions
+        from copilot_repository_tools.scanner import scan_chat_sessions
 
         storage_paths = [(str(tmp_path / "workspaceStorage"), "stable")]
         sessions = list(scan_chat_sessions(storage_paths, include_cli=False))
@@ -600,7 +601,7 @@ class TestHtmlOutputToolInvocations:
     @pytest.fixture
     def session_with_tools(self, tmp_path):
         """Create a session with various tool invocations for testing."""
-        from copilot_repository_tools_common.scanner import ChatMessage, ChatSession, ContentBlock, ToolInvocation
+        from copilot_repository_tools.scanner import ChatMessage, ChatSession, ContentBlock, ToolInvocation
 
         db_path = tmp_path / "test_tools.db"
         db = Database(str(db_path))
@@ -721,7 +722,7 @@ class TestHtmlOutputThinkingBlocks:
     @pytest.fixture
     def session_with_thinking(self, tmp_path):
         """Create a session with thinking blocks for testing."""
-        from copilot_repository_tools_common.scanner import ChatMessage, ChatSession, ContentBlock
+        from copilot_repository_tools.scanner import ChatMessage, ChatSession, ContentBlock
 
         db_path = tmp_path / "test_thinking.db"
         db = Database(str(db_path))
@@ -797,7 +798,7 @@ class TestHtmlOutputFileChanges:
     @pytest.fixture
     def session_with_file_changes(self, tmp_path):
         """Create a session with file changes for testing."""
-        from copilot_repository_tools_common.scanner import ChatMessage, ChatSession, FileChange
+        from copilot_repository_tools.scanner import ChatMessage, ChatSession, FileChange
 
         db_path = tmp_path / "test_files.db"
         db = Database(str(db_path))
@@ -1078,9 +1079,7 @@ class TestMarkdownApiIncludeThinking:
 
     def test_get_markdown_include_thinking_true(self, thinking_client):
         """Test that include_thinking=true includes thinking content."""
-        response = thinking_client.get(
-            "/api/markdown/thinking-api-session?include_thinking=true"
-        )
+        response = thinking_client.get("/api/markdown/thinking-api-session?include_thinking=true")
         assert response.status_code == 200
         data = response.get_json()
         assert "markdown" in data
@@ -1088,9 +1087,7 @@ class TestMarkdownApiIncludeThinking:
 
     def test_get_markdown_include_thinking_false(self, thinking_client):
         """Test that include_thinking=false omits thinking content."""
-        response = thinking_client.get(
-            "/api/markdown/thinking-api-session?include_thinking=false"
-        )
+        response = thinking_client.get("/api/markdown/thinking-api-session?include_thinking=false")
         assert response.status_code == 200
         data = response.get_json()
         assert "markdown" in data
@@ -1135,23 +1132,17 @@ class TestDownloadMarkdownEndpoint:
 
     def test_download_accepts_include_diffs(self, client):
         """Test that download mode works with include_diffs param."""
-        response = client.get(
-            "/api/markdown/webapp-test-session?download=true&include_diffs=false"
-        )
+        response = client.get("/api/markdown/webapp-test-session?download=true&include_diffs=false")
         assert response.status_code == 200
 
     def test_download_accepts_include_tool_inputs(self, client):
         """Test that download mode works with include_tool_inputs param."""
-        response = client.get(
-            "/api/markdown/webapp-test-session?download=true&include_tool_inputs=false"
-        )
+        response = client.get("/api/markdown/webapp-test-session?download=true&include_tool_inputs=false")
         assert response.status_code == 200
 
     def test_download_accepts_include_thinking(self, client):
         """Test that download mode works with include_thinking param."""
-        response = client.get(
-            "/api/markdown/webapp-test-session?download=true&include_thinking=true"
-        )
+        response = client.get("/api/markdown/webapp-test-session?download=true&include_thinking=true")
         assert response.status_code == 200
 
     def test_download_404_for_nonexistent_session(self, client):

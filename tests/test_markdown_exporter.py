@@ -1,7 +1,8 @@
 """Tests for the markdown exporter module."""
 
 import pytest
-from copilot_repository_tools_common import (
+
+from copilot_repository_tools import (
     ChatMessage,
     ChatSession,
     ContentBlock,
@@ -11,7 +12,7 @@ from copilot_repository_tools_common import (
     generate_session_filename,
     session_to_markdown,
 )
-from copilot_repository_tools_common.markdown_exporter import (
+from copilot_repository_tools.markdown_exporter import (
     _format_timestamp,
     _format_tool_summary,
     _had_thinking_content,
@@ -380,14 +381,14 @@ class TestFormatFileChangesSummary:
 
     def test_no_file_changes(self):
         """Test message with no file changes."""
-        from copilot_repository_tools_common.markdown_exporter import _format_file_changes_summary
+        from copilot_repository_tools.markdown_exporter import _format_file_changes_summary
 
         message = ChatMessage(role="assistant", content="Hello")
         assert _format_file_changes_summary(message) == ""
 
     def test_file_changes_with_diff_included(self):
         """Test that file diffs are included when flag is set."""
-        from copilot_repository_tools_common.markdown_exporter import _format_file_changes_summary
+        from copilot_repository_tools.markdown_exporter import _format_file_changes_summary
 
         message = ChatMessage(
             role="assistant",
@@ -404,7 +405,7 @@ class TestFormatFileChangesSummary:
 
     def test_file_changes_without_diff_when_not_included(self):
         """Test that file diffs are not included when flag is False."""
-        from copilot_repository_tools_common.markdown_exporter import _format_file_changes_summary
+        from copilot_repository_tools.markdown_exporter import _format_file_changes_summary
 
         message = ChatMessage(
             role="assistant",
