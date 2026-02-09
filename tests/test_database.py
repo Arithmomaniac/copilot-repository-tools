@@ -1163,7 +1163,7 @@ class TestFTSOptimization:
     def test_optimize_fts_with_data(self, temp_db, sample_session):
         """Test optimize_fts after adding data."""
         temp_db.add_session(sample_session)
-        
+
         result = temp_db.optimize_fts()
         assert result["optimized"] is True
         assert result["segments_before"] >= 0
@@ -1172,7 +1172,7 @@ class TestFTSOptimization:
     def test_optimize_fts_multiple_sessions(self, tmp_path):
         """Test optimize_fts with multiple sessions (more fragmentation)."""
         db = Database(tmp_path / "multi_session.db")
-        
+
         # Add multiple sessions to create FTS fragmentation
         for i in range(5):
             session = ChatSession(
@@ -1185,7 +1185,7 @@ class TestFTSOptimization:
                 ],
             )
             db.add_session(session)
-        
+
         result = db.optimize_fts()
         assert result["optimized"] is True
 
@@ -1405,13 +1405,13 @@ class TestRelevanceWithRecency:
 
         # Search with relevance sorting
         results = db.search("Python decorators", sort_by="relevance")
-        
+
         # Both sessions should be returned
         assert len(results) >= 2
-        
+
         # Extract session IDs from results in order
         session_ids = [r["session_id"] for r in results[:2]]
-        
+
         # The newer session should rank higher (appear first) due to recency bonus
         assert session_ids[0] == "new-session", "Recent session should rank higher"
 
@@ -1425,14 +1425,8 @@ class TestRelevanceWithRecency:
             workspace_name="test-old",
             workspace_path="/test/old",
             messages=[
-                ChatMessage(
-                    role="user",
-                    content="How do I use Python decorators for authentication and authorization?"
-                ),
-                ChatMessage(
-                    role="assistant",
-                    content="Python decorators for authentication are perfect. Decorators decorators decorators."
-                ),
+                ChatMessage(role="user", content="How do I use Python decorators for authentication and authorization?"),
+                ChatMessage(role="assistant", content="Python decorators for authentication are perfect. Decorators decorators decorators."),
             ],
             created_at="2020-01-15T10:00:00Z",
             vscode_edition="stable",
@@ -1455,14 +1449,14 @@ class TestRelevanceWithRecency:
 
         # Search with relevance sorting
         results = db.search("Python decorators", sort_by="relevance")
-        
+
         # The old session with strong match should rank higher despite being older
         session_ids = [r["session_id"] for r in results]
-        
+
         # Find positions
         old_pos = session_ids.index("old-strong") if "old-strong" in session_ids else -1
         new_pos = session_ids.index("new-weak") if "new-weak" in session_ids else -1
-        
+
         # Strong match should rank higher even if older
         if old_pos >= 0 and new_pos >= 0:
             assert old_pos < new_pos, "Strong relevance should override recency"
@@ -1498,7 +1492,7 @@ class TestRelevanceWithRecency:
 
         # Search with date sorting
         results = db.search("message", sort_by="date")
-        
+
         # Newest should be first when sorting by date
         session_ids = [r["session_id"] for r in results[:2]]
         assert session_ids[0] == "newest", "Newest session should be first with date sorting"

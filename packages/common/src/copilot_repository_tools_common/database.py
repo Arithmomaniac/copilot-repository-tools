@@ -62,41 +62,41 @@ def _validate_date_format(date_str: str) -> str | None:
 
 def _escape_fts5_token(token: str) -> str:
     """Escape a single FTS5 token to prevent syntax errors.
-    
+
     FTS5 has special operators like:
     - Dash (-) which means NOT
     - Colon (:) for column specification
     - Parentheses, brackets for grouping
-    
+
     If a token is already quoted, leave it as-is.
     Otherwise, wrap it in quotes if it contains special characters.
-    
+
     Args:
         token: A single search token (word or phrase).
-    
+
     Returns:
         The escaped token, safe for FTS5 MATCH queries.
     """
     if not token:
         return token
-    
+
     # If already quoted, leave as-is
     if token.startswith('"') and token.endswith('"'):
         return token
-    
+
     # FTS5 special characters that need escaping:
     # - (dash/NOT operator), : (column spec), (, ), [, ]
     # Note: We don't need to escape * (prefix match) or ^ (first token)
     # as these are useful operators users might want to use
-    special_chars = ['-', ':', '(', ')', '[', ']']
-    
+    special_chars = ["-", ":", "(", ")", "[", "]"]
+
     # Check if token contains any special characters
     if any(char in token for char in special_chars):
         # Escape internal quotes by doubling them (FTS5 convention)
         escaped = token.replace('"', '""')
         # Wrap in quotes
         return f'"{escaped}"'
-    
+
     return token
 
 
