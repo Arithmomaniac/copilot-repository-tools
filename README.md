@@ -23,25 +23,26 @@ This project was informed by and borrows patterns from several excellent open-so
 
 ## Project Structure
 
-This is a Python package with optional extras for the web interface:
+This is a Python package with optional extras for CLI and web interfaces:
 
-- **Base package**: Core utilities (database, scanner, markdown exporter) and CLI
+- **Base package**: Core utilities (database, scanner, markdown exporter)
+- **[cli] extra**: Command-line interface built with Typer
 - **[web] extra**: Flask-based web interface for browsing chat sessions
-- **[all] extra**: Everything included
+- **[all] extra**: Both CLI and web interfaces
 
 ## Quick Start
 
 Run the CLI directly with [uvx](https://docs.astral.sh/uv/guides/tools/) (no installation needed):
 
 ```bash
-# Scan for chat sessions
-uvx copilot-repository-tools scan
+# Scan for chat sessions (installs [cli] extra automatically)
+uvx --with copilot-repository-tools[cli] copilot-chat-archive scan
 
 # Start the web viewer (installs [web] extra automatically)
 uvx --with copilot-repository-tools[web] copilot-chat-web --db copilot_chats.db
 
 # Search through chat history
-uvx copilot-repository-tools search "authentication"
+uvx --with copilot-repository-tools[cli] copilot-chat-archive search "authentication"
 ```
 
 ## Installation
@@ -49,8 +50,11 @@ uvx copilot-repository-tools search "authentication"
 ### Using pipx (recommended for CLI tools)
 
 ```bash
-# Install the CLI only
+# Install the base library only
 pipx install copilot-repository-tools
+
+# Install with CLI
+pipx install copilot-repository-tools[cli]
 
 # Install with web interface
 pipx install copilot-repository-tools[web]
@@ -62,8 +66,11 @@ pipx install copilot-repository-tools[all]
 ### Using uv
 
 ```bash
-# Install the CLI only
+# Install the base library only
 uv tool install copilot-repository-tools
+
+# Install with CLI
+uv tool install copilot-repository-tools --with copilot-repository-tools[cli]
 
 # Install with web interface
 uv tool install copilot-repository-tools --with copilot-repository-tools[web]
@@ -75,8 +82,11 @@ uv tool install copilot-repository-tools --with copilot-repository-tools[all]
 ### Using pip
 
 ```bash
-# Install the CLI only
+# Install the base library only
 pip install copilot-repository-tools
+
+# Install with CLI
+pip install copilot-repository-tools[cli]
 
 # Install with web interface
 pip install copilot-repository-tools[web]

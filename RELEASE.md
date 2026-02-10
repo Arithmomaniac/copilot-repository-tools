@@ -104,18 +104,21 @@ The workflow uses:
 After release, users can install the package with:
 
 ```bash
-# Install base package (CLI only)
+# Install base library only (core utilities)
 pip install copilot-repository-tools
+
+# Install with CLI
+pip install copilot-repository-tools[cli]
 
 # Install with web interface
 pip install copilot-repository-tools[web]
 
-# Install everything
+# Install everything (CLI + web)
 pip install copilot-repository-tools[all]
 
 # Use with pipx (recommended for CLI tools)
-pipx install copilot-repository-tools
-pipx install copilot-repository-tools[web]
+pipx install copilot-repository-tools[cli]
+pipx install copilot-repository-tools[all]
 ```
 
 ## Troubleshooting
