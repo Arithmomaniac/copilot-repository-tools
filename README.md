@@ -20,16 +20,18 @@ This project was informed by and borrows patterns from several excellent open-so
 - **Browse** your archive with a web interface (similar to [simonw/claude-code-transcripts](https://github.com/simonw/claude-code-transcripts))
 - **Export/Import** sessions as JSON or Markdown for backup or migration
 - **Tool invocations & file changes** tracking from chat sessions
+- **Semantic memory search** (optional) via [Mem0](https://github.com/mem0ai/mem0) integration
 
 ## Project Structure
 
-This is a [uv workspace](https://docs.astral.sh/uv/concepts/workspaces/) with three packages:
+This is a [uv workspace](https://docs.astral.sh/uv/concepts/workspaces/) with four packages:
 
 | Package | Description |
 |---------|-------------|
 | `copilot-repository-tools-common` | Core utilities: database, scanner, markdown exporter |
 | `copilot-repository-tools-cli` | Command-line interface built with [Typer](https://typer.tiangolo.com/) |
 | `copilot-repository-tools-web` | Flask-based web interface for browsing chat sessions |
+| `copilot-repository-tools-memory` | Semantic memory layer using [Mem0](https://github.com/mem0ai/mem0) (optional) |
 
 ## Quick Start
 
@@ -44,6 +46,10 @@ uvx copilot-repository-tools-web --db copilot_chats.db
 
 # Search through chat history
 uvx copilot-repository-tools-cli search "authentication"
+
+# (Optional) Semantic memory search with Mem0
+uvx copilot-repository-tools-memory index --db copilot_chats.db
+uvx copilot-repository-tools-memory search "how did I handle errors?"
 ```
 
 ## Installation
@@ -202,6 +208,36 @@ copilot-chat-archive export-markdown --include-diffs
 # Import from JSON
 copilot-chat-archive import-json chats.json
 ```
+
+### 6. Semantic Memory Search (Optional)
+
+For AI-powered semantic search, use the separate memory package. This provides:
+- **Fact extraction**: Automatically extracts preferences and patterns from conversations
+- **Semantic search**: Find relevant memories even with different terminology
+- **Cross-session insights**: Discover patterns across all your Copilot conversations
+
+```bash
+# Install and run with uvx (auto-sets up Mem0 with local ChromaDB)
+uvx copilot-repository-tools-memory index --db copilot_chats.db
+
+# Semantic search - understands meaning, not just keywords
+uvx copilot-repository-tools-memory search "how did I handle authentication errors?"
+
+# List all extracted memories
+uvx copilot-repository-tools-memory list
+
+# Filter by workspace
+uvx copilot-repository-tools-memory search "async patterns" --workspace my-project
+
+# Show memory statistics
+uvx copilot-repository-tools-memory stats
+```
+
+**Key features:**
+- Uses GitHub Copilot models via LiteLLM by default (no API keys needed if you have Copilot)
+- Local ChromaDB for vector storage (no external services)
+- Incremental indexing (only processes new sessions, use `--force` to re-index)
+- Data stored in `~/.copilot-memory/` by default
 
 ## Chat Storage Locations
 
