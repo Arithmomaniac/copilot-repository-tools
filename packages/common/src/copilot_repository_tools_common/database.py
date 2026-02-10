@@ -60,6 +60,46 @@ def _validate_date_format(date_str: str) -> str | None:
         return None
 
 
+def _escape_fts5_token(token: str) -> str:
+    """Escape a single FTS5 token to prevent syntax errors.
+
+    FTS5 has special operators like:
+    - Dash (-) which means NOT
+    - Colon (:) for column specification
+    - Parentheses, brackets for grouping
+
+    If a token is already quoted, leave it as-is.
+    Otherwise, wrap it in quotes if it contains special characters.
+
+    Args:
+        token: A single search token (word or phrase).
+
+    Returns:
+        The escaped token, safe for FTS5 MATCH queries.
+    """
+    if not token:
+        return token
+
+    # If already quoted, leave as-is
+    if token.startswith('"') and token.endswith('"'):
+        return token
+
+    # FTS5 special characters that need escaping:
+    # - (dash/NOT operator), : (column spec), (, ), [, ]
+    # Note: We don't need to escape * (prefix match) or ^ (first token)
+    # as these are useful operators users might want to use
+    special_chars = ["-", ":", "(", ")", "[", "]"]
+
+    # Check if token contains any special characters
+    if any(char in token for char in special_chars):
+        # Escape internal quotes by doubling them (FTS5 convention)
+        escaped = token.replace('"', '""')
+        # Wrap in quotes
+        return f'"{escaped}"'
+
+    return token
+
+
 def parse_search_query(query: str) -> ParsedQuery:
     """Parse a search query to extract field prefixes and convert to FTS5 format.
 
@@ -126,7 +166,7 @@ def parse_search_query(query: str) -> ParsedQuery:
     # Now process the remaining query for FTS5
     # FTS5 by default uses AND for multiple terms, so we just need to handle:
     # 1. Quoted phrases (keep as-is)
-    # 2. Unquoted words (join with spaces for implicit AND)
+    # 2. Unquoted words (escape special chars and join with spaces for implicit AND)
 
     if not remaining_query:
         fts_query = ""
@@ -141,7 +181,9 @@ def parse_search_query(query: str) -> ParsedQuery:
             # Clean up any empty quotes
             if token == '""':
                 continue
-            tokens.append(token)
+            # Escape FTS5 special characters in the token
+            escaped_token = _escape_fts5_token(token)
+            tokens.append(escaped_token)
 
         # Join tokens with space (FTS5 uses implicit AND)
         fts_query = " ".join(tokens)
@@ -212,8 +254,22 @@ def _build_date_filter_clause(start_date: str | None, end_date: str | None, date
 
 
 # Allowed sort options with their SQL ORDER BY clauses (whitelist for security)
+# Note: For relevance, we combine FTS5 rank (text relevance) with recency.
+# FTS5 rank is negative (lower/more negative = better match).
+# We subtract a recency bonus to make recent items more negative (better rank).
+# The formula: rank - (days_since_2020 * 0.001) gives more weight to text relevance
+# while providing a small boost to recent items.
 _SORT_ORDER_CLAUSES = {
-    "relevance": "ORDER BY rank",
+    "relevance": """ORDER BY (
+        rank - 
+        CASE 
+            WHEN TYPEOF(s.created_at) = 'text' AND s.created_at LIKE '____-__-__%' 
+            THEN (JULIANDAY(SUBSTR(s.created_at, 1, 10)) - JULIANDAY('2020-01-01')) * 0.001
+            WHEN TYPEOF(s.created_at) = 'text'
+            THEN (JULIANDAY(DATETIME(CAST(s.created_at AS REAL) / 1000, 'unixepoch')) - JULIANDAY('2020-01-01')) * 0.001
+            ELSE 0
+        END
+    )""",
     "date": "ORDER BY s.created_at DESC",
 }
 

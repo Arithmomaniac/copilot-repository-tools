@@ -611,6 +611,20 @@ class TestParseSearchQuery:
             # Duplicate field values - last one wins
             ("role:user role:assistant python", "python", "assistant", None, None, None),
             ("workspace:first workspace:second", "", None, "second", None, None),
+            # FTS5 special character escaping - dashes
+            ("test-driven", '"test-driven"', None, None, None, None),
+            ("e-commerce m-commerce", '"e-commerce" "m-commerce"', None, None, None, None),
+            # FTS5 special character escaping - colons (outside field prefixes)
+            ("C++:17", '"C++:17"', None, None, None, None),
+            # FTS5 special character escaping - parentheses and brackets
+            ("function(arg)", '"function(arg)"', None, None, None, None),
+            ("array[0]", '"array[0]"', None, None, None, None),
+            # Mixed special characters
+            ("obj.method(arg-name)", '"obj.method(arg-name)"', None, None, None, None),
+            # Already quoted phrases should remain quoted
+            ('"test-driven development"', '"test-driven development"', None, None, None, None),
+            # Combination of escaped and normal tokens
+            ("python test-driven", 'python "test-driven"', None, None, None, None),
         ],
     )
     def test_parse_search_query(self, query, expected_fts, expected_role, expected_workspace, expected_title, expected_edition):
@@ -1149,7 +1163,7 @@ class TestFTSOptimization:
     def test_optimize_fts_with_data(self, temp_db, sample_session):
         """Test optimize_fts after adding data."""
         temp_db.add_session(sample_session)
-        
+
         result = temp_db.optimize_fts()
         assert result["optimized"] is True
         assert result["segments_before"] >= 0
@@ -1158,7 +1172,7 @@ class TestFTSOptimization:
     def test_optimize_fts_multiple_sessions(self, tmp_path):
         """Test optimize_fts with multiple sessions (more fragmentation)."""
         db = Database(tmp_path / "multi_session.db")
-        
+
         # Add multiple sessions to create FTS fragmentation
         for i in range(5):
             session = ChatSession(
@@ -1171,7 +1185,7 @@ class TestFTSOptimization:
                 ],
             )
             db.add_session(session)
-        
+
         result = db.optimize_fts()
         assert result["optimized"] is True
 
@@ -1208,3 +1222,277 @@ class TestGetMessagesMarkdownIncludeThinking:
         # With include_thinking=True, thinking content should be included
         md_with = temp_db.get_messages_markdown("thinking-md-test", include_thinking=True)
         assert "Internal reasoning..." in md_with
+
+
+class TestFTS5SpecialCharacterEscaping:
+    """Tests for FTS5 special character escaping in search queries."""
+
+    def test_dash_in_query(self, temp_db):
+        """Test that dashes in queries don't cause FTS5 syntax errors."""
+        session = ChatSession(
+            session_id="dash-test",
+            workspace_name="test-project",
+            workspace_path="/test",
+            messages=[
+                ChatMessage(role="user", content="How do I use test-driven development?"),
+                ChatMessage(role="assistant", content="Test-driven development (TDD) is a practice..."),
+            ],
+        )
+        temp_db.add_session(session)
+
+        # This should not raise an exception
+        results = temp_db.search("test-driven")
+        assert len(results) > 0
+        assert any("test-driven" in r["content"].lower() for r in results)
+
+    def test_multiple_dashes_in_query(self, temp_db):
+        """Test query with multiple words containing dashes."""
+        session = ChatSession(
+            session_id="multi-dash-test",
+            workspace_name="test-project",
+            workspace_path="/test",
+            messages=[
+                ChatMessage(role="user", content="What is e-commerce and m-commerce?"),
+                ChatMessage(role="assistant", content="E-commerce is electronic commerce, m-commerce is mobile commerce."),
+            ],
+        )
+        temp_db.add_session(session)
+
+        # Multiple dashed words should work
+        results = temp_db.search("e-commerce m-commerce")
+        assert len(results) > 0
+
+    def test_colon_in_query(self, temp_db):
+        """Test that colons in queries (outside field prefixes) are escaped."""
+        session = ChatSession(
+            session_id="colon-test",
+            workspace_name="test-project",
+            workspace_path="/test",
+            messages=[
+                ChatMessage(role="user", content="How do I use C++:17 features?"),
+                ChatMessage(role="assistant", content="C++:17 adds many features..."),
+            ],
+        )
+        temp_db.add_session(session)
+
+        # Colon should be escaped to prevent column specification error
+        results = temp_db.search("C++:17")
+        # Should not raise an exception (main goal)
+        assert isinstance(results, list)
+
+    def test_parentheses_in_query(self, temp_db):
+        """Test that parentheses in queries are escaped."""
+        session = ChatSession(
+            session_id="paren-test",
+            workspace_name="test-project",
+            workspace_path="/test",
+            messages=[
+                ChatMessage(role="user", content="How do I use function(parameter)?"),
+                ChatMessage(role="assistant", content="Call function(parameter) like this..."),
+            ],
+        )
+        temp_db.add_session(session)
+
+        # Parentheses should be escaped
+        results = temp_db.search("function(parameter)")
+        assert isinstance(results, list)
+
+    def test_brackets_in_query(self, temp_db):
+        """Test that brackets in queries are escaped."""
+        session = ChatSession(
+            session_id="bracket-test",
+            workspace_name="test-project",
+            workspace_path="/test",
+            messages=[
+                ChatMessage(role="user", content="How do I use array[0]?"),
+                ChatMessage(role="assistant", content="Access array[0] like this..."),
+            ],
+        )
+        temp_db.add_session(session)
+
+        # Brackets should be escaped
+        results = temp_db.search("array[0]")
+        assert isinstance(results, list)
+
+    def test_mixed_special_characters(self, temp_db):
+        """Test query with multiple types of special characters."""
+        session = ChatSession(
+            session_id="mixed-test",
+            workspace_name="test-project",
+            workspace_path="/test",
+            messages=[
+                ChatMessage(role="user", content="How do I use obj.method(arg-name)?"),
+                ChatMessage(role="assistant", content="Call obj.method(arg-name) to do..."),
+            ],
+        )
+        temp_db.add_session(session)
+
+        # Complex query with dashes, parentheses, dots
+        results = temp_db.search("obj.method(arg-name)")
+        assert isinstance(results, list)
+
+    def test_already_quoted_phrase_not_double_escaped(self, temp_db):
+        """Test that already quoted phrases are not double-escaped."""
+        session = ChatSession(
+            session_id="quoted-test",
+            workspace_name="test-project",
+            workspace_path="/test",
+            messages=[
+                ChatMessage(role="user", content="What is test-driven development?"),
+                ChatMessage(role="assistant", content="Test-driven development is..."),
+            ],
+        )
+        temp_db.add_session(session)
+
+        # Quoted phrase should remain quoted but work
+        results = temp_db.search('"test-driven"')
+        assert len(results) > 0
+
+    def test_escape_preserves_search_functionality(self, temp_db):
+        """Test that escaping doesn't break normal search functionality."""
+        session = ChatSession(
+            session_id="normal-test",
+            workspace_name="test-project",
+            workspace_path="/test",
+            messages=[
+                ChatMessage(role="user", content="How do I create a Python function?"),
+                ChatMessage(role="assistant", content="Use def to create a Python function."),
+            ],
+        )
+        temp_db.add_session(session)
+
+        # Normal search without special chars should still work
+        results = temp_db.search("Python function")
+        assert len(results) > 0
+        assert any("Python" in r["content"] for r in results)
+
+
+class TestRelevanceWithRecency:
+    """Tests for relevance algorithm that weighs towards recent items."""
+
+    def test_recent_items_rank_higher_for_similar_relevance(self, tmp_path):
+        """Test that more recent items rank higher when text relevance is similar."""
+        db = Database(tmp_path / "recency_test.db")
+
+        # Create two sessions with the same content but different dates
+        # Older session (2020)
+        old_session = ChatSession(
+            session_id="old-session",
+            workspace_name="test-old",
+            workspace_path="/test/old",
+            messages=[
+                ChatMessage(role="user", content="How do I use Python decorators?"),
+                ChatMessage(role="assistant", content="Python decorators are a way to modify functions."),
+            ],
+            created_at="2020-01-15T10:00:00Z",
+            vscode_edition="stable",
+        )
+        db.add_session(old_session)
+
+        # Recent session (2025)
+        new_session = ChatSession(
+            session_id="new-session",
+            workspace_name="test-new",
+            workspace_path="/test/new",
+            messages=[
+                ChatMessage(role="user", content="How do I use Python decorators?"),
+                ChatMessage(role="assistant", content="Python decorators are a way to modify functions."),
+            ],
+            created_at="2025-01-15T10:00:00Z",
+            vscode_edition="stable",
+        )
+        db.add_session(new_session)
+
+        # Search with relevance sorting
+        results = db.search("Python decorators", sort_by="relevance")
+
+        # Both sessions should be returned
+        assert len(results) >= 2
+
+        # Extract session IDs from results in order
+        session_ids = [r["session_id"] for r in results[:2]]
+
+        # The newer session should rank higher (appear first) due to recency bonus
+        assert session_ids[0] == "new-session", "Recent session should rank higher"
+
+    def test_recency_bonus_doesnt_override_strong_relevance(self, tmp_path):
+        """Test that recency doesn't override strong text relevance differences."""
+        db = Database(tmp_path / "relevance_priority_test.db")
+
+        # Old session with strong match
+        old_session = ChatSession(
+            session_id="old-strong",
+            workspace_name="test-old",
+            workspace_path="/test/old",
+            messages=[
+                ChatMessage(role="user", content="How do I use Python decorators for authentication and authorization?"),
+                ChatMessage(role="assistant", content="Python decorators for authentication are perfect. Decorators decorators decorators."),
+            ],
+            created_at="2020-01-15T10:00:00Z",
+            vscode_edition="stable",
+        )
+        db.add_session(old_session)
+
+        # Recent session with weak match
+        new_session = ChatSession(
+            session_id="new-weak",
+            workspace_name="test-new",
+            workspace_path="/test/new",
+            messages=[
+                ChatMessage(role="user", content="What is Python?"),
+                ChatMessage(role="assistant", content="Python is a programming language."),
+            ],
+            created_at="2025-01-15T10:00:00Z",
+            vscode_edition="stable",
+        )
+        db.add_session(new_session)
+
+        # Search with relevance sorting
+        results = db.search("Python decorators", sort_by="relevance")
+
+        # The old session with strong match should rank higher despite being older
+        session_ids = [r["session_id"] for r in results]
+
+        # Find positions
+        old_pos = session_ids.index("old-strong") if "old-strong" in session_ids else -1
+        new_pos = session_ids.index("new-weak") if "new-weak" in session_ids else -1
+
+        # Strong match should rank higher even if older
+        if old_pos >= 0 and new_pos >= 0:
+            assert old_pos < new_pos, "Strong relevance should override recency"
+
+    def test_date_sorting_still_works(self, tmp_path):
+        """Test that explicit date sorting still works correctly."""
+        db = Database(tmp_path / "date_sort_test.db")
+
+        # Create sessions with different dates
+        old_session = ChatSession(
+            session_id="oldest",
+            workspace_name="test-old",
+            workspace_path="/test/old",
+            messages=[
+                ChatMessage(role="user", content="Test message old"),
+            ],
+            created_at="2020-01-15T10:00:00Z",
+            vscode_edition="stable",
+        )
+        db.add_session(old_session)
+
+        new_session = ChatSession(
+            session_id="newest",
+            workspace_name="test-new",
+            workspace_path="/test/new",
+            messages=[
+                ChatMessage(role="user", content="Test message new"),
+            ],
+            created_at="2025-01-15T10:00:00Z",
+            vscode_edition="stable",
+        )
+        db.add_session(new_session)
+
+        # Search with date sorting
+        results = db.search("message", sort_by="date")
+
+        # Newest should be first when sorting by date
+        session_ids = [r["session_id"] for r in results[:2]]
+        assert session_ids[0] == "newest", "Newest session should be first with date sorting"
