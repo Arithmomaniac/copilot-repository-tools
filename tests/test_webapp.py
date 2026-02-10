@@ -1078,9 +1078,7 @@ class TestMarkdownApiIncludeThinking:
 
     def test_get_markdown_include_thinking_true(self, thinking_client):
         """Test that include_thinking=true includes thinking content."""
-        response = thinking_client.get(
-            "/api/markdown/thinking-api-session?include_thinking=true"
-        )
+        response = thinking_client.get("/api/markdown/thinking-api-session?include_thinking=true")
         assert response.status_code == 200
         data = response.get_json()
         assert "markdown" in data
@@ -1088,9 +1086,7 @@ class TestMarkdownApiIncludeThinking:
 
     def test_get_markdown_include_thinking_false(self, thinking_client):
         """Test that include_thinking=false omits thinking content."""
-        response = thinking_client.get(
-            "/api/markdown/thinking-api-session?include_thinking=false"
-        )
+        response = thinking_client.get("/api/markdown/thinking-api-session?include_thinking=false")
         assert response.status_code == 200
         data = response.get_json()
         assert "markdown" in data
@@ -1135,23 +1131,17 @@ class TestDownloadMarkdownEndpoint:
 
     def test_download_accepts_include_diffs(self, client):
         """Test that download mode works with include_diffs param."""
-        response = client.get(
-            "/api/markdown/webapp-test-session?download=true&include_diffs=false"
-        )
+        response = client.get("/api/markdown/webapp-test-session?download=true&include_diffs=false")
         assert response.status_code == 200
 
     def test_download_accepts_include_tool_inputs(self, client):
         """Test that download mode works with include_tool_inputs param."""
-        response = client.get(
-            "/api/markdown/webapp-test-session?download=true&include_tool_inputs=false"
-        )
+        response = client.get("/api/markdown/webapp-test-session?download=true&include_tool_inputs=false")
         assert response.status_code == 200
 
     def test_download_accepts_include_thinking(self, client):
         """Test that download mode works with include_thinking param."""
-        response = client.get(
-            "/api/markdown/webapp-test-session?download=true&include_thinking=true"
-        )
+        response = client.get("/api/markdown/webapp-test-session?download=true&include_thinking=true")
         assert response.status_code == 200
 
     def test_download_404_for_nonexistent_session(self, client):

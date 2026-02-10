@@ -1149,7 +1149,7 @@ class TestFTSOptimization:
     def test_optimize_fts_with_data(self, temp_db, sample_session):
         """Test optimize_fts after adding data."""
         temp_db.add_session(sample_session)
-        
+
         result = temp_db.optimize_fts()
         assert result["optimized"] is True
         assert result["segments_before"] >= 0
@@ -1158,7 +1158,7 @@ class TestFTSOptimization:
     def test_optimize_fts_multiple_sessions(self, tmp_path):
         """Test optimize_fts with multiple sessions (more fragmentation)."""
         db = Database(tmp_path / "multi_session.db")
-        
+
         # Add multiple sessions to create FTS fragmentation
         for i in range(5):
             session = ChatSession(
@@ -1171,7 +1171,7 @@ class TestFTSOptimization:
                 ],
             )
             db.add_session(session)
-        
+
         result = db.optimize_fts()
         assert result["optimized"] is True
 
