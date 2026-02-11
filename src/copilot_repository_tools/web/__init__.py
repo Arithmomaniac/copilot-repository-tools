@@ -79,7 +79,7 @@ def main():
         print("Run 'copilot-chat-archive scan' first to import chat sessions.", file=sys.stderr)
         sys.exit(1)
 
-    from copilot_repository_tools_common import Database
+    from copilot_repository_tools import Database
 
     database = Database(args.db)
     stats = database.get_stats()

@@ -11,7 +11,9 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
-from copilot_repository_tools_common import (
+from rich.console import Console
+
+from copilot_repository_tools import (
     ChatMessage,
     ChatSession,
     Database,
@@ -21,12 +23,11 @@ from copilot_repository_tools_common import (
     get_vscode_storage_paths,
     scan_chat_sessions,
 )
-from copilot_repository_tools_common.scanner import (
+from copilot_repository_tools.scanner import (
     SessionFileInfo,
     parse_session_file,
     scan_session_files,
 )
-from rich.console import Console
 
 # On Windows, reconfigure stdout/stderr to UTF-8 when piped to prevent
 # Rich from falling back to cp1252 which can't handle Unicode output
