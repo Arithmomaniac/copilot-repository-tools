@@ -103,14 +103,14 @@ name = "copilot-repository-tools"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "jinja2" },
+    { name = "markdown" },
     { name = "orjson" },
 ]
 
 [package.optional-dependencies]
 all = [
     { name = "flask" },
-    { name = "jinja2" },
-    { name = "markdown" },
     { name = "rich" },
     { name = "typer" },
 ]
@@ -120,8 +120,6 @@ cli = [
 ]
 web = [
     { name = "flask" },
-    { name = "jinja2" },
-    { name = "markdown" },
 ]
 
 [package.dev-dependencies]
@@ -138,8 +136,8 @@ dev = [
 requires-dist = [
     { name = "copilot-repository-tools", extras = ["cli", "web"], marker = "extra == 'all'" },
     { name = "flask", marker = "extra == 'web'", specifier = ">=3.0.0" },
-    { name = "jinja2", marker = "extra == 'web'", specifier = ">=3.0.0" },
-    { name = "markdown", marker = "extra == 'web'", specifier = ">=3.4.0" },
+    { name = "jinja2", specifier = ">=3.0.0" },
+    { name = "markdown", specifier = ">=3.4.0" },
     { name = "orjson", specifier = ">=3.9.0" },
     { name = "rich", marker = "extra == 'cli'", specifier = ">=13.0.0" },
     { name = "typer", marker = "extra == 'cli'", specifier = ">=0.12.0" },

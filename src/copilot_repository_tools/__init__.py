@@ -15,6 +15,11 @@ This project borrows patterns from several open-source projects:
 __version__ = "0.1.0"
 
 from .database import Database, ParsedQuery, parse_search_query
+from .html_exporter import (
+    export_session_to_html_file,
+    generate_session_html_filename,
+    session_to_html,
+)
 from .markdown_exporter import (
     export_session_to_file,
     generate_session_filename,
@@ -51,12 +56,15 @@ __all__ = [
     "detect_repository_url",
     # Markdown Exporter
     "export_session_to_file",
+    "export_session_to_html_file",
     "find_copilot_chat_dirs",
     "generate_session_filename",
+    "generate_session_html_filename",
     "get_cli_storage_paths",
     "get_vscode_storage_paths",
     "message_to_markdown",
     "parse_search_query",
     "scan_chat_sessions",
+    "session_to_html",
     "session_to_markdown",
 ]

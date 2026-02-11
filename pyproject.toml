@@ -24,6 +24,8 @@ classifiers = [
 ]
 dependencies = [
     "orjson>=3.9.0",
+    "jinja2>=3.0.0",
+    "markdown>=3.4.0",
 ]
 
 [project.optional-dependencies]
@@ -33,8 +35,6 @@ cli = [
 ]
 web = [
     "flask>=3.0.0",
-    "jinja2>=3.0.0",
-    "markdown>=3.4.0",
 ]
 all = [
     "copilot-repository-tools[cli,web]",

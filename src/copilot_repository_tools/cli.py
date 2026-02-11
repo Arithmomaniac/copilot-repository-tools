@@ -19,7 +19,9 @@ from copilot_repository_tools import (
     Database,
     __version__,
     export_session_to_file,
+    export_session_to_html_file,
     generate_session_filename,
+    generate_session_html_filename,
     get_vscode_storage_paths,
     scan_chat_sessions,
 )
@@ -634,6 +636,80 @@ def export_markdown(
                     include_tool_inputs=include_tool_inputs,
                     include_thinking=include_thinking,
                 )
+                exported += 1
+                if verbose:
+                    console.print(f"  Exported: {file_path}")
+
+        console.print(f"\n[green]Exported {exported} sessions to {output_dir}/[/green]")
+
+
+@app.command("export-html")
+def export_html(
+    db: Annotated[
+        Path,
+        typer.Option(
+            "--db",
+            "-d",
+            help="Path to SQLite database file.",
+            exists=True,
+        ),
+    ] = Path("copilot_chats.db"),
+    output_dir: Annotated[
+        Path,
+        typer.Option(
+            "--output-dir",
+            "-o",
+            help="Output directory for HTML files.",
+        ),
+    ] = Path(),
+    session_id: Annotated[
+        str | None,
+        typer.Option(
+            "--session-id",
+            "-s",
+            help="Export only a specific session by ID.",
+        ),
+    ] = None,
+    verbose: Annotated[
+        bool,
+        typer.Option(
+            "--verbose",
+            "-v",
+            help="Show verbose output.",
+        ),
+    ] = False,
+):
+    """Export sessions as self-contained static HTML files.
+
+    Each session is exported to a separate HTML file with the same rich
+    rendering as the web viewer, but without interactive elements (toolbar,
+    copy buttons, AJAX). The HTML is self-contained with no external
+    dependencies.
+    """
+    database = Database(db)
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    if session_id:
+        session = database.get_session(session_id)
+        if session is None:
+            console.print(f"[red]Error: Session '{session_id}' not found.[/red]")
+            raise typer.Exit(1)
+
+        filename = generate_session_html_filename(session)
+        file_path = output_dir / filename
+        export_session_to_html_file(session, file_path)
+        console.print(f"[green]Exported: {file_path}[/green]")
+    else:
+        sessions = database.list_sessions()
+        exported = 0
+
+        for session_info in sessions:
+            session = database.get_session(session_info["session_id"])
+            if session:
+                filename = generate_session_html_filename(session)
+                file_path = output_dir / filename
+                export_session_to_html_file(session, file_path)
                 exported += 1
                 if verbose:
                     console.print(f"  Exported: {file_path}")
