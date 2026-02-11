@@ -30,70 +30,20 @@ This is a Python package with optional extras for CLI and web interfaces:
 - **[web] extra**: Flask-based web interface for browsing chat sessions
 - **[all] extra**: Both CLI and web interfaces
 
-## Quick Start
-
-Run the CLI directly with [uvx](https://docs.astral.sh/uv/guides/tools/) (no installation needed):
-
-```bash
-# Scan for chat sessions (installs [cli] extra automatically)
-uvx --with copilot-repository-tools[cli] copilot-chat-archive scan
-
-# Start the web viewer (installs [web] extra automatically)
-uvx --with copilot-repository-tools[web] copilot-chat-web --db copilot_chats.db
-
-# Search through chat history
-uvx --with copilot-repository-tools[cli] copilot-chat-archive search "authentication"
-```
-
 ## Installation
 
-### Using pipx (recommended for CLI tools)
-
 ```bash
-# Install the base library only
-pipx install copilot-repository-tools
-
-# Install with CLI
-pipx install copilot-repository-tools[cli]
-
-# Install with web interface
-pipx install copilot-repository-tools[web]
-
-# Install everything
-pipx install copilot-repository-tools[all]
-```
-
-### Using uv
-
-```bash
-# Install the base library only
-uv tool install copilot-repository-tools
-
-# Install with CLI
-uv tool install copilot-repository-tools --with copilot-repository-tools[cli]
-
-# Install with web interface
-uv tool install copilot-repository-tools --with copilot-repository-tools[web]
-
-# Install everything
-uv tool install copilot-repository-tools --with copilot-repository-tools[all]
-```
-
-### Using pip
-
-```bash
-# Install the base library only
-pip install copilot-repository-tools
-
 # Install with CLI
 pip install copilot-repository-tools[cli]
 
 # Install with web interface
 pip install copilot-repository-tools[web]
 
-# Install everything
+# Install everything (CLI + web)
 pip install copilot-repository-tools[all]
 ```
+
+> **Tip:** Also works with `pipx install` or `uvx --with` if you prefer isolated tool environments.
 
 ### From source (development)
 
