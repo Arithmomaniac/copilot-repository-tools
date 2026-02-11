@@ -91,6 +91,33 @@ class TestCLI:
         assert result.exit_code == 0
         assert "No results" in result.output
 
+    def test_search_with_unicode_content(self, runner, tmp_path):
+        """Test search works with Unicode content (regression test for cp1252 crash).
+
+        When stdout is piped on Windows, Rich falls back to the system encoding
+        (cp1252) which can't handle Unicode. This test ensures the CLI handles
+        Unicode content without crashing in non-TTY contexts.
+        """
+        db_path = tmp_path / "unicode_test.db"
+        db = Database(db_path)
+
+        session = ChatSession(
+            session_id="unicode-test-session",
+            workspace_name="unicode-workspace",
+            workspace_path="/home/user/test",
+            messages=[
+                ChatMessage(role="user", content="Show me emojis 🎉 and symbols ━━━"),
+                ChatMessage(role="assistant", content="Here: café, naïve, 日本語, 🚀✨"),
+            ],
+            created_at="2025-01-15T10:00:00Z",
+            vscode_edition="stable",
+        )
+        db.add_session(session)
+
+        result = runner.invoke(app, ["search", "--db", str(db_path), "emojis", "--full"])
+        assert result.exit_code == 0
+        assert "Result" in result.output
+
     def test_export_command(self, runner, temp_db_with_data):
         """Test export command."""
         result = runner.invoke(app, ["export", "--db", str(temp_db_with_data)])

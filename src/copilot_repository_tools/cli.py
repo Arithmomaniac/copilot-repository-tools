@@ -4,6 +4,7 @@ This module provides a modern CLI built with Typer for scanning, searching,
 and exporting VS Code GitHub Copilot chat history.
 """
 
+import sys
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
@@ -27,6 +28,14 @@ from copilot_repository_tools.scanner import (
     parse_session_file,
     scan_session_files,
 )
+
+# On Windows, reconfigure stdout/stderr to UTF-8 when piped to prevent
+# Rich from falling back to cp1252 which can't handle Unicode output
+if sys.platform == "win32":
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 app = typer.Typer(
     name="copilot-chat-archive",

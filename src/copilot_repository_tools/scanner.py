@@ -1616,6 +1616,7 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
         # Extract session metadata from session.start event
         session_id = None
         created_at = None
+        session_start_context: dict = {}
 
         for event in events:
             event_type = event.get("type", "")
@@ -1624,17 +1625,20 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
             if event_type == "session.start":
                 session_id = event_data.get("sessionId")
                 created_at = event_data.get("startTime") or event.get("timestamp")
-                # Note: copilot_version and producer are available in event_data but not currently used
+                # Extract context for workspace info
+                context = event_data.get("context", {})
+                session_start_context = context
                 break  # Only need the first session.start event
 
         # If no session.start, use file stem as session ID
         if not session_id:
             session_id = file_path.stem
 
-        # Extract workspace from first folder_trust event
-        workspace_path = None
-        workspace_name = None
+        # Extract workspace from session.start context or folder_trust event
+        workspace_path = session_start_context.get("cwd") or session_start_context.get("gitRoot")
+        workspace_name = Path(workspace_path).name if workspace_path else None
         requester_username = None
+        session_repository = session_start_context.get("repository")  # e.g. "owner/repo"
 
         for event in events:
             if event.get("type") == "session.info":
@@ -1812,8 +1816,49 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                     short_path = path.split("\\")[-1] if "\\" in path else path.split("/")[-1] if "/" in path else path
                     invocation_message = f"Finding `{pattern}` in `{short_path}`"
 
+                elif tool_name == "create":
+                    path = arguments.get("path", "")
+                    short_path = path.split("\\")[-1] if "\\" in path else path.split("/")[-1] if "/" in path else path
+                    invocation_message = f"Created `{short_path}`"
+
+                elif tool_name == "web_search":
+                    query = arguments.get("query", "")
+                    if query:
+                        display_query = query[:80] + "..." if len(query) > 80 else query
+                        invocation_message = f"🔍 Web search: `{display_query}`"
+                    else:
+                        invocation_message = "🔍 Web search"
+
+                elif tool_name == "web_fetch":
+                    url = arguments.get("url", "")
+                    if url:
+                        display_url = url[:80] + "..." if len(url) > 80 else url
+                        invocation_message = f"🌐 Fetching `{display_url}`"
+                    else:
+                        invocation_message = "🌐 Web fetch"
+
+                elif tool_name == "task":
+                    desc = arguments.get("description", "")
+                    agent_type = arguments.get("agent_type", "")
+                    if desc:
+                        invocation_message = f"🤖 Agent ({agent_type}): {desc}" if agent_type else f"🤖 Agent: {desc}"
+                    else:
+                        invocation_message = f"🤖 Launched {agent_type} agent" if agent_type else "🤖 Launched agent"
+
                 elif tool_name == "update_todo":
                     invocation_message = "Updated TODO list"
+
+                elif tool_name == "store_memory":
+                    subject = arguments.get("subject", "")
+                    invocation_message = f"💾 Stored memory: {subject}" if subject else "💾 Stored memory"
+
+                elif tool_name == "task_complete":
+                    summary = arguments.get("summary", "")
+                    invocation_message = f"✅ Task complete: {summary}" if summary else "✅ Task complete"
+
+                elif tool_name == "sql":
+                    desc = arguments.get("description", "")
+                    invocation_message = f"🗄️ SQL: {desc}" if desc else "🗄️ SQL query"
 
                 elif description:
                     invocation_message = description
@@ -2076,6 +2121,15 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                     )
                 )
 
+            # Skip internal/metadata events (already parsed in metadata extraction or no user content)
+            elif event_type in (
+                "session.start",  # Parsed above for sessionId, startTime, context
+                "session.info",  # Parsed above for workspace, auth info
+                "session.compaction_start",  # Boundary event, paired with compaction_complete
+                "session.error",  # Handled above
+            ):
+                pass
+
         # Flush any remaining assistant content
         _flush_pending_assistant_message()
 
@@ -2088,8 +2142,12 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
         # Get updated_at from last event timestamp
         updated_at = events[-1].get("timestamp") if events else None
 
-        # Detect repository URL from workspace path
-        repository_url = detect_repository_url(workspace_path)
+        # Detect repository URL from session.start context or workspace path
+        repository_url = None
+        if session_repository:
+            repository_url = f"https://github.com/{session_repository}"
+        if not repository_url:
+            repository_url = detect_repository_url(workspace_path)
 
         return ChatSession(
             session_id=session_id,
