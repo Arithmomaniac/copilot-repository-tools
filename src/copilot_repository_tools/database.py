@@ -273,6 +273,8 @@ _SORT_ORDER_CLAUSES = {
     "date": "ORDER BY s.created_at DESC",
 }
 
+# Import after module-level constants to avoid circular dependency
+# (scanner.py imports Database from this module)
 from .markdown_exporter import message_to_markdown
 from .scanner import (
     ChatMessage,
@@ -712,7 +714,13 @@ class Database:
 
         # Insert messages and related data
         for idx, msg in enumerate(session.messages):
-            cached_markdown = message_to_markdown(msg)
+            # Generate cached markdown for this message (with diffs and inputs for full fidelity)
+            cached_markdown = message_to_markdown(
+                msg,
+                message_number=idx + 1,
+                include_diffs=True,
+                include_tool_inputs=True,
+            )
 
             cursor.execute(
                 """

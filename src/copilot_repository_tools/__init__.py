@@ -41,30 +41,32 @@ from .scanner import (
 )
 
 __all__ = [
-    # Scanner
+    # Version
+    "__version__",
+    # Database
+    "Database",
+    "ParsedQuery",
+    "parse_search_query",
+    # Scanner - Dataclasses
     "ChatMessage",
     "ChatSession",
     "CommandRun",
     "ContentBlock",
-    # Database
-    "Database",
     "FileChange",
-    "ParsedQuery",
     "ToolInvocation",
-    "__version__",
-    # Repository detection
+    # Scanner - Functions
     "detect_repository_url",
-    # Markdown Exporter
-    "export_session_to_file",
-    "export_session_to_html_file",
     "find_copilot_chat_dirs",
-    "generate_session_filename",
-    "generate_session_html_filename",
     "get_cli_storage_paths",
     "get_vscode_storage_paths",
-    "message_to_markdown",
-    "parse_search_query",
     "scan_chat_sessions",
-    "session_to_html",
+    # Markdown Exporter
+    "export_session_to_file",
+    "generate_session_filename",
+    "message_to_markdown",
     "session_to_markdown",
+    # HTML Exporter
+    "export_session_to_html_file",
+    "generate_session_html_filename",
+    "session_to_html",
 ]
