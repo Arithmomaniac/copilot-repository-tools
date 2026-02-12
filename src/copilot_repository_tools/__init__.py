@@ -41,7 +41,7 @@ from .scanner import (
 )
 
 __all__ = [
-    # Scanner
+    # Scanner - Data models
     "ChatMessage",
     "ChatSession",
     "CommandRun",
@@ -51,11 +51,13 @@ __all__ = [
     "FileChange",
     "ParsedQuery",
     "ToolInvocation",
+    # Package
     "__version__",
-    # Repository detection
+    # Scanner - Discovery & parsing
     "detect_repository_url",
     # Markdown Exporter
     "export_session_to_file",
+    # HTML Exporter
     "export_session_to_html_file",
     "find_copilot_chat_dirs",
     "generate_session_filename",

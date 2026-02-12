@@ -35,9 +35,9 @@ from copilot_repository_tools.scanner import (
 # Rich from falling back to cp1252 which can't handle Unicode output
 if sys.platform == "win32":
     if hasattr(sys.stdout, "reconfigure"):
-        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # ty: ignore[call-non-callable]
     if hasattr(sys.stderr, "reconfigure"):
-        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # ty: ignore[call-non-callable]
 
 app = typer.Typer(
     name="copilot-chat-archive",

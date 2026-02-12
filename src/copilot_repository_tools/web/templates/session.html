@@ -1097,6 +1097,7 @@ footer a {
 
         <div class="messages">
             {% for message in session.messages %}
+            {% set msg_meta = message_metadata.get(loop.index0, {}) %}
             <div class="message {{ message.role }}" id="msg-{{ loop.index }}">
                 <div class="message-header">
                     <div class="message-role">{{ message.role }}</div>
@@ -1135,10 +1136,10 @@ footer a {
                             </details>
                             {% elif block.kind == 'toolInvocation' %}
                             {# Check for matched command run first (for CLI shell commands) #}
-                            {% set matched_cmd = message._block_cmd_map.get(loop.index0) if message._block_cmd_map else None %}
+                            {% set matched_cmd = msg_meta.get('block_cmd_map', {}).get(loop.index0) %}
                             
                             {# Then check for matched tool invocation #}
-                            {% set matched_tool = message._block_tool_map.get(loop.index0) if message._block_tool_map else None %}
+                            {% set matched_tool = msg_meta.get('block_tool_map', {}).get(loop.index0) %}
                             
                             {% if matched_cmd %}
                             {# CLI command run - show as collapsible command block with Input/Output like VSCode logs #}
@@ -1247,7 +1248,7 @@ footer a {
                 {% set unmatched_tools = [] %}
                 {% for tool in message.tool_invocations %}
                     {% set is_collapsible_tool = (tool.source_type == 'mcp' or tool.name == 'run_in_terminal') and (tool.input or tool.result) %}
-                    {% if tool.name not in message._matched_tool_names and is_collapsible_tool %}
+                    {% if tool.name not in msg_meta.get('matched_tool_names', []) and is_collapsible_tool %}
                         {% set _ = unmatched_tools.append(tool) %}
                     {% endif %}
                 {% endfor %}
@@ -1333,7 +1334,7 @@ footer a {
                 {% endif %}
 
                 {# Only show Command Runs section for commands not already rendered inline #}
-                {% set unmatched_cmd_count = (message.command_runs | length) - (message._matched_cmd_indices | length if message._matched_cmd_indices else 0) %}
+                {% set unmatched_cmd_count = (message.command_runs | length) - (msg_meta.get('matched_cmd_indices', []) | length) %}
                 {% if message.command_runs and unmatched_cmd_count > 0 %}
                 <p class="tool-summary"><em>Ran {{ unmatched_cmd_count }} command{{ 's' if unmatched_cmd_count > 1 else '' }}</em></p>
                 <details class="collapsible command-runs" open>
@@ -1344,7 +1345,7 @@ footer a {
                     <div class="collapsible-content">
                         {% for cmd in message.command_runs %}
                         {# Skip commands already rendered inline #}
-                        {% if loop.index0 not in (message._matched_cmd_indices or []) %}
+                        {% if loop.index0 not in (msg_meta.get('matched_cmd_indices') or []) %}
                         <div class="terminal-command">
                             <div class="terminal-header">
                                 <span class="terminal-icon {{ cmd.status or 'pending' }}" aria-hidden="true">

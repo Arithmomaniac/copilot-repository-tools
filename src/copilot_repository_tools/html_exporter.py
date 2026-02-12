@@ -176,13 +176,15 @@ def _get_jinja_env() -> Environment:
     return env
 
 
-def _preprocess_messages(session: ChatSession) -> str | None:
+def _preprocess_messages(session: ChatSession) -> tuple[str | None, dict[int, dict]]:
     """Pre-process messages to match tool invocations with content blocks.
 
-    Same logic as the webapp session_view route. Returns first user prompt.
+    Same logic as the webapp session_view route. Returns first user prompt
+    and a dict mapping message index to its block metadata.
     """
     first_user_prompt = None
-    for message in session.messages:
+    message_metadata: dict[int, dict] = {}
+    for msg_idx, message in enumerate(session.messages):
         if message.role == "user" and first_user_prompt is None:
             first_user_prompt = message.content
 
@@ -208,12 +210,14 @@ def _preprocess_messages(session: ChatSession) -> str | None:
                     if matched_tool:
                         block_tool_map[i] = matched_tool
 
-        message._block_tool_map = block_tool_map  # type: ignore[attr-defined]
-        message._block_cmd_map = block_cmd_map  # type: ignore[attr-defined]
-        message._matched_tool_names = {t.name for t in block_tool_map.values()}  # type: ignore[attr-defined]
-        message._matched_cmd_indices = used_cmd_indices  # type: ignore[attr-defined]
+        message_metadata[msg_idx] = {
+            "block_tool_map": block_tool_map,
+            "block_cmd_map": block_cmd_map,
+            "matched_tool_names": {t.name for t in block_tool_map.values()},
+            "matched_cmd_indices": used_cmd_indices,
+        }
 
-    return first_user_prompt
+    return first_user_prompt, message_metadata
 
 
 def session_to_html(session: ChatSession) -> str:
@@ -225,7 +229,7 @@ def session_to_html(session: ChatSession) -> str:
     Returns:
         Complete HTML document as a string.
     """
-    first_user_prompt = _preprocess_messages(session)
+    first_user_prompt, message_metadata = _preprocess_messages(session)
     env = _get_jinja_env()
     template = env.get_template("session.html")
     return template.render(
@@ -233,6 +237,7 @@ def session_to_html(session: ChatSession) -> str:
         session=session,
         message_count=len(session.messages),
         first_user_prompt=first_user_prompt,
+        message_metadata=message_metadata,
         static=True,
     )
 

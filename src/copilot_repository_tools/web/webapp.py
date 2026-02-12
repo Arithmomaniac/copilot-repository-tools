@@ -138,7 +138,7 @@ def _format_timestamp(value: str) -> str:
         return str(value)
 
 
-def _parse_diff_stats(diff: str) -> dict:
+def _parse_diff_stats(diff: str | None) -> dict:
     """Parse a diff string and return addition/deletion line counts.
 
     Args:
@@ -165,7 +165,7 @@ def _parse_diff_stats(diff: str) -> dict:
     return {"additions": additions, "deletions": deletions}
 
 
-def _extract_filename(path: str) -> str:
+def _extract_filename(path: str | None) -> str:
     """Extract the filename from a file path.
 
     Args:
@@ -410,7 +410,8 @@ def create_app(
         # Pre-process messages to match tool invocations and command runs with content blocks
         # This creates a mapping that the template can use directly
         first_user_prompt = None
-        for message in session.messages:
+        message_metadata: dict[int, dict] = {}
+        for msg_idx, message in enumerate(session.messages):
             # Capture first user prompt for title fallback
             if message.role == "user" and first_user_prompt is None:
                 first_user_prompt = message.content
@@ -441,11 +442,12 @@ def create_app(
                         if matched_tool:
                             block_tool_map[i] = matched_tool
 
-            # Store the mappings on the message for template access
-            message._block_tool_map = block_tool_map
-            message._block_cmd_map = block_cmd_map
-            message._matched_tool_names = {t.name for t in block_tool_map.values()}
-            message._matched_cmd_indices = used_cmd_indices
+            message_metadata[msg_idx] = {
+                "block_tool_map": block_tool_map,
+                "block_cmd_map": block_cmd_map,
+                "matched_tool_names": {t.name for t in block_tool_map.values()},
+                "matched_cmd_indices": used_cmd_indices,
+            }
 
         return render_template(
             "session.html",
@@ -453,6 +455,7 @@ def create_app(
             session=session,
             message_count=len(session.messages),
             first_user_prompt=first_user_prompt,
+            message_metadata=message_metadata,
         )
 
     @app.route("/refresh", methods=["POST"])
@@ -557,6 +560,7 @@ def create_app(
                 return jsonify({"error": "Invalid end value"}), 400
 
         # For download mode, we need the session object for filename generation
+        chat_session = None
         if download:
             chat_session = db.get_session(session_id)
             if chat_session is None:
@@ -574,7 +578,7 @@ def create_app(
         if not markdown_content:
             return jsonify({"error": "No messages found"}), 404
 
-        if download:
+        if download and chat_session is not None:
             filename = generate_session_filename(chat_session)
             response = make_response(markdown_content)
             response.headers["Content-Type"] = "text/markdown; charset=utf-8"
