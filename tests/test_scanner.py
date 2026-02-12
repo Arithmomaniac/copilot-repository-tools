@@ -691,6 +691,151 @@ class TestWorkspaceYamlParsing:
         assert session.custom_title is None
 
 
+class TestAskUserAnswerDisplay:
+    """Tests for ask_user tool answer display in parsed sessions."""
+
+    def _make_ask_user_session_events(self, tool_call_id, question, choices, complete_event=None):
+        """Create minimal CLI JSONL events with an ask_user tool invocation."""
+        events = [
+            {"type": "session.start", "data": {"sessionId": "ask-user-test", "timestamp": "2026-01-15T10:00:00Z"}},
+            {"type": "user.message", "data": {"content": "Help me pick"}},
+            {
+                "type": "assistant.message.delta",
+                "data": {
+                    "toolRequests": [
+                        {"toolCallId": tool_call_id, "name": "ask_user", "arguments": {"question": question, "choices": choices}},
+                    ]
+                },
+            },
+            {"type": "tool.execution_start", "data": {"toolCallId": tool_call_id, "toolName": "ask_user", "arguments": {"question": question, "choices": choices}}},
+        ]
+        if complete_event is not None:
+            events.append(complete_event)
+        events.append({"type": "assistant.message.delta", "data": {"content": "Great choice!"}})
+        return events
+
+    def _parse_events(self, events, tmp_path):
+        """Write events to a JSONL file and parse them."""
+        from copilot_repository_tools.scanner import _parse_cli_jsonl_file
+
+        session_file = tmp_path / "ask-user-test.jsonl"
+        session_file.write_text("\n".join(json.dumps(e) for e in events))
+        return _parse_cli_jsonl_file(session_file)
+
+    def _find_ask_user_block(self, session):
+        """Find the ask_user content block in a parsed session."""
+        for msg in session.messages:
+            for block in msg.content_blocks:
+                if block.kind == "ask_user":
+                    return block
+        return None
+
+    def test_ask_user_with_successful_answer(self, tmp_path):
+        """Test that a successful ask_user answer is displayed."""
+        events = self._make_ask_user_session_events(
+            tool_call_id="toolu_ask1",
+            question="Which framework?",
+            choices=["React", "Vue", "Angular"],
+            complete_event={
+                "type": "tool.execution_complete",
+                "data": {
+                    "toolCallId": "toolu_ask1",
+                    "success": True,
+                    "result": {"content": "User responded: React"},
+                },
+            },
+        )
+        session = self._parse_events(events, tmp_path)
+        assert session is not None
+        block = self._find_ask_user_block(session)
+        assert block is not None
+        assert "❓ Which framework?" in block.content
+        assert "Options: React, Vue, Angular" in block.content
+        assert "✅ **Answer:** React" in block.content
+
+    def test_ask_user_with_failed_answer(self, tmp_path):
+        """Test that a failed/skipped ask_user shows skipped indicator."""
+        events = self._make_ask_user_session_events(
+            tool_call_id="toolu_ask2",
+            question="Pick a color",
+            choices=["Red", "Blue"],
+            complete_event={
+                "type": "tool.execution_complete",
+                "data": {
+                    "toolCallId": "toolu_ask2",
+                    "success": False,
+                    "result": {"content": ""},
+                },
+            },
+        )
+        session = self._parse_events(events, tmp_path)
+        assert session is not None
+        block = self._find_ask_user_block(session)
+        assert block is not None
+        assert "❓ Pick a color" in block.content
+        assert "⏭️ *Skipped*" in block.content
+        assert "Answer" not in block.content
+
+    def test_ask_user_without_completion_event(self, tmp_path):
+        """Test ask_user with no completion event shows question only."""
+        events = self._make_ask_user_session_events(
+            tool_call_id="toolu_ask3",
+            question="Choose a language",
+            choices=["Python", "Go"],
+            complete_event=None,
+        )
+        session = self._parse_events(events, tmp_path)
+        assert session is not None
+        block = self._find_ask_user_block(session)
+        assert block is not None
+        assert "❓ Choose a language" in block.content
+        assert "Answer" not in block.content
+        assert "Skipped" not in block.content
+
+    def test_ask_user_answer_strips_prefix(self, tmp_path):
+        """Test that 'User responded: ' prefix is stripped from the answer."""
+        events = self._make_ask_user_session_events(
+            tool_call_id="toolu_ask4",
+            question="Which option?",
+            choices=[],
+            complete_event={
+                "type": "tool.execution_complete",
+                "data": {
+                    "toolCallId": "toolu_ask4",
+                    "success": True,
+                    "result": {"content": "User responded: Option B"},
+                },
+            },
+        )
+        session = self._parse_events(events, tmp_path)
+        assert session is not None
+        block = self._find_ask_user_block(session)
+        assert block is not None
+        assert "✅ **Answer:** Option B" in block.content
+        assert "User responded:" not in block.content
+
+    def test_ask_user_answer_without_prefix(self, tmp_path):
+        """Test answer that doesn't have 'User responded: ' prefix is shown as-is."""
+        events = self._make_ask_user_session_events(
+            tool_call_id="toolu_ask5",
+            question="Pick one",
+            choices=["A", "B"],
+            complete_event={
+                "type": "tool.execution_complete",
+                "data": {
+                    "toolCallId": "toolu_ask5",
+                    "success": True,
+                    "result": {"content": "B"},
+                },
+            },
+        )
+        session = self._parse_events(events, tmp_path)
+        assert session is not None
+        block = self._find_ask_user_block(session)
+        assert block is not None
+        assert "✅ **Answer:** B" in block.content
+
+
 class TestRepositoryUrlDetection:
     """Tests for git repository URL detection and normalization."""
 
