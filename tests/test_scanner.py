@@ -523,6 +523,174 @@ class TestCLIParsing:
         assert isinstance(sessions, list)
 
 
+class TestWorkspaceYamlParsing:
+    """Tests for workspace.yaml parsing and CLI session title extraction."""
+
+    def test_parse_workspace_yaml_with_summary(self, tmp_path):
+        """Test parsing workspace.yaml extracts summary field."""
+        from copilot_repository_tools.scanner import _parse_workspace_yaml
+
+        workspace_file = tmp_path / "workspace.yaml"
+        workspace_file.write_text(
+            "id: 00b8e3a3-f89d-4105-b0e4-a8ab94986035\n"
+            "cwd: C:\\_SRC\\ZTS\n"
+            "git_root: C:\\_SRC\\ZTS\n"
+            "branch: main\n"
+            "summary: Remediate AzSecpack On VMSS\n"
+            "summary_count: 0\n"
+            "created_at: 2026-02-09T09:28:30.798Z\n"
+            "updated_at: 2026-02-11T10:13:41.793Z\n",
+            encoding="utf-8",
+        )
+
+        result = _parse_workspace_yaml(tmp_path)
+        assert result["summary"] == "Remediate AzSecpack On VMSS"
+        assert result["id"] == "00b8e3a3-f89d-4105-b0e4-a8ab94986035"
+        assert result["branch"] == "main"
+
+    def test_parse_workspace_yaml_missing_file(self, tmp_path):
+        """Test that missing workspace.yaml returns empty dict."""
+        from copilot_repository_tools.scanner import _parse_workspace_yaml
+
+        result = _parse_workspace_yaml(tmp_path)
+        assert result == {}
+
+    def test_parse_workspace_yaml_no_summary(self, tmp_path):
+        """Test parsing workspace.yaml without summary field."""
+        from copilot_repository_tools.scanner import _parse_workspace_yaml
+
+        workspace_file = tmp_path / "workspace.yaml"
+        workspace_file.write_text(
+            "id: abc123\ncwd: /home/user/project\n",
+            encoding="utf-8",
+        )
+
+        result = _parse_workspace_yaml(tmp_path)
+        assert "summary" not in result
+        assert result["id"] == "abc123"
+
+    def test_parse_workspace_yaml_empty_summary(self, tmp_path):
+        """Test parsing workspace.yaml with empty summary field."""
+        from copilot_repository_tools.scanner import _parse_workspace_yaml
+
+        workspace_file = tmp_path / "workspace.yaml"
+        workspace_file.write_text(
+            "id: abc123\nsummary:\n",
+            encoding="utf-8",
+        )
+
+        result = _parse_workspace_yaml(tmp_path)
+        assert result["summary"] == ""
+
+    def _make_cli_session_events(self, intent=None):
+        """Helper to create minimal CLI JSONL events for title tests."""
+        ctx = {"cwd": "/home/user/project"}
+        start_data = {"sessionId": "test-id", "startTime": "2026-01-01T00:00:00Z", "context": ctx}
+        events = [
+            {"type": "session.start", "timestamp": "2026-01-01T00:00:00Z", "data": start_data},
+            {"type": "user.message", "timestamp": "2026-01-01T00:00:01Z", "data": {"content": "Help"}},
+            {"type": "assistant.message", "timestamp": "2026-01-01T00:00:02Z", "data": {"content": "Sure."}},
+        ]
+        if intent:
+            intent_args = {"intent": intent}
+            events[2]["data"]["toolRequests"] = [{"toolCallId": "tc1", "toolName": "report_intent", "arguments": intent_args}]
+            events.append(
+                {
+                    "type": "tool.execution_start",
+                    "timestamp": "2026-01-01T00:00:02Z",
+                    "data": {"toolCallId": "tc1", "toolName": "report_intent", "arguments": intent_args},
+                }
+            )
+            events.append(
+                {
+                    "type": "tool.execution_complete",
+                    "timestamp": "2026-01-01T00:00:03Z",
+                    "data": {"toolCallId": "tc1", "toolName": "report_intent", "result": ""},
+                }
+            )
+        return events
+
+    def test_cli_session_title_from_workspace_yaml(self, tmp_path):
+        """Test that CLI session title is extracted from workspace.yaml summary."""
+        import orjson
+
+        from copilot_repository_tools.scanner import _parse_cli_jsonl_file
+
+        session_dir = tmp_path / "test-session"
+        session_dir.mkdir()
+
+        (session_dir / "workspace.yaml").write_text(
+            "id: test-id\ncwd: /home/user/project\nsummary: Diagnose ADO Build Failures\n",
+            encoding="utf-8",
+        )
+
+        events_file = session_dir / "events.jsonl"
+        events_file.write_text(
+            "\n".join(orjson.dumps(e).decode() for e in self._make_cli_session_events()),
+            encoding="utf-8",
+        )
+
+        session = _parse_cli_jsonl_file(events_file)
+        assert session is not None
+        assert session.custom_title == "Diagnose ADO Build Failures"
+
+    def test_cli_session_title_fallback_to_intent(self, tmp_path):
+        """Test that CLI session title falls back to first report_intent when no workspace.yaml."""
+        import orjson
+
+        from copilot_repository_tools.scanner import _parse_cli_jsonl_file
+
+        events_file = tmp_path / "test-session.jsonl"
+        events_file.write_text(
+            "\n".join(orjson.dumps(e).decode() for e in self._make_cli_session_events(intent="Fix failing unit tests")),
+            encoding="utf-8",
+        )
+
+        session = _parse_cli_jsonl_file(events_file)
+        assert session is not None
+        assert session.custom_title == "Fix failing unit tests"
+
+    def test_cli_session_title_workspace_yaml_over_intent(self, tmp_path):
+        """Test that workspace.yaml summary takes priority over report_intent."""
+        import orjson
+
+        from copilot_repository_tools.scanner import _parse_cli_jsonl_file
+
+        session_dir = tmp_path / "test-session"
+        session_dir.mkdir()
+
+        (session_dir / "workspace.yaml").write_text(
+            "id: test-id\nsummary: YAML Title Wins\n",
+            encoding="utf-8",
+        )
+
+        events_file = session_dir / "events.jsonl"
+        events_file.write_text(
+            "\n".join(orjson.dumps(e).decode() for e in self._make_cli_session_events(intent="Intent Title Loses")),
+            encoding="utf-8",
+        )
+
+        session = _parse_cli_jsonl_file(events_file)
+        assert session is not None
+        assert session.custom_title == "YAML Title Wins"
+
+    def test_cli_session_title_none_when_no_sources(self, tmp_path):
+        """Test that custom_title is None when neither workspace.yaml nor intent exists."""
+        import orjson
+
+        from copilot_repository_tools.scanner import _parse_cli_jsonl_file
+
+        events_file = tmp_path / "test-session.jsonl"
+        events_file.write_text(
+            "\n".join(orjson.dumps(e).decode() for e in self._make_cli_session_events()),
+            encoding="utf-8",
+        )
+
+        session = _parse_cli_jsonl_file(events_file)
+        assert session is not None
+        assert session.custom_title is None
+
+
 class TestRepositoryUrlDetection:
     """Tests for git repository URL detection and normalization."""
 

@@ -1566,6 +1566,44 @@ def get_cli_storage_paths() -> list[Path]:
     return paths
 
 
+def _parse_workspace_yaml(session_dir: Path) -> dict[str, str]:
+    """Parse a workspace.yaml file from a CLI session directory.
+
+    The workspace.yaml is a simple key-value YAML file maintained by the Copilot CLI:
+        id: <session-uuid>
+        cwd: <working-directory>
+        summary: <session-title>
+        created_at: <timestamp>
+        ...
+
+    We parse it manually to avoid adding a PyYAML dependency.
+
+    Args:
+        session_dir: Path to the CLI session directory containing workspace.yaml.
+
+    Returns:
+        Dictionary of key-value pairs from the file, or empty dict on failure.
+    """
+    workspace_file = session_dir / "workspace.yaml"
+    if not workspace_file.exists():
+        return {}
+
+    try:
+        result: dict[str, str] = {}
+        with workspace_file.open(encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                # Split on first colon only
+                if ":" in line:
+                    key, _, value = line.partition(":")
+                    result[key.strip()] = value.strip()
+        return result
+    except OSError:
+        return {}
+
+
 def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
     """Parse a GitHub Copilot CLI JSONL session file.
 
@@ -2149,6 +2187,21 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
         if not repository_url:
             repository_url = detect_repository_url(workspace_path)
 
+        # Determine session title: prefer workspace.yaml summary, fall back to first report_intent
+        custom_title = None
+        workspace_meta = _parse_workspace_yaml(file_path.parent)
+        if workspace_meta.get("summary"):
+            custom_title = workspace_meta["summary"]
+        if not custom_title:
+            # Fall back to first report_intent content block
+            for msg in messages:
+                for block in msg.content_blocks:
+                    if block.kind == "intent" and block.content:
+                        custom_title = block.content
+                        break
+                if custom_title:
+                    break
+
         return ChatSession(
             session_id=session_id,
             workspace_name=workspace_name,
@@ -2158,7 +2211,7 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
             updated_at=updated_at,
             source_file=str(file_path),
             vscode_edition="cli",  # CLI edition badge
-            custom_title=None,
+            custom_title=custom_title,
             requester_username=requester_username,
             responder_username=None,
             source_file_mtime=source_file_mtime,
