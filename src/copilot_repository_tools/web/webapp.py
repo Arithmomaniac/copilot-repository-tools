@@ -138,7 +138,7 @@ def _format_timestamp(value: str) -> str:
         return str(value)
 
 
-def _parse_diff_stats(diff: str) -> dict:
+def _parse_diff_stats(diff: str | None) -> dict:
     """Parse a diff string and return addition/deletion line counts.
 
     Args:
@@ -165,7 +165,7 @@ def _parse_diff_stats(diff: str) -> dict:
     return {"additions": additions, "deletions": deletions}
 
 
-def _extract_filename(path: str) -> str:
+def _extract_filename(path: str | None) -> str:
     """Extract the filename from a file path.
 
     Args:
@@ -442,10 +442,10 @@ def create_app(
                             block_tool_map[i] = matched_tool
 
             # Store the mappings on the message for template access
-            message._block_tool_map = block_tool_map
-            message._block_cmd_map = block_cmd_map
-            message._matched_tool_names = {t.name for t in block_tool_map.values()}
-            message._matched_cmd_indices = used_cmd_indices
+            message._block_tool_map = block_tool_map  # type: ignore[attr-defined]
+            message._block_cmd_map = block_cmd_map  # type: ignore[attr-defined]
+            message._matched_tool_names = {t.name for t in block_tool_map.values()}  # type: ignore[attr-defined]
+            message._matched_cmd_indices = used_cmd_indices  # type: ignore[attr-defined]
 
         return render_template(
             "session.html",
@@ -543,6 +543,7 @@ def create_app(
 
         start = None
         end = None
+        chat_session = None
 
         if start_param:
             try:
@@ -575,6 +576,7 @@ def create_app(
             return jsonify({"error": "No messages found"}), 404
 
         if download:
+            assert chat_session is not None  # Guaranteed to be set in the download block above
             filename = generate_session_filename(chat_session)
             response = make_response(markdown_content)
             response.headers["Content-Type"] = "text/markdown; charset=utf-8"

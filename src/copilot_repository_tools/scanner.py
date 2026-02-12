@@ -1447,7 +1447,8 @@ def _extract_session_from_dict(
                             # Extract tool invocations (legacy format)
                             if item.get("toolInvocations"):
                                 tool_invocations.extend(_parse_tool_invocations(item["toolInvocations"]))
-                            elif item.get("kind") == "textEditGroup":
+                            # Handle edit groups
+                            if item.get("kind") == "textEditGroup":
                                 edit_text = _extract_edit_group_text(item, "Edited")
                                 if edit_text:
                                     response_content.append(edit_text)
@@ -1462,8 +1463,6 @@ def _extract_session_from_dict(
                                 if edit_text:
                                     response_content.append(edit_text)
                                     raw_blocks.append(("toolInvocation", edit_text, None))
-                            if item.get("toolInvocations"):
-                                tool_invocations.extend(_parse_tool_invocations(item["toolInvocations"]))
                             for key in ("fileChanges", "fileEdits", "files"):
                                 if item.get(key):
                                     file_changes.extend(_parse_file_changes(item[key]))
