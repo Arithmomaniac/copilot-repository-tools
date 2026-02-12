@@ -105,11 +105,14 @@ def _format_command_runs_summary(message: ChatMessage) -> str:
     if not message.command_runs:
         return ""
 
-    commands = [cmd.command for cmd in message.command_runs]
-    count = len(commands)
+    count = len(message.command_runs)
 
     if count == 1:
-        cmd_display = commands[0][:50] + "..." if len(commands[0]) > 50 else commands[0]
+        cmd = message.command_runs[0]
+        if cmd.title:
+            cmd_display = cmd.title
+        else:
+            cmd_display = cmd.command[:50] + "..." if len(cmd.command) > 50 else cmd.command
         return f"\n\n*Ran command: `{cmd_display}`*"
     else:
         return f"\n\n*Ran {count} commands*"
@@ -159,9 +162,15 @@ def _format_message_content(message: ChatMessage, include_thinking: bool = False
                 # If not including, we'll add a notice at the start
                 continue
             elif block.kind == "toolInvocation":
-                # Italicize tool invocation messages (only if non-empty)
-                if block.content.strip():
-                    parts.append(f"*{block.content.strip()}*")
+                # For command runs, description holds the human-readable title
+                # (content starts with "$ " and is the raw command)
+                # For regular tools, content is already the pretty invocation message
+                if block.description and block.content.startswith("$ "):
+                    display = block.description
+                else:
+                    display = block.content.strip()
+                if display:
+                    parts.append(f"*{display}*")
             else:
                 # Only add non-empty text blocks
                 if block.content.strip():

@@ -5,6 +5,7 @@ import pytest
 from copilot_repository_tools import (
     ChatMessage,
     ChatSession,
+    CommandRun,
     ContentBlock,
     FileChange,
     ToolInvocation,
@@ -13,6 +14,7 @@ from copilot_repository_tools import (
     session_to_markdown,
 )
 from copilot_repository_tools.markdown_exporter import (
+    _format_command_runs_summary,
     _format_timestamp,
     _format_tool_summary,
     _had_thinking_content,
@@ -531,3 +533,91 @@ class TestSanitizeFilename:
         result = _sanitize_filename("!@#$%^&*()")
         # All characters should be replaced with underscores
         assert all(c == "_" for c in result)
+
+
+class TestCommandRunDescriptionInMarkdown:
+    """Tests for command run description/title display in markdown export."""
+
+    def test_command_run_summary_uses_title_when_available(self):
+        """Test that _format_command_runs_summary uses title instead of raw command."""
+        message = ChatMessage(
+            role="assistant",
+            content="Running a search.",
+            command_runs=[
+                CommandRun(
+                    command="cd C:\\_SRC\\repo && uv run copilot-chat-archive search 'query' --full --limit 10",
+                    title="Search tenant query build SPN",
+                    status="success",
+                ),
+            ],
+        )
+        result = _format_command_runs_summary(message)
+        assert "Search tenant query build SPN" in result
+        assert "copilot-chat-archive" not in result
+
+    def test_command_run_summary_falls_back_to_command_without_title(self):
+        """Test that _format_command_runs_summary falls back to truncated command."""
+        message = ChatMessage(
+            role="assistant",
+            content="Running a command.",
+            command_runs=[
+                CommandRun(
+                    command="git status",
+                    title=None,
+                    status="success",
+                ),
+            ],
+        )
+        result = _format_command_runs_summary(message)
+        assert "git status" in result
+
+    def test_inline_toolinvocation_block_uses_description_for_commands(self):
+        """Test that toolInvocation content blocks show description for command runs."""
+        session = ChatSession(
+            session_id="cmd-desc-test",
+            workspace_name="test",
+            workspace_path="/test",
+            messages=[
+                ChatMessage(role="user", content="Search for something"),
+                ChatMessage(
+                    role="assistant",
+                    content="Searching...",
+                    content_blocks=[
+                        ContentBlock(
+                            kind="toolInvocation",
+                            content="$ cd /repo && uv run search 'query'",
+                            description="Search ARG test account access",
+                        ),
+                    ],
+                ),
+            ],
+        )
+        md = session_to_markdown(session)
+        assert "Search ARG test account access" in md
+        # Raw command should NOT appear since description is available
+        assert "$ cd /repo" not in md
+
+    def test_inline_toolinvocation_block_uses_content_for_regular_tools(self):
+        """Test that toolInvocation content blocks show content for non-command tools."""
+        session = ChatSession(
+            session_id="tool-desc-test",
+            workspace_name="test",
+            workspace_path="/test",
+            messages=[
+                ChatMessage(role="user", content="Read a file"),
+                ChatMessage(
+                    role="assistant",
+                    content="Reading...",
+                    content_blocks=[
+                        ContentBlock(
+                            kind="toolInvocation",
+                            content="Searching for `pattern` in `path`",
+                            description="grep",
+                        ),
+                    ],
+                ),
+            ],
+        )
+        md = session_to_markdown(session)
+        # Should use the pretty content, not the raw tool name
+        assert "Searching for `pattern` in `path`" in md

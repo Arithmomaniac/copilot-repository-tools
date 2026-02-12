@@ -1146,7 +1146,13 @@ footer a {
                                 <details class="tool-invocation-wrapper">
                                     <summary>
                                         <span class="collapsible-icon" aria-hidden="true">▶</span>
-                                        <span class="tool-invocation-message"><code>{{ matched_cmd.command | truncate(80, True) }}</code></span>
+                                        <span class="tool-invocation-message">
+                                            {% if matched_cmd.title %}
+                                                {{ matched_cmd.title }}
+                                            {% else %}
+                                                <code>{{ matched_cmd.command | truncate(80, True) }}</code>
+                                            {% endif %}
+                                        </span>
                                         {% if matched_cmd.status %}
                                         <span class="status-badge {{ matched_cmd.status }}">{{ matched_cmd.status }}</span>
                                         {% endif %}
@@ -1350,7 +1356,11 @@ footer a {
                                         ●
                                     {%- endif -%}
                                 </span>
+                                {% if cmd.title %}
+                                <span class="terminal-command-line">{{ cmd.title }}</span>
+                                {% else %}
                                 <span class="terminal-command-line">{{ cmd.command }}</span>
+                                {% endif %}
                                 {% if cmd.status %}
                                 <span class="status-badge {{ cmd.status }}">{{ cmd.status }}</span>
                                 {% endif %}

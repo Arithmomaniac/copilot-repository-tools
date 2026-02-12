@@ -716,6 +716,86 @@ class TestHtmlOutputToolInvocations:
         assert "completed" in html
 
 
+class TestHtmlOutputCommandDescriptions:
+    """Tests for command run description/title display in web viewer."""
+
+    @pytest.fixture
+    def session_with_command_descriptions(self, tmp_path):
+        """Create a session with command runs that have titles/descriptions."""
+        from copilot_repository_tools.scanner import ChatMessage, ChatSession, CommandRun, ContentBlock
+
+        db_path = tmp_path / "test_cmd_desc.db"
+        db = Database(str(db_path))
+
+        session = ChatSession(
+            session_id="cmd-desc-test",
+            workspace_name="test-workspace",
+            workspace_path="/home/user/test",
+            messages=[
+                ChatMessage(role="user", content="Search for something"),
+                ChatMessage(
+                    role="assistant",
+                    content="Searching...",
+                    content_blocks=[
+                        ContentBlock(kind="text", content="Let me search."),
+                        ContentBlock(
+                            kind="toolInvocation",
+                            content="$ cd /repo && uv run copilot-chat-archive search 'workspace:ZTS ARG test account access' --full --limit 10",
+                            description="Search ARG test account access",
+                        ),
+                        ContentBlock(
+                            kind="toolInvocation",
+                            content="$ git status",
+                            description=None,
+                        ),
+                    ],
+                    command_runs=[
+                        CommandRun(
+                            command="cd /repo && uv run copilot-chat-archive search 'workspace:ZTS ARG test account access' --full --limit 10",
+                            title="Search ARG test account access",
+                            status="success",
+                            output="No results found",
+                        ),
+                        CommandRun(
+                            command="git status",
+                            title=None,
+                            status="success",
+                            output="On branch main",
+                        ),
+                    ],
+                ),
+            ],
+            created_at="2026-02-12T08:00:00Z",
+            vscode_edition="stable",
+        )
+        db.add_session(session)
+        return db_path
+
+    def test_inline_command_shows_title(self, session_with_command_descriptions):
+        """Test that inline commands show their title/description instead of raw command."""
+        app = create_app(str(session_with_command_descriptions))
+        app.config["TESTING"] = True
+        client = app.test_client()
+
+        response = client.get("/session/cmd-desc-test")
+        html = response.data.decode("utf-8")
+
+        # Title should appear in the summary header
+        assert "Search ARG test account access" in html
+
+    def test_inline_command_without_title_shows_command(self, session_with_command_descriptions):
+        """Test that inline commands without title show the raw command."""
+        app = create_app(str(session_with_command_descriptions))
+        app.config["TESTING"] = True
+        client = app.test_client()
+
+        response = client.get("/session/cmd-desc-test")
+        html = response.data.decode("utf-8")
+
+        # git status should appear as raw command since it has no title
+        assert "git status" in html
+
+
 class TestHtmlOutputThinkingBlocks:
     """Tests for HTML output of thinking block rendering."""
 
