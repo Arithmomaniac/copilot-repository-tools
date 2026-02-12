@@ -648,7 +648,7 @@ class Database:
             ContentBlock(
                 kind=b["kind"],
                 content=b["content"],
-                description=b.get("description"),
+                description=b["description"] if "description" in b else None,  # noqa: SIM401 - sqlite3.Row has no .get()
             )
             for b in cursor.fetchall()
         ]
@@ -957,7 +957,7 @@ class Database:
             for msg_row in message_rows:
                 message_id = msg_row["id"]
                 # Safely get cached_markdown (may be NULL in older databases)
-                cached_md = msg_row.get("cached_markdown")
+                cached_md = msg_row["cached_markdown"] if "cached_markdown" in msg_row else None  # noqa: SIM401 - sqlite3.Row has no .get()
 
                 # Reconstruct message-related data using helper
                 tool_invocations, file_changes, command_runs, content_blocks = self._reconstruct_message_data(cursor, message_id)
