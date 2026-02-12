@@ -576,7 +576,7 @@ def create_app(
             return jsonify({"error": "No messages found"}), 404
 
         if download:
-            assert chat_session is not None  # Guaranteed to be set in the download block above
+            assert chat_session is not None  # Guaranteed to be set in the download block above  # noqa: S101
             filename = generate_session_filename(chat_session)
             response = make_response(markdown_content)
             response.headers["Content-Type"] = "text/markdown; charset=utf-8"

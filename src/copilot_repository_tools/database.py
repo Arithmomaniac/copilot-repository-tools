@@ -535,159 +535,8 @@ class Database:
             if cursor.fetchone():
                 return False
 
-            # Store compressed raw JSON only if requested
-            compressed_json = None
-            if store_raw and session.raw_json:
-                compressed_json = zlib.compress(session.raw_json, level=self.COMPRESSION_LEVEL)
-
-            cursor.execute(
-                """
-                INSERT INTO raw_sessions 
-                (session_id, raw_json_compressed, workspace_name, workspace_path, 
-                 source_file, vscode_edition, source_file_mtime, source_file_size, repository_url)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    session.session_id,
-                    compressed_json,
-                    session.workspace_name,
-                    session.workspace_path,
-                    session.source_file,
-                    session.vscode_edition,
-                    session.source_file_mtime,
-                    session.source_file_size,
-                    session.repository_url,
-                ),
-            )
-
-            # Insert into derived sessions table
-            cursor.execute(
-                """
-                INSERT INTO sessions 
-                (session_id, workspace_name, workspace_path, created_at, updated_at, 
-                 source_file, vscode_edition, custom_title, requester_username, responder_username,
-                 source_file_mtime, source_file_size, type, repository_url)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    session.session_id,
-                    session.workspace_name,
-                    session.workspace_path,
-                    session.created_at,
-                    session.updated_at,
-                    session.source_file,
-                    session.vscode_edition,
-                    session.custom_title,
-                    session.requester_username,
-                    session.responder_username,
-                    session.source_file_mtime,
-                    session.source_file_size,
-                    session.type,
-                    session.repository_url,
-                ),
-            )
-
-            # Insert messages and associated data
-            for idx, msg in enumerate(session.messages):
-                # Generate cached markdown for this message (with diffs and inputs for full fidelity)
-                cached_md = message_to_markdown(
-                    msg,
-                    message_number=idx + 1,
-                    include_diffs=True,
-                    include_tool_inputs=True,
-                )
-
-                cursor.execute(
-                    """
-                    INSERT INTO messages 
-                    (session_id, message_index, role, content, timestamp, cached_markdown)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        session.session_id,
-                        idx,
-                        msg.role,
-                        msg.content,
-                        msg.timestamp,
-                        cached_md,
-                    ),
-                )
-                message_id = cursor.lastrowid
-
-                # Insert tool invocations
-                for tool in msg.tool_invocations:
-                    cursor.execute(
-                        """
-                        INSERT INTO tool_invocations
-                        (message_id, name, input, result, status, start_time, end_time, source_type, invocation_message)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            message_id,
-                            tool.name,
-                            tool.input,
-                            tool.result,
-                            tool.status,
-                            tool.start_time,
-                            tool.end_time,
-                            tool.source_type,
-                            tool.invocation_message,
-                        ),
-                    )
-
-                # Insert file changes
-                for change in msg.file_changes:
-                    cursor.execute(
-                        """
-                        INSERT INTO file_changes
-                        (message_id, path, diff, content, explanation, language_id)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            message_id,
-                            change.path,
-                            change.diff,
-                            change.content,
-                            change.explanation,
-                            change.language_id,
-                        ),
-                    )
-
-                # Insert command runs
-                for cmd in msg.command_runs:
-                    cursor.execute(
-                        """
-                        INSERT INTO command_runs
-                        (message_id, command, title, result, status, output, timestamp)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            message_id,
-                            cmd.command,
-                            cmd.title,
-                            cmd.result,
-                            cmd.status,
-                            cmd.output,
-                            cmd.timestamp,
-                        ),
-                    )
-
-                # Insert content blocks (for thinking/text differentiation)
-                for block_idx, block in enumerate(msg.content_blocks):
-                    cursor.execute(
-                        """
-                        INSERT INTO content_blocks
-                        (message_id, block_index, kind, content, description)
-                        VALUES (?, ?, ?, ?, ?)
-                        """,
-                        (
-                            message_id,
-                            block_idx,
-                            block.kind,
-                            block.content,
-                            block.description,
-                        ),
-                    )
+            # Use the shared implementation
+            self._add_session_impl(cursor, session, store_raw=store_raw)
 
             return True
 
@@ -722,6 +571,87 @@ class Database:
                 added += 1
 
         return added, skipped
+
+    def _reconstruct_message_data(self, cursor, message_id: int) -> tuple[list, list, list, list]:
+        """Reconstruct message-related data from the database.
+
+        Args:
+            cursor: Database cursor.
+            message_id: The message ID to reconstruct data for.
+
+        Returns:
+            Tuple of (tool_invocations, file_changes, command_runs, content_blocks).
+        """
+        # Get tool invocations for this message
+        cursor.execute(
+            "SELECT * FROM tool_invocations WHERE message_id = ?",
+            (message_id,),
+        )
+        tool_invocations = []
+        for t in cursor.fetchall():
+            # Handle columns that may not exist in older databases
+            t_keys = t.keys()
+            tool_invocations.append(
+                ToolInvocation(
+                    name=t["name"],
+                    input=t["input"],
+                    result=t["result"],
+                    status=t["status"],
+                    start_time=t["start_time"],
+                    end_time=t["end_time"],
+                    source_type=t["source_type"] if "source_type" in t_keys else None,
+                    invocation_message=t["invocation_message"] if "invocation_message" in t_keys else None,
+                )
+            )
+
+        # Get file changes for this message
+        cursor.execute(
+            "SELECT * FROM file_changes WHERE message_id = ?",
+            (message_id,),
+        )
+        file_changes = [
+            FileChange(
+                path=f["path"],
+                diff=f["diff"],
+                content=f["content"],
+                explanation=f["explanation"],
+                language_id=f["language_id"],
+            )
+            for f in cursor.fetchall()
+        ]
+
+        # Get command runs for this message
+        cursor.execute(
+            "SELECT * FROM command_runs WHERE message_id = ?",
+            (message_id,),
+        )
+        command_runs = [
+            CommandRun(
+                command=c["command"],
+                title=c["title"],
+                result=c["result"],
+                status=c["status"],
+                output=c["output"],
+                timestamp=c["timestamp"],
+            )
+            for c in cursor.fetchall()
+        ]
+
+        # Get content blocks for this message
+        cursor.execute(
+            "SELECT * FROM content_blocks WHERE message_id = ? ORDER BY block_index",
+            (message_id,),
+        )
+        content_blocks = [
+            ContentBlock(
+                kind=b["kind"],
+                content=b["content"],
+                description=b["description"] if "description" in b.keys() else None,  # noqa: SIM118
+            )
+            for b in cursor.fetchall()
+        ]
+
+        return tool_invocations, file_changes, command_runs, content_blocks
 
     def _add_session_impl(self, cursor, session: ChatSession, store_raw: bool = False):
         """Internal implementation of add_session that uses an existing cursor.
@@ -1021,74 +951,8 @@ class Database:
                 # Safely get cached_markdown (may be NULL in older databases)
                 cached_md = msg_row["cached_markdown"] if "cached_markdown" in msg_row.keys() else None  # noqa: SIM118
 
-                # Get tool invocations for this message
-                cursor.execute(
-                    "SELECT * FROM tool_invocations WHERE message_id = ?",
-                    (message_id,),
-                )
-                tool_invocations = []
-                for t in cursor.fetchall():
-                    # Handle columns that may not exist in older databases
-                    t_keys = t.keys()
-                    tool_invocations.append(
-                        ToolInvocation(
-                            name=t["name"],
-                            input=t["input"],
-                            result=t["result"],
-                            status=t["status"],
-                            start_time=t["start_time"],
-                            end_time=t["end_time"],
-                            source_type=t["source_type"] if "source_type" in t_keys else None,
-                            invocation_message=t["invocation_message"] if "invocation_message" in t_keys else None,
-                        )
-                    )
-
-                # Get file changes for this message
-                cursor.execute(
-                    "SELECT * FROM file_changes WHERE message_id = ?",
-                    (message_id,),
-                )
-                file_changes = [
-                    FileChange(
-                        path=f["path"],
-                        diff=f["diff"],
-                        content=f["content"],
-                        explanation=f["explanation"],
-                        language_id=f["language_id"],
-                    )
-                    for f in cursor.fetchall()
-                ]
-
-                # Get command runs for this message
-                cursor.execute(
-                    "SELECT * FROM command_runs WHERE message_id = ?",
-                    (message_id,),
-                )
-                command_runs = [
-                    CommandRun(
-                        command=c["command"],
-                        title=c["title"],
-                        result=c["result"],
-                        status=c["status"],
-                        output=c["output"],
-                        timestamp=c["timestamp"],
-                    )
-                    for c in cursor.fetchall()
-                ]
-
-                # Get content blocks for this message (for thinking/text differentiation)
-                cursor.execute(
-                    "SELECT * FROM content_blocks WHERE message_id = ? ORDER BY block_index",
-                    (message_id,),
-                )
-                content_blocks = [
-                    ContentBlock(
-                        kind=b["kind"],
-                        content=b["content"],
-                        description=b["description"] if "description" in b.keys() else None,  # noqa: SIM118
-                    )
-                    for b in cursor.fetchall()
-                ]
+                # Reconstruct message-related data using helper
+                tool_invocations, file_changes, command_runs, content_blocks = self._reconstruct_message_data(cursor, message_id)
 
                 messages.append(
                     ChatMessage(
@@ -1196,74 +1060,8 @@ class Database:
                     message_id = row["id"]
                     message_index = row["message_index"] + 1  # Convert to 1-based
 
-                    # Get tool invocations for this message
-                    cursor.execute(
-                        "SELECT * FROM tool_invocations WHERE message_id = ?",
-                        (message_id,),
-                    )
-                    tool_invocations = []
-                    for t in cursor.fetchall():
-                        # Handle columns that may not exist in older databases
-                        t_keys = t.keys()
-                        tool_invocations.append(
-                            ToolInvocation(
-                                name=t["name"],
-                                input=t["input"],
-                                result=t["result"],
-                                status=t["status"],
-                                start_time=t["start_time"],
-                                end_time=t["end_time"],
-                                source_type=t["source_type"] if "source_type" in t_keys else None,
-                                invocation_message=t["invocation_message"] if "invocation_message" in t_keys else None,
-                            )
-                        )
-
-                    # Get file changes for this message
-                    cursor.execute(
-                        "SELECT * FROM file_changes WHERE message_id = ?",
-                        (message_id,),
-                    )
-                    file_changes = [
-                        FileChange(
-                            path=f["path"],
-                            diff=f["diff"],
-                            content=f["content"],
-                            explanation=f["explanation"],
-                            language_id=f["language_id"],
-                        )
-                        for f in cursor.fetchall()
-                    ]
-
-                    # Get command runs for this message
-                    cursor.execute(
-                        "SELECT * FROM command_runs WHERE message_id = ?",
-                        (message_id,),
-                    )
-                    command_runs = [
-                        CommandRun(
-                            command=c["command"],
-                            title=c["title"],
-                            result=c["result"],
-                            status=c["status"],
-                            output=c["output"],
-                            timestamp=c["timestamp"],
-                        )
-                        for c in cursor.fetchall()
-                    ]
-
-                    # Get content blocks for this message
-                    cursor.execute(
-                        "SELECT * FROM content_blocks WHERE message_id = ? ORDER BY block_index",
-                        (message_id,),
-                    )
-                    content_blocks = [
-                        ContentBlock(
-                            kind=b["kind"],
-                            content=b["content"],
-                            description=b["description"] if "description" in b.keys() else None,  # noqa: SIM118
-                        )
-                        for b in cursor.fetchall()
-                    ]
+                    # Reconstruct message-related data using helper
+                    tool_invocations, file_changes, command_runs, content_blocks = self._reconstruct_message_data(cursor, message_id)
 
                     # Create message object
                     message = ChatMessage(
