@@ -985,3 +985,317 @@ class TestRepositoryUrlDetection:
 
         # Should be callable
         assert callable(detect_repository_url)
+
+
+class TestVSCodeJSONLParsing:
+    """Tests for VS Code JSONL append-log format parsing."""
+
+    def test_parse_vscode_jsonl_kind0_only(self, tmp_path):
+        """Test parsing JSONL with only a kind=0 snapshot (no incremental ops)."""
+        from copilot_repository_tools.scanner import _parse_vscode_jsonl_file
+
+        session_data = {
+            "kind": 0,
+            "v": {
+                "version": 3,
+                "sessionId": "abc-123",
+                "creationDate": "2026-02-01T10:00:00.000Z",
+                "customTitle": "Test Session",
+                "requests": [
+                    {
+                        "message": {"text": "What is Python?"},
+                        "timestamp": 1738400000000,
+                        "response": [{"kind": "markdownContent", "value": {"value": "Python is a language."}}],
+                    }
+                ],
+            },
+        }
+        jsonl_file = tmp_path / "abc-123.jsonl"
+        jsonl_file.write_bytes(json.dumps(session_data).encode("utf-8"))
+
+        session = _parse_vscode_jsonl_file(jsonl_file, "test-workspace", "/home/user/project", "insider")
+
+        assert session is not None
+        assert session.session_id == "abc-123"
+        assert session.vscode_edition == "insider"
+        assert session.workspace_name == "test-workspace"
+        assert len(session.messages) == 2
+        assert session.messages[0].role == "user"
+        assert "Python" in session.messages[0].content
+        assert session.messages[1].role == "assistant"
+        assert "language" in session.messages[1].content
+
+    def test_parse_vscode_jsonl_with_kind2_push(self, tmp_path):
+        """Test parsing JSONL with kind=0 snapshot + kind=2 push (new request appended)."""
+        from copilot_repository_tools.scanner import _parse_vscode_jsonl_file
+
+        # kind=0: initial snapshot with one request
+        line0 = json.dumps(
+            {
+                "kind": 0,
+                "v": {
+                    "version": 3,
+                    "sessionId": "def-456",
+                    "creationDate": "2026-02-01T10:00:00.000Z",
+                    "requests": [
+                        {
+                            "message": {"text": "First question"},
+                            "timestamp": 1738400000000,
+                            "response": [{"kind": "markdownContent", "value": {"value": "First answer"}}],
+                        }
+                    ],
+                },
+            }
+        )
+        # kind=2: push a new request to the requests array
+        line1 = json.dumps(
+            {
+                "kind": 2,
+                "k": ["requests"],
+                "v": [
+                    {
+                        "message": {"text": "Second question"},
+                        "timestamp": 1738400060000,
+                        "response": [{"kind": "markdownContent", "value": {"value": "Second answer"}}],
+                    }
+                ],
+            }
+        )
+
+        jsonl_file = tmp_path / "def-456.jsonl"
+        jsonl_file.write_text(line0 + "\n" + line1 + "\n")
+
+        session = _parse_vscode_jsonl_file(jsonl_file, "ws", "/path", "insider")
+
+        assert session is not None
+        assert session.session_id == "def-456"
+        # Should have 4 messages: 2 user + 2 assistant
+        assert len(session.messages) == 4
+        user_msgs = [m for m in session.messages if m.role == "user"]
+        assert len(user_msgs) == 2
+        assert "First question" in user_msgs[0].content
+        assert "Second question" in user_msgs[1].content
+
+    def test_parse_vscode_jsonl_with_kind1_set(self, tmp_path):
+        """Test parsing JSONL with kind=0 snapshot + kind=1 set (update property)."""
+        from copilot_repository_tools.scanner import _parse_vscode_jsonl_file
+
+        line0 = json.dumps(
+            {
+                "kind": 0,
+                "v": {
+                    "version": 3,
+                    "sessionId": "ghi-789",
+                    "creationDate": "2026-02-01T10:00:00.000Z",
+                    "customTitle": "Original Title",
+                    "requests": [
+                        {
+                            "message": {"text": "Hello"},
+                            "timestamp": 1738400000000,
+                            "response": [{"kind": "markdownContent", "value": {"value": "Hi!"}}],
+                        }
+                    ],
+                },
+            }
+        )
+        # kind=1: update the custom title
+        line1 = json.dumps(
+            {
+                "kind": 1,
+                "k": ["customTitle"],
+                "v": "Updated Title",
+            }
+        )
+
+        jsonl_file = tmp_path / "ghi-789.jsonl"
+        jsonl_file.write_text(line0 + "\n" + line1 + "\n")
+
+        session = _parse_vscode_jsonl_file(jsonl_file, None, None, "stable")
+
+        assert session is not None
+        assert session.custom_title == "Updated Title"
+
+    def test_parse_vscode_jsonl_empty_file(self, tmp_path):
+        """Test parsing an empty JSONL file returns None."""
+        from copilot_repository_tools.scanner import _parse_vscode_jsonl_file
+
+        jsonl_file = tmp_path / "empty.jsonl"
+        jsonl_file.write_text("")
+
+        session = _parse_vscode_jsonl_file(jsonl_file, None, None, "insider")
+        assert session is None
+
+    def test_parse_vscode_jsonl_no_kind0(self, tmp_path):
+        """Test parsing JSONL without kind=0 snapshot returns None."""
+        from copilot_repository_tools.scanner import _parse_vscode_jsonl_file
+
+        line = json.dumps({"kind": 1, "k": ["customTitle"], "v": "No Snapshot"})
+        jsonl_file = tmp_path / "no-snapshot.jsonl"
+        jsonl_file.write_text(line + "\n")
+
+        session = _parse_vscode_jsonl_file(jsonl_file, None, None, "insider")
+        assert session is None
+
+    def test_parse_vscode_jsonl_malformed_lines(self, tmp_path):
+        """Test that malformed JSONL lines are skipped gracefully."""
+        from copilot_repository_tools.scanner import _parse_vscode_jsonl_file
+
+        line0 = json.dumps(
+            {
+                "kind": 0,
+                "v": {
+                    "version": 3,
+                    "sessionId": "mal-001",
+                    "creationDate": "2026-02-01T10:00:00.000Z",
+                    "requests": [
+                        {
+                            "message": {"text": "Valid request"},
+                            "timestamp": 1738400000000,
+                            "response": [{"kind": "markdownContent", "value": {"value": "Valid response"}}],
+                        }
+                    ],
+                },
+            }
+        )
+        jsonl_file = tmp_path / "mal-001.jsonl"
+        jsonl_file.write_text(line0 + "\n" + "not valid json\n" + "{broken\n")
+
+        session = _parse_vscode_jsonl_file(jsonl_file, None, None, "insider")
+        assert session is not None
+        assert session.session_id == "mal-001"
+
+    def test_apply_jsonl_operations_set_nested(self):
+        """Test _apply_jsonl_operations with nested path for kind=1 set."""
+        from copilot_repository_tools.scanner import _apply_jsonl_operations
+
+        base = {"requests": [{"message": {"text": "old"}, "response": []}]}
+        ops = [{"kind": 1, "k": ["requests", 0, "message", "text"], "v": "new"}]
+
+        result = _apply_jsonl_operations(base, ops)
+        assert result["requests"][0]["message"]["text"] == "new"
+
+    def test_apply_jsonl_operations_push(self):
+        """Test _apply_jsonl_operations with kind=2 push to array."""
+        from copilot_repository_tools.scanner import _apply_jsonl_operations
+
+        base = {"requests": [{"message": {"text": "first"}}]}
+        ops = [{"kind": 2, "k": ["requests"], "v": [{"message": {"text": "second"}}]}]
+
+        result = _apply_jsonl_operations(base, ops)
+        assert len(result["requests"]) == 2
+        assert result["requests"][1]["message"]["text"] == "second"
+
+    def test_apply_jsonl_operations_invalid_path(self):
+        """Test _apply_jsonl_operations gracefully handles invalid paths."""
+        from copilot_repository_tools.scanner import _apply_jsonl_operations
+
+        base = {"requests": []}
+        ops = [{"kind": 1, "k": ["nonexistent", "path"], "v": "value"}]
+
+        result = _apply_jsonl_operations(base, ops)
+        # Should not crash, just skip the operation
+        assert result == {"requests": []}
+
+    def test_scan_chat_sessions_includes_jsonl(self, tmp_path):
+        """Test that scan_chat_sessions picks up .jsonl files in VS Code chatSessions dirs."""
+        # Create workspace directory
+        workspace_dir = tmp_path / "workspace123"
+        workspace_dir.mkdir()
+        workspace_json = workspace_dir / "workspace.json"
+        workspace_json.write_text(json.dumps({"folder": "file:///home/user/project"}))
+
+        chat_dir = workspace_dir / "chatSessions"
+        chat_dir.mkdir()
+
+        # Create a VS Code JSONL session file
+        session_data = json.dumps(
+            {
+                "kind": 0,
+                "v": {
+                    "version": 3,
+                    "sessionId": "jsonl-session-001",
+                    "creationDate": "2026-02-01T10:00:00.000Z",
+                    "requests": [
+                        {
+                            "message": {"text": "JSONL test question"},
+                            "timestamp": 1738400000000,
+                            "response": [{"kind": "markdownContent", "value": {"value": "JSONL test answer"}}],
+                        }
+                    ],
+                },
+            }
+        )
+        jsonl_file = chat_dir / "jsonl-session-001.jsonl"
+        jsonl_file.write_text(session_data + "\n")
+
+        storage_paths = [(str(tmp_path), "insider")]
+        sessions = list(scan_chat_sessions(storage_paths, include_cli=False))
+
+        assert len(sessions) >= 1
+        jsonl_sessions = [s for s in sessions if s.session_id == "jsonl-session-001"]
+        assert len(jsonl_sessions) == 1
+        assert jsonl_sessions[0].vscode_edition == "insider"
+        assert len(jsonl_sessions[0].messages) == 2
+
+    def test_scan_session_files_includes_jsonl(self, tmp_path):
+        """Test that scan_session_files yields SessionFileInfo for .jsonl files."""
+        from copilot_repository_tools.scanner import scan_session_files
+
+        workspace_dir = tmp_path / "workspace456"
+        workspace_dir.mkdir()
+        workspace_json = workspace_dir / "workspace.json"
+        workspace_json.write_text(json.dumps({"folder": "file:///home/user/project2"}))
+
+        chat_dir = workspace_dir / "chatSessions"
+        chat_dir.mkdir()
+
+        jsonl_file = chat_dir / "test-session.jsonl"
+        jsonl_file.write_text('{"kind":0,"v":{"sessionId":"test"}}\n')
+
+        storage_paths = [(str(tmp_path), "insider")]
+        file_infos = list(scan_session_files(storage_paths, include_cli=False))
+
+        jsonl_infos = [fi for fi in file_infos if fi.file_type == "jsonl"]
+        assert len(jsonl_infos) >= 1
+        assert jsonl_infos[0].session_type == "vscode"
+        assert jsonl_infos[0].vscode_edition == "insider"
+
+    def test_parse_session_file_vscode_jsonl(self, tmp_path):
+        """Test that parse_session_file dispatches vscode jsonl to the correct parser."""
+        from copilot_repository_tools.scanner import SessionFileInfo, parse_session_file
+
+        jsonl_file = tmp_path / "dispatch-test.jsonl"
+        session_data = json.dumps(
+            {
+                "kind": 0,
+                "v": {
+                    "version": 3,
+                    "sessionId": "dispatch-test-001",
+                    "creationDate": "2026-02-01T10:00:00.000Z",
+                    "requests": [
+                        {
+                            "message": {"text": "Dispatch test"},
+                            "timestamp": 1738400000000,
+                            "response": [{"kind": "markdownContent", "value": {"value": "Dispatched!"}}],
+                        }
+                    ],
+                },
+            }
+        )
+        jsonl_file.write_text(session_data + "\n")
+
+        file_info = SessionFileInfo(
+            file_path=jsonl_file,
+            file_type="jsonl",
+            session_type="vscode",
+            vscode_edition="insider",
+            mtime=jsonl_file.stat().st_mtime,
+            size=jsonl_file.stat().st_size,
+            workspace_name="test-ws",
+            workspace_path="/test/path",
+        )
+
+        sessions = parse_session_file(file_info)
+        assert len(sessions) == 1
+        assert sessions[0].session_id == "dispatch-test-001"
+        assert sessions[0].vscode_edition == "insider"

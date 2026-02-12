@@ -1604,6 +1604,111 @@ def _parse_workspace_yaml(session_dir: Path) -> dict[str, str]:
         return {}
 
 
+def _apply_jsonl_operations(base: dict, operations: list[dict]) -> dict:
+    """Apply JSONL append-log operations (kind=1 set, kind=2 push) to a base snapshot.
+
+    Args:
+        base: The base session dict from kind=0 snapshot.
+        operations: List of operation dicts with kind=1 or kind=2.
+
+    Returns:
+        The mutated base dict with all operations applied.
+    """
+    for op in operations:
+        kind = op.get("kind")
+        path = op.get("k", [])
+        value = op.get("v")
+
+        if not path:
+            continue
+
+        # Navigate to the parent of the target
+        target = base
+        for segment in path[:-1]:
+            if isinstance(target, dict) and isinstance(segment, str):
+                target = target.get(segment)
+            elif isinstance(target, list) and isinstance(segment, int) and 0 <= segment < len(target):
+                target = target[segment]
+            else:
+                target = None
+                break
+
+        if target is None:
+            continue
+
+        last_key = path[-1]
+        if kind == 1:
+            # Set value at path
+            if (isinstance(target, dict) and isinstance(last_key, str)) or (isinstance(target, list) and isinstance(last_key, int) and 0 <= last_key < len(target)):
+                target[last_key] = value
+        elif kind == 2:
+            # Push value(s) to array at path
+            if isinstance(target, dict) and isinstance(last_key, str):
+                arr = target.get(last_key)
+                if isinstance(arr, list) and isinstance(value, list):
+                    arr.extend(value)
+            elif isinstance(target, list) and isinstance(last_key, int) and 0 <= last_key < len(target):
+                arr = target[last_key]
+                if isinstance(arr, list) and isinstance(value, list):
+                    arr.extend(value)
+
+    return base
+
+
+def _parse_vscode_jsonl_file(file_path: Path, workspace_name: str | None, workspace_path: str | None, edition: str) -> ChatSession | None:
+    """Parse a VS Code JSONL append-log chat session file.
+
+    VS Code >= Jan 2026 stores chat sessions as JSONL append-only operation logs:
+    - kind=0: Full session snapshot (same structure as old .json format)
+    - kind=1: Set a property at a path
+    - kind=2: Push to an array at a path
+
+    The kind=0 line's 'v' field is identical to the old .json format (ISerializableChatData v3),
+    so we can extract it and pass to _extract_session_from_dict().
+    """
+    try:
+        with file_path.open("rb") as f:
+            raw_bytes = f.read()
+    except OSError:
+        return None
+
+    lines = raw_bytes.split(b"\n")
+    base_data = None
+    operations = []
+
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            entry = orjson.loads(line)
+        except orjson.JSONDecodeError:
+            continue
+
+        kind = entry.get("kind")
+        if kind == 0 and base_data is None:
+            # Full session snapshot — 'v' has the same shape as old .json format
+            base_data = entry.get("v")
+        elif kind in (1, 2):
+            operations.append(entry)
+
+    if not base_data or not isinstance(base_data, dict):
+        return None
+
+    # Apply incremental operations to the base snapshot
+    if operations:
+        base_data = _apply_jsonl_operations(base_data, operations)
+
+    return _extract_session_from_dict(
+        base_data,
+        workspace_name,
+        workspace_path,
+        edition,
+        source_file=str(file_path),
+        raw_json=raw_bytes,
+    )
+
+
 def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
     """Parse a GitHub Copilot CLI JSONL session file.
 
@@ -2261,6 +2366,10 @@ def scan_chat_sessions(
                     session = _parse_chat_session_file(item, workspace_name, workspace_path, edition)
                     if session:
                         yield session
+                elif item.suffix == ".jsonl":
+                    session = _parse_vscode_jsonl_file(item, workspace_name, workspace_path, edition)
+                    if session:
+                        yield session
                 elif item.suffix == ".vscdb":
                     # Parse SQLite database files
                     sessions = _parse_vscdb_file(item, workspace_name, workspace_path, edition)
@@ -2327,6 +2436,17 @@ def scan_session_files(
                         yield SessionFileInfo(
                             file_path=item,
                             file_type="json",
+                            session_type="vscode",
+                            vscode_edition=edition,
+                            mtime=stat.st_mtime,
+                            size=stat.st_size,
+                            workspace_name=workspace_name,
+                            workspace_path=workspace_path,
+                        )
+                    elif item.suffix == ".jsonl":
+                        yield SessionFileInfo(
+                            file_path=item,
+                            file_type="jsonl",
                             session_type="vscode",
                             vscode_edition=edition,
                             mtime=stat.st_mtime,
@@ -2429,7 +2549,15 @@ def parse_session_file(file_info: SessionFileInfo) -> list[ChatSession]:
         )
 
     elif file_info.file_type == "jsonl":
-        session = _parse_cli_jsonl_file(file_info.file_path)
+        if file_info.session_type == "vscode":
+            session = _parse_vscode_jsonl_file(
+                file_info.file_path,
+                file_info.workspace_name,
+                file_info.workspace_path,
+                file_info.vscode_edition,
+            )
+        else:
+            session = _parse_cli_jsonl_file(file_info.file_path)
         return [session] if session else []
 
     return []
