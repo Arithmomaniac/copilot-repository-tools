@@ -1911,6 +1911,19 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                         if len(choices) > 5:
                             choices_text += f", ... (+{len(choices) - 5} more)"
                         content += f"\n   Options: {choices_text}"
+                    # Look up the user's answer from the tool execution result
+                    execution = tool_executions.get(tool_call_id, {})
+                    complete_event = execution.get("complete")
+                    if complete_event:
+                        complete_data = complete_event.get("data", {})
+                        if complete_data.get("success"):
+                            result_obj = complete_data.get("result", {})
+                            answer = result_obj.get("content", "") if isinstance(result_obj, dict) else str(result_obj)
+                            answer = answer.removeprefix("User responded: ")
+                            if answer:
+                                content += f"\n   ✅ **Answer:** {answer}"
+                        else:
+                            content += "\n   ⏭️ *Skipped*"
                     current_assistant_content_blocks.append(
                         ContentBlock(
                             kind="ask_user",
