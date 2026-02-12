@@ -40,13 +40,9 @@ from .scanner import (
     scan_chat_sessions,
 )
 
-__all__ = [
+__all__ = [  # noqa: RUF022
     # Version
     "__version__",
-    # Database
-    "Database",
-    "ParsedQuery",
-    "parse_search_query",
     # Scanner - Dataclasses
     "ChatMessage",
     "ChatSession",
@@ -60,6 +56,10 @@ __all__ = [
     "get_cli_storage_paths",
     "get_vscode_storage_paths",
     "scan_chat_sessions",
+    # Database
+    "Database",
+    "ParsedQuery",
+    "parse_search_query",
     # Markdown Exporter
     "export_session_to_file",
     "generate_session_filename",
