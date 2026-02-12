@@ -260,6 +260,86 @@ class TestCLI:
         assert result.exit_code == 1
         assert "not found" in result.output
 
+    def test_export_html_command(self, runner, temp_db_with_data, tmp_path):
+        """Test export-html command exports sessions to HTML files."""
+        output_dir = tmp_path / "html_output"
+
+        result = runner.invoke(app, ["export-html", "--db", str(temp_db_with_data), "--output-dir", str(output_dir), "-v"])
+        assert result.exit_code == 0
+        assert "Exported 1 sessions" in result.output
+
+        # Check that an HTML file was created
+        html_files = list(output_dir.glob("*.html"))
+        assert len(html_files) == 1
+
+        # Check content of the HTML file
+        content = html_files[0].read_text()
+        assert "<!DOCTYPE html>" in content
+        assert "cli-workspace" in content
+        assert "cli-test-session" in content
+
+    def test_export_html_single_session(self, runner, temp_db_with_data, tmp_path):
+        """Test export-html command with specific session ID."""
+        output_dir = tmp_path / "html_output"
+
+        result = runner.invoke(
+            app,
+            [
+                "export-html",
+                "--db",
+                str(temp_db_with_data),
+                "--output-dir",
+                str(output_dir),
+                "--session-id",
+                "cli-test-session",
+            ],
+        )
+        assert result.exit_code == 0
+        assert "Exported:" in result.output
+
+        html_files = list(output_dir.glob("*.html"))
+        assert len(html_files) == 1
+
+    def test_export_html_missing_session(self, runner, temp_db_with_data, tmp_path):
+        """Test export-html command with non-existent session ID."""
+        output_dir = tmp_path / "html_output"
+
+        result = runner.invoke(
+            app,
+            [
+                "export-html",
+                "--db",
+                str(temp_db_with_data),
+                "--output-dir",
+                str(output_dir),
+                "--session-id",
+                "nonexistent-session",
+            ],
+        )
+        assert result.exit_code == 1
+        assert "not found" in result.output
+
+    def test_export_html_static_mode(self, runner, temp_db_with_data, tmp_path):
+        """Test that export-html output has no interactive elements."""
+        output_dir = tmp_path / "html_output"
+
+        runner.invoke(app, ["export-html", "--db", str(temp_db_with_data), "--output-dir", str(output_dir)])
+
+        html_files = list(output_dir.glob("*.html"))
+        content = html_files[0].read_text()
+
+        # Should NOT contain interactive elements
+        assert '<div class="copy-markdown-toolbar">' not in content
+        assert 'class="message-copy-btn"' not in content
+        assert "cdnjs.cloudflare.com" not in content
+        assert "buildMarkdownParams" not in content
+        assert "Back to all sessions" not in content
+
+        # SHOULD contain core content
+        assert "<!DOCTYPE html>" in content
+        assert "message-content" in content
+        assert "--container-max-width: none" in content
+
 
 class TestRebuildCommand:
     """Tests for the rebuild CLI command."""

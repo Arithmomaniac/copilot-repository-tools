@@ -18,7 +18,7 @@ This project was informed by and borrows patterns from several excellent open-so
 - **GitHub Copilot CLI** chat history support (JSONL format from `~/.copilot/session-state`)
 - **Store** chat history in a SQLite database with FTS5 full-text search (inspired by [tad-hq/universal-session-viewer](https://github.com/tad-hq/universal-session-viewer))
 - **Browse** your archive with a web interface (similar to [simonw/claude-code-transcripts](https://github.com/simonw/claude-code-transcripts))
-- **Export/Import** sessions as JSON or Markdown for backup or migration
+- **Export/Import** sessions as JSON, Markdown, or self-contained HTML for backup or migration
 - **Tool invocations & file changes** tracking from chat sessions
 
 ## Project Structure
@@ -175,6 +175,12 @@ copilot-chat-archive export-markdown --session-id abc123 --output-dir ./session
 
 # Include file diffs in markdown
 copilot-chat-archive export-markdown --include-diffs
+
+# Export as self-contained HTML (same rendering as web viewer, no server needed)
+copilot-chat-archive export-html --output-dir ./html-archive
+
+# Export a single session as HTML
+copilot-chat-archive export-html --session-id abc123 --output-dir ./session
 
 # Import from JSON
 copilot-chat-archive import-json chats.json

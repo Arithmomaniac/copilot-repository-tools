@@ -4,8 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{{ session.workspace_name or session.session_id }} - {{ title }}</title>
+    {% if not static %}
     <!-- Font Awesome for icons -->
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" integrity="sha512-DTOQO9RWCH3ppGqcWaEA1BIZOC6xxalwEsw9c2QQeAIftl+Vegovlnee1c9QX4TctnWMn13TZye+giMm8e2LwA==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+    {% endif %}
     <style>
 :root {
     --bg-primary: #ffffff;
@@ -19,7 +21,19 @@
     --assistant-bg: #ffffff;
     --code-bg: #f6f8fa;
     --mark-bg: #fff8c5;
+    --container-max-width: 1200px;
+    --pre-max-height: 800px;
+    --cmd-max-height: 500px;
+    --code-collapse-max-height: 400px;
 }
+{% if static %}
+:root {
+    --container-max-width: none;
+    --pre-max-height: none;
+    --cmd-max-height: none;
+    --code-collapse-max-height: 800px;
+}
+{% endif %}
 
 @media (prefers-color-scheme: dark) {
     :root {
@@ -51,7 +65,7 @@ body {
 }
 
 .container {
-    max-width: 1200px;
+    max-width: var(--container-max-width);
     margin: 0 auto;
     padding: 20px;
 }
@@ -555,7 +569,7 @@ header h1 {
     margin: 0;
     padding: 10px;
     font-size: 0.85em;
-    max-height: 300px;
+    max-height: var(--pre-max-height);
     overflow: auto;
     white-space: pre-wrap;
     word-wrap: break-word;
@@ -644,7 +658,7 @@ pre.diff {
     margin: 0;
     padding: 10px;
     font-size: 0.85em;
-    max-height: 300px;
+    max-height: var(--pre-max-height);
     overflow: auto;
 }
 
@@ -681,7 +695,7 @@ pre.command-output {
     margin: 0;
     padding: 10px;
     font-size: 0.85em;
-    max-height: 200px;
+    max-height: var(--cmd-max-height);
     overflow: auto;
 }
 
@@ -769,7 +783,7 @@ pre.command-output {
     font-size: 0.85em;
     white-space: pre-wrap;
     word-break: break-all;
-    max-height: 300px;
+    max-height: var(--pre-max-height);
     overflow: auto;
 }
 
@@ -806,7 +820,7 @@ pre.command-output {
 }
 
 .code-collapse-wrapper.collapsed pre {
-    max-height: 400px;
+    max-height: var(--code-collapse-max-height);
     overflow: hidden;
 }
 
@@ -1000,14 +1014,18 @@ footer a {
     </style>
 </head>
 <body>
+    {% if not static %}
     <header>
         <div class="container">
             <h1>{{ title }}</h1>
         </div>
     </header>
+    {% endif %}
 
     <main class="container">
+        {% if not static %}
         <a href="/" class="back-link">&larr; Back to all sessions</a>
+        {% endif %}
 
         <div class="session-header">
             <h2 id="session-title">
@@ -1041,6 +1059,7 @@ footer a {
             {% endif %}
         </div>
 
+        {% if not static %}
         <!-- Copy Markdown Toolbar -->
         <div class="copy-markdown-toolbar">
             <label>Messages:</label>
@@ -1074,6 +1093,7 @@ footer a {
             </button>
             <span class="copy-status" id="copy-status"></span>
         </div>
+        {% endif %}
 
         <div class="messages">
             {% for message in session.messages %}
@@ -1084,9 +1104,11 @@ footer a {
                     <span class="message-timestamp">{{ message.timestamp | format_timestamp }}</span>
                     {% endif %}
                     <a href="#msg-{{ loop.index }}" class="message-anchor" title="Link to this message">#{{ loop.index }}</a>
+                    {% if not static %}
                     <button type="button" class="message-copy-btn" data-message-index="{{ loop.index }}" data-session-id="{{ session.session_id }}" title="Copy this message as markdown">
                         <i class="fa-regular fa-copy"></i>
                     </button>
+                    {% endif %}
                 </div>
                 <div class="message-content">
                     {% if message.content_blocks %}
@@ -1411,6 +1433,7 @@ footer a {
                 }
             });
 
+            {% if not static %}
             // Shared helper to build query params from toolbar state
             function buildMarkdownParams() {
                 const messageCount = parseInt(document.getElementById('copy-markdown-btn').dataset.messageCount, 10);
@@ -1551,6 +1574,7 @@ footer a {
                     }
                 });
             });
+            {% endif %}
         });
     </script>
 </body>
