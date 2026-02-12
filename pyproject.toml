@@ -71,7 +71,7 @@ markers = [
 
 [tool.ruff]
 line-length = 180
-exclude = ["*.pyi"]
+exclude = ["*.pyi", "extract_chats.py"]
 
 [tool.ruff.lint]
 select = [
