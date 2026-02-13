@@ -310,6 +310,27 @@ uv run pytest --cov
 uv run copilot-session-tools --help
 ```
 
+## Agent Skills
+
+This repository includes [Agent Skills](https://claude-plugins.dev) for AI coding agents (Claude Code, Cursor, VS Code, Codex, and more):
+
+| Skill | Description |
+|-------|-------------|
+| **search-copilot-chats** | Search, browse, and export archived Copilot chat sessions using this tool's CLI |
+| **scanner-refresh** | Research recent changes in Copilot repos and update the scanner for new event types |
+
+### Install a skill
+
+```bash
+# Install the search skill (Claude Code is the default client)
+npx skills-installer install @Arithmomaniac/copilot-session-tools/search-copilot-chats
+
+# For other clients
+npx skills-installer install @Arithmomaniac/copilot-session-tools/search-copilot-chats --client cursor
+```
+
+Skills are automatically available when working in this repository (project-level `.claude/skills/`).
+
 ## Related Projects
 
 - [simonw/claude-code-transcripts](https://github.com/simonw/claude-code-transcripts) - Inspiration for the web viewer
