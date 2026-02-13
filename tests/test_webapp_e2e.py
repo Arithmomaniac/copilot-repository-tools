@@ -28,8 +28,8 @@ except ImportError:
 # Skip all tests in this module if playwright is not installed
 pytestmark = pytest.mark.skipif(not HAS_PLAYWRIGHT, reason="pytest-playwright not installed")
 
-from copilot_repository_tools import ChatMessage, ChatSession, Database
-from copilot_repository_tools.web import create_app
+from copilot_session_tools import ChatMessage, ChatSession, Database
+from copilot_session_tools.web import create_app
 
 
 @pytest.fixture(scope="module")
@@ -281,7 +281,7 @@ class TestRefreshRebuildE2E:
         )
 
         # Import sessions into database
-        from copilot_repository_tools.scanner import scan_chat_sessions
+        from copilot_session_tools.scanner import scan_chat_sessions
 
         storage_paths = [(str(tmp_path / "workspaceStorage"), "stable")]
         for session in scan_chat_sessions(storage_paths, include_cli=False):

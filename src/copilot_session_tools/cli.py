@@ -1,4 +1,4 @@
-"""Command-line interface for Copilot Repository Tools.
+"""Command-line interface for Copilot Session Tools.
 
 This module provides a modern CLI built with Typer for scanning, searching,
 and exporting VS Code GitHub Copilot chat history.
@@ -13,7 +13,7 @@ from typing import Annotated
 import typer
 from rich.console import Console
 
-from copilot_repository_tools import (
+from copilot_session_tools import (
     ChatMessage,
     ChatSession,
     Database,
@@ -25,7 +25,7 @@ from copilot_repository_tools import (
     get_vscode_storage_paths,
     scan_chat_sessions,
 )
-from copilot_repository_tools.scanner import (
+from copilot_session_tools.scanner import (
     SessionFileInfo,
     parse_session_file,
     scan_session_files,
@@ -40,7 +40,7 @@ if sys.platform == "win32":
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # ty: ignore[call-non-callable]
 
 app = typer.Typer(
-    name="copilot-chat-archive",
+    name="copilot-session-tools",
     help="Create a searchable archive of VS Code GitHub Copilot chats.",
     no_args_is_help=True,
 )
@@ -53,7 +53,7 @@ PARSE_WORKERS = 4
 def version_callback(value: bool):
     """Print version and exit."""
     if value:
-        console.print(f"copilot-chat-archive version {__version__}")
+        console.print(f"copilot-session-tools version {__version__}")
         raise typer.Exit()
 
 
@@ -372,12 +372,12 @@ def search(
     Examples:
 
     \b
-      copilot-chat-archive search "python function"
-      copilot-chat-archive search "role:user python"
-      copilot-chat-archive search "workspace:my-project"
-      copilot-chat-archive search "repo:github.com/owner/repo"
-      copilot-chat-archive search "start_date:2024-01-01 end_date:2024-06-30"
-      copilot-chat-archive search '"exact phrase"'
+      copilot-session-tools search "python function"
+      copilot-session-tools search "role:user python"
+      copilot-session-tools search "workspace:my-project"
+      copilot-session-tools search "repo:github.com/owner/repo"
+      copilot-session-tools search "start_date:2024-01-01 end_date:2024-06-30"
+      copilot-session-tools search '"exact phrase"'
 
     Use --role to filter by user requests or assistant responses.
     Use --title to filter by session/workspace name.
@@ -819,7 +819,7 @@ def rebuild(
     raw_count = database.get_raw_session_count()
     if raw_count == 0:
         console.print("[yellow]Warning: No raw sessions found in database.[/yellow]")
-        console.print("Run 'copilot-chat-archive scan' first to import sessions.")
+        console.print("Run 'copilot-session-tools scan' first to import sessions.")
         raise typer.Exit(1)
 
     console.print(f"Rebuilding {raw_count} sessions from raw JSON...")
@@ -939,6 +939,49 @@ def raw_json(
         except UnicodeDecodeError as err:
             console.print("[red]Error: Raw data is not valid UTF-8. Use --output to save to file.[/red]")
             raise typer.Exit(1) from err
+
+
+@app.command()
+def web(
+    db: Annotated[Path, typer.Option("--db", "-d", help="Path to SQLite database file.")] = Path("copilot_chats.db"),
+    host: Annotated[str, typer.Option("--host", "-H", help="Host to bind to.")] = "127.0.0.1",
+    port: Annotated[int, typer.Option("--port", "-p", help="Port to bind to.")] = 5000,
+    title: Annotated[str, typer.Option("--title", "-t", help="Title for the archive.")] = "Copilot Chat Archive",
+    debug: Annotated[bool, typer.Option("--debug", help="Enable debug mode.")] = False,
+):
+    """Start the web viewer for browsing chat sessions."""
+    try:
+        from copilot_session_tools.web import run_server
+    except ImportError as err:
+        console.print("[red]Web interface requires the [web] extra.[/red]")
+        console.print("Install with: pip install copilot-session-tools[web]")
+        raise typer.Exit(1) from err
+
+    if not db.exists():
+        console.print(f"[red]Database file '{db}' not found.[/red]")
+        console.print("Run 'copilot-session-tools scan' first to import chat sessions.")
+        raise typer.Exit(1)
+
+    database = Database(str(db))
+    db_stats = database.get_stats()
+
+    if db_stats["session_count"] == 0:
+        console.print("[yellow]Warning: Database is empty. Run 'copilot-session-tools scan' first.[/yellow]")
+
+    console.print("Starting web server...")
+    console.print(f"  Database: {db}")
+    console.print(f"  Sessions: {db_stats['session_count']}")
+    console.print(f"  Messages: {db_stats['message_count']}")
+    console.print(f"\nOpen http://{host}:{port}/ in a browser to view your archive.")
+    console.print("Press Ctrl+C to stop the server.\n")
+
+    run_server(
+        host=host,
+        port=port,
+        db_path=str(db),
+        title=title,
+        debug=debug,
+    )
 
 
 def run():

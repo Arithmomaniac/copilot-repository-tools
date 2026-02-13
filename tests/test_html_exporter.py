@@ -2,7 +2,7 @@
 
 import pytest
 
-from copilot_repository_tools import (
+from copilot_session_tools import (
     ChatMessage,
     ChatSession,
     ContentBlock,
@@ -202,7 +202,7 @@ class TestGenerateSessionHtmlFilename:
 
     def test_mirrors_markdown_filename_structure(self, sample_session):
         """Test that HTML filename mirrors markdown filename structure."""
-        from copilot_repository_tools import generate_session_filename
+        from copilot_session_tools import generate_session_filename
 
         md_filename = generate_session_filename(sample_session)
         html_filename = generate_session_html_filename(sample_session)

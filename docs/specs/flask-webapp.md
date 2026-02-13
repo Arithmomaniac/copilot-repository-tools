@@ -47,7 +47,7 @@ Displays a single chat session with all messages.
 ## CLI Command: serve
 
 ```bash
-copilot-chat-archive serve [OPTIONS]
+copilot-session-tools serve [OPTIONS]
 ```
 
 ### Options

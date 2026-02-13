@@ -1,4 +1,4 @@
-"""Copilot Repository Tools - Web interface.
+"""Copilot Session Tools - Web interface.
 
 This module provides a Flask-based web interface for browsing and searching
 VS Code GitHub Copilot chat history.
@@ -29,7 +29,7 @@ __all__ = [
 def main():
     """Entry point for the web application.
 
-    Can be run via: uvx copilot-repository-tools-web
+    Can be run via: copilot-session-tools web
     """
     # Parse command line arguments
     import argparse
@@ -76,16 +76,16 @@ def main():
     db_path = Path(args.db)
     if not db_path.exists():
         print(f"Error: Database file '{args.db}' not found.", file=sys.stderr)
-        print("Run 'copilot-chat-archive scan' first to import chat sessions.", file=sys.stderr)
+        print("Run 'copilot-session-tools scan' first to import chat sessions.", file=sys.stderr)
         sys.exit(1)
 
-    from copilot_repository_tools import Database
+    from copilot_session_tools import Database
 
     database = Database(args.db)
     stats = database.get_stats()
 
     if stats["session_count"] == 0:
-        print("Warning: Database is empty. Run 'copilot-chat-archive scan' first.", file=sys.stderr)
+        print("Warning: Database is empty. Run 'copilot-session-tools scan' first.", file=sys.stderr)
 
     print("Starting web server...")
     print(f"  Database: {args.db}")

@@ -99,7 +99,7 @@ wheels = [
 ]
 
 [[package]]
-name = "copilot-repository-tools"
+name = "copilot-session-tools"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
@@ -134,7 +134,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "copilot-repository-tools", extras = ["cli", "web"], marker = "extra == 'all'" },
+    { name = "copilot-session-tools", extras = ["cli", "web"], marker = "extra == 'all'" },
     { name = "flask", marker = "extra == 'web'", specifier = ">=3.0.0" },
     { name = "jinja2", specifier = ">=3.0.0" },
     { name = "markdown", specifier = ">=3.4.0" },

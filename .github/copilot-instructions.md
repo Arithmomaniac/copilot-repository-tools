@@ -63,9 +63,7 @@ All of these checks are also enforced in CI via GitHub Actions and must pass bef
 
 ## Project Structure
 
-- `packages/common/` - Shared library code
-- `packages/cli/` - Command-line interface
-- `packages/web/` - Web application
+- `src/copilot_session_tools/` - Main package (database, scanner, CLI, web)
 - `tests/` - Test suite
 
 ## Dependencies
@@ -73,5 +71,5 @@ All of these checks are also enforced in CI via GitHub Actions and must pass bef
 This project uses `uv` for dependency management. To install dependencies:
 
 ```bash
-uv sync --all-packages
+uv sync --all-extras
 ```

@@ -1,4 +1,4 @@
-"""Copilot Repository Tools - Common utilities.
+"""Copilot Session Tools - Common utilities.
 
 This module provides shared functionality for working with VS Code Copilot chat history:
 - Database: SQLite storage with FTS5 full-text search

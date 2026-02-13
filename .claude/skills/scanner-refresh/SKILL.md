@@ -35,7 +35,7 @@ Restrict research to changes **since the last scanner update** to avoid redundan
 ```powershell
 # Get the date of the last commit that touched scanner.py or the SKILL.md
 $lastScannerChange = git --no-pager log --format="%ai" -1 -- `
-  packages/common/src/copilot_repository_tools_common/scanner.py `
+  src/copilot_session_tools/scanner/ `
   .claude/skills/scanner-refresh/SKILL.md
 Write-Output "Search window: since $lastScannerChange"
 ```
@@ -74,16 +74,16 @@ Also consult DeepWiki/Context7 for documentation on event schemas.
 
 **Mining past Copilot sessions for format examples:**
 
-Use `copilot-chat-archive search` to find past sessions that discussed formats, parsing, or scanner changes:
+Use `copilot-session-tools search` to find past sessions that discussed formats, parsing, or scanner changes:
 ```powershell
-uv run copilot-chat-archive search "vscode session type background" --full --limit 20
-uv run copilot-chat-archive search '"copy all"' --full --limit 20
+uv run copilot-session-tools search "vscode session type background" --full --limit 20
+uv run copilot-session-tools search '"copy all"' --full --limit 20
 ```
 
 **Do NOT use `copilot --share`** for format comparison. CLI `--share` only exports the
 current turn (post-compaction), not the full session history. Our tool parses the raw
 `events.jsonl` which contains the complete history — strictly more comprehensive. Use our
-own `uv run copilot-chat-archive export <sessionId>` for markdown export instead.
+own `uv run copilot-session-tools export <sessionId>` for markdown export instead.
 
 ### Step 2: Analyze local session files
 
@@ -159,7 +159,7 @@ Any content visible in HTML/MD but missing from our web viewer parsing = a gap t
 
 ### Step 3: Compare with current scanner.py
 
-The scanner is at: `packages/common/src/copilot_repository_tools_common/scanner.py`
+The scanner is at: `src/copilot_session_tools/scanner/`
 
 **CLI event handlers** are in `_parse_cli_jsonl_events()` method (~line 1950+):
 - Look for `elif event_type == "..."` patterns
@@ -365,4 +365,4 @@ CLI `--share` cosmetic features (emoji role markers 👤💬, `<details>` for to
 `<sub>⏱️</sub>` timing) are NOT worth adopting — they add noise without adding content.
 
 **Do not use `copilot --share` for comparison or research** — it only exports the active
-turn after compaction. Use our own `copilot-chat-archive export` for full session markdown.
+turn after compaction. Use our own `copilot-session-tools export` for full session markdown.

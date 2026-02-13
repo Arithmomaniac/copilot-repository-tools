@@ -1,4 +1,4 @@
-# Copilot Repository Tools
+# Copilot Session Tools
 
 Create a searchable archive of your VS Code and GitHub Copilot CLI chat history, with a web viewer similar to [simonw/claude-code-transcripts](https://github.com/simonw/claude-code-transcripts).
 
@@ -34,13 +34,13 @@ This is a Python package with optional extras for CLI and web interfaces:
 
 ```bash
 # Install with CLI
-pip install copilot-repository-tools[cli]
+pip install copilot-session-tools[cli]
 
 # Install with web interface
-pip install copilot-repository-tools[web]
+pip install copilot-session-tools[web]
 
 # Install everything (CLI + web)
-pip install copilot-repository-tools[all]
+pip install copilot-session-tools[all]
 ```
 
 > **Tip:** Also works with `pipx install` or `uvx --with` if you prefer isolated tool environments.
@@ -48,8 +48,8 @@ pip install copilot-repository-tools[all]
 ### From source (development)
 
 ```bash
-git clone https://github.com/Arithmomaniac/copilot-repository-tools.git
-cd copilot-repository-tools
+git clone https://github.com/Arithmomaniac/copilot-session-tools.git
+cd copilot-session-tools
 
 # Install uv if you haven't already
 pip install uv
@@ -66,25 +66,25 @@ Scan your VS Code workspace storage and GitHub Copilot CLI sessions to import in
 
 ```bash
 # Scan both VS Code (Stable and Insiders) and CLI sessions
-copilot-chat-archive scan
+copilot-session-tools scan
 
 # Scan only VS Code Stable
-copilot-chat-archive scan --edition stable
+copilot-session-tools scan --edition stable
 
 # Scan only VS Code Insiders
-copilot-chat-archive scan --edition insider
+copilot-session-tools scan --edition insider
 
 # Use a custom database path
-copilot-chat-archive scan --db my_chats.db
+copilot-session-tools scan --db my_chats.db
 
 # Scan custom storage paths
-copilot-chat-archive scan --storage-path /path/to/workspaceStorage
+copilot-session-tools scan --storage-path /path/to/workspaceStorage
 
 # Verbose output
-copilot-chat-archive scan --verbose
+copilot-session-tools scan --verbose
 
 # Force re-import of all sessions
-copilot-chat-archive scan --full
+copilot-session-tools scan --full
 ```
 
 **Incremental Updates**: By default, the `scan` command only adds new sessions and updates changed ones based on file modification time. Use `--full` to re-import all sessions.
@@ -97,10 +97,10 @@ Browse your chat archive in a web interface:
 
 ```bash
 # Start the web server (uses copilot_chats.db by default)
-copilot-chat-web
+copilot-session-tools web
 
 # Custom options
-copilot-chat-web --db my_chats.db --port 8080 --title "My Copilot Chats"
+copilot-session-tools web --db my_chats.db --port 8080 --title "My Copilot Chats"
 ```
 
 Then open `http://127.0.0.1:5000/` in your browser.
@@ -111,19 +111,19 @@ Search through your chat history from the command line:
 
 ```bash
 # Basic search
-copilot-chat-archive search "authentication"
+copilot-session-tools search "authentication"
 
 # Limit results
-copilot-chat-archive search "React hooks" --limit 50
+copilot-session-tools search "React hooks" --limit 50
 
 # Filter by role
-copilot-chat-archive search "error" --role assistant
+copilot-session-tools search "error" --role assistant
 
 # Search only tool invocations
-copilot-chat-archive search "git" --tools-only
+copilot-session-tools search "git" --tools-only
 
 # Show full content (not truncated)
-copilot-chat-archive search "complex query" --full
+copilot-session-tools search "complex query" --full
 ```
 
 **Advanced Search Syntax:**
@@ -140,50 +140,50 @@ The search supports powerful query syntax:
 
 ```bash
 # Search for "function" only in user messages
-copilot-chat-archive search "role:user function"
+copilot-session-tools search "role:user function"
 
 # Search in a specific workspace
-copilot-chat-archive search "workspace:my-project python"
+copilot-session-tools search "workspace:my-project python"
 
 # Combine filters
-copilot-chat-archive search "workspace:react role:assistant hooks"
+copilot-session-tools search "workspace:react role:assistant hooks"
 
 # Sort by date instead of relevance
-copilot-chat-archive search "python" --sort date
+copilot-session-tools search "python" --sort date
 ```
 
 ### 4. View Statistics
 
 ```bash
-copilot-chat-archive stats
+copilot-session-tools stats
 ```
 
 ### 5. Export/Import
 
 ```bash
 # Export all sessions to JSON
-copilot-chat-archive export --output chats.json
+copilot-session-tools export --output chats.json
 
 # Export to stdout
-copilot-chat-archive export
+copilot-session-tools export
 
 # Export as Markdown files
-copilot-chat-archive export-markdown --output-dir ./markdown-archive
+copilot-session-tools export-markdown --output-dir ./markdown-archive
 
 # Export a single session
-copilot-chat-archive export-markdown --session-id abc123 --output-dir ./session
+copilot-session-tools export-markdown --session-id abc123 --output-dir ./session
 
 # Include file diffs in markdown
-copilot-chat-archive export-markdown --include-diffs
+copilot-session-tools export-markdown --include-diffs
 
 # Export as self-contained HTML (same rendering as web viewer, no server needed)
-copilot-chat-archive export-html --output-dir ./html-archive
+copilot-session-tools export-html --output-dir ./html-archive
 
 # Export a single session as HTML
-copilot-chat-archive export-html --session-id abc123 --output-dir ./session
+copilot-session-tools export-html --session-id abc123 --output-dir ./session
 
 # Import from JSON
-copilot-chat-archive import-json chats.json
+copilot-session-tools import-json chats.json
 ```
 
 ## Chat Storage Locations
@@ -270,7 +270,7 @@ CREATE VIRTUAL TABLE messages_fts USING fts5(content);
 When the schema changes, you can rebuild all derived tables from the stored raw JSON:
 
 ```bash
-copilot-chat-archive rebuild --db copilot_chats.db
+copilot-session-tools rebuild --db copilot_chats.db
 ```
 
 This drops and recreates the sessions, messages, and related tables without needing to re-scan the original VS Code storage.
@@ -291,8 +291,8 @@ The web interface includes:
 
 ```bash
 # Clone the repository
-git clone https://github.com/Arithmomaniac/copilot-repository-tools.git
-cd copilot-repository-tools
+git clone https://github.com/Arithmomaniac/copilot-session-tools.git
+cd copilot-session-tools
 
 # Install uv
 pip install uv
@@ -306,9 +306,8 @@ uv run pytest
 # Run tests with coverage
 uv run pytest --cov
 
-# Run a specific package's CLI
-uv run copilot-chat-archive --help
-uv run copilot-chat-web --help
+# Run the CLI
+uv run copilot-session-tools --help
 ```
 
 ## Related Projects

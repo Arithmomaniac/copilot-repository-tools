@@ -3,7 +3,7 @@ requires = ["uv_build>=0.6.0,<0.10.0"]
 build-backend = "uv_build"
 
 [project]
-name = "copilot-repository-tools"
+name = "copilot-session-tools"
 version = "0.1.0"
 description = "A collection of tools for VS Code GitHub Copilot chat history"
 readme = "README.md"
@@ -37,17 +37,16 @@ web = [
     "flask>=3.0.0",
 ]
 all = [
-    "copilot-repository-tools[cli,web]",
+    "copilot-session-tools[cli,web]",
 ]
 
 [project.scripts]
-copilot-chat-archive = "copilot_repository_tools.cli:run"
-copilot-chat-web = "copilot_repository_tools.web:main"
+copilot-session-tools = "copilot_session_tools.cli:run"
 
 [project.urls]
-Homepage = "https://github.com/Arithmomaniac/copilot-repository-tools"
-Repository = "https://github.com/Arithmomaniac/copilot-repository-tools"
-Issues = "https://github.com/Arithmomaniac/copilot-repository-tools/issues"
+Homepage = "https://github.com/Arithmomaniac/copilot-session-tools"
+Repository = "https://github.com/Arithmomaniac/copilot-session-tools"
+Issues = "https://github.com/Arithmomaniac/copilot-session-tools/issues"
 
 [tool.uv]
 package = true

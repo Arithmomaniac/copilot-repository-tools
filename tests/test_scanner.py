@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from conftest import requires_sample_files
 
-from copilot_repository_tools import (
+from copilot_session_tools import (
     ChatMessage,
     ChatSession,
     CommandRun,
@@ -16,7 +16,7 @@ from copilot_repository_tools import (
     find_copilot_chat_dirs,
     scan_chat_sessions,
 )
-from copilot_repository_tools.scanner import (
+from copilot_session_tools.scanner import (
     _extract_edit_group_text,
     _extract_inline_reference_name,
     _merge_content_blocks,
@@ -346,7 +346,7 @@ class TestSampleFilesParsing:
     @requires_sample_files
     def test_sample_session_scan_integration(self, sample_session_path, tmp_path):
         """Test that sample session can be scanned using the scanner module."""
-        from copilot_repository_tools.scanner import _parse_chat_session_file
+        from copilot_session_tools.scanner import _parse_chat_session_file
 
         session = _parse_chat_session_file(sample_session_path, workspace_name="test-workspace", workspace_path=str(tmp_path), edition="stable")
         assert session is not None
@@ -363,7 +363,7 @@ class TestPerformanceBenchmarks:
     @requires_sample_files
     def test_large_session_parsing_time(self, all_sample_session_paths):
         """Test that large session files parse within acceptable time limits."""
-        from copilot_repository_tools.scanner import _parse_chat_session_file
+        from copilot_session_tools.scanner import _parse_chat_session_file
 
         for sample_path in all_sample_session_paths:
             file_size = sample_path.stat().st_size
@@ -420,7 +420,7 @@ class TestCLIParsing:
         Tests parsing the actual copilot-cli JSONL format with event types like
         session.start, user.message, assistant.message, tool.execution_*, etc.
         """
-        from copilot_repository_tools.scanner import _parse_cli_jsonl_file
+        from copilot_session_tools.scanner import _parse_cli_jsonl_file
 
         # Use the real sample file from copilot-cli
         sample_file = Path(__file__).parent / "sample_files" / "66b821d4-af6f-4518-a394-6d95a4d0f96b.jsonl"
@@ -478,7 +478,7 @@ class TestCLIParsing:
 
     def test_parse_cli_jsonl_file_simple_format(self):
         """Test parsing CLI JSONL session file with simple format (for backwards compatibility)."""
-        from copilot_repository_tools.scanner import _parse_cli_jsonl_file
+        from copilot_session_tools.scanner import _parse_cli_jsonl_file
 
         # Use the simple sample file
         sample_file = Path(__file__).parent / "sample_files" / "cli-session-001.jsonl"
@@ -496,7 +496,7 @@ class TestCLIParsing:
 
     def test_get_cli_storage_paths(self):
         """Test getting CLI storage paths."""
-        from copilot_repository_tools import get_cli_storage_paths
+        from copilot_session_tools import get_cli_storage_paths
 
         paths = get_cli_storage_paths()
 
@@ -510,7 +510,7 @@ class TestCLIParsing:
     def test_scan_includes_cli_by_default(self, tmp_path):
         """Test that scan_chat_sessions includes CLI sessions by default."""
 
-        from copilot_repository_tools import scan_chat_sessions
+        from copilot_session_tools import scan_chat_sessions
 
         # Mock an empty VS Code storage
         storage_paths = [(str(tmp_path / "nonexistent"), "stable")]
@@ -528,7 +528,7 @@ class TestWorkspaceYamlParsing:
 
     def test_parse_workspace_yaml_with_summary(self, tmp_path):
         """Test parsing workspace.yaml extracts summary field."""
-        from copilot_repository_tools.scanner import _parse_workspace_yaml
+        from copilot_session_tools.scanner import _parse_workspace_yaml
 
         workspace_file = tmp_path / "workspace.yaml"
         workspace_file.write_text(
@@ -550,14 +550,14 @@ class TestWorkspaceYamlParsing:
 
     def test_parse_workspace_yaml_missing_file(self, tmp_path):
         """Test that missing workspace.yaml returns empty dict."""
-        from copilot_repository_tools.scanner import _parse_workspace_yaml
+        from copilot_session_tools.scanner import _parse_workspace_yaml
 
         result = _parse_workspace_yaml(tmp_path)
         assert result == {}
 
     def test_parse_workspace_yaml_no_summary(self, tmp_path):
         """Test parsing workspace.yaml without summary field."""
-        from copilot_repository_tools.scanner import _parse_workspace_yaml
+        from copilot_session_tools.scanner import _parse_workspace_yaml
 
         workspace_file = tmp_path / "workspace.yaml"
         workspace_file.write_text(
@@ -571,7 +571,7 @@ class TestWorkspaceYamlParsing:
 
     def test_parse_workspace_yaml_empty_summary(self, tmp_path):
         """Test parsing workspace.yaml with empty summary field."""
-        from copilot_repository_tools.scanner import _parse_workspace_yaml
+        from copilot_session_tools.scanner import _parse_workspace_yaml
 
         workspace_file = tmp_path / "workspace.yaml"
         workspace_file.write_text(
@@ -614,7 +614,7 @@ class TestWorkspaceYamlParsing:
         """Test that CLI session title is extracted from workspace.yaml summary."""
         import orjson
 
-        from copilot_repository_tools.scanner import _parse_cli_jsonl_file
+        from copilot_session_tools.scanner import _parse_cli_jsonl_file
 
         session_dir = tmp_path / "test-session"
         session_dir.mkdir()
@@ -638,7 +638,7 @@ class TestWorkspaceYamlParsing:
         """Test that CLI session title falls back to first report_intent when no workspace.yaml."""
         import orjson
 
-        from copilot_repository_tools.scanner import _parse_cli_jsonl_file
+        from copilot_session_tools.scanner import _parse_cli_jsonl_file
 
         events_file = tmp_path / "test-session.jsonl"
         events_file.write_text(
@@ -654,7 +654,7 @@ class TestWorkspaceYamlParsing:
         """Test that workspace.yaml summary takes priority over report_intent."""
         import orjson
 
-        from copilot_repository_tools.scanner import _parse_cli_jsonl_file
+        from copilot_session_tools.scanner import _parse_cli_jsonl_file
 
         session_dir = tmp_path / "test-session"
         session_dir.mkdir()
@@ -678,7 +678,7 @@ class TestWorkspaceYamlParsing:
         """Test that custom_title is None when neither workspace.yaml nor intent exists."""
         import orjson
 
-        from copilot_repository_tools.scanner import _parse_cli_jsonl_file
+        from copilot_session_tools.scanner import _parse_cli_jsonl_file
 
         events_file = tmp_path / "test-session.jsonl"
         events_file.write_text(
@@ -716,7 +716,7 @@ class TestAskUserAnswerDisplay:
 
     def _parse_events(self, events, tmp_path):
         """Write events to a JSONL file and parse them."""
-        from copilot_repository_tools.scanner import _parse_cli_jsonl_file
+        from copilot_session_tools.scanner import _parse_cli_jsonl_file
 
         session_file = tmp_path / "ask-user-test.jsonl"
         session_file.write_text("\n".join(json.dumps(e) for e in events))
@@ -841,7 +841,7 @@ class TestRepositoryUrlDetection:
 
     def test_normalize_git_url_https(self):
         """Test normalizing HTTPS git URLs."""
-        from copilot_repository_tools.scanner import _normalize_git_url
+        from copilot_session_tools.scanner import _normalize_git_url
 
         # Standard HTTPS URL
         result = _normalize_git_url("https://github.com/owner/repo.git")
@@ -857,7 +857,7 @@ class TestRepositoryUrlDetection:
 
     def test_normalize_git_url_ssh(self):
         """Test normalizing SSH git URLs."""
-        from copilot_repository_tools.scanner import _normalize_git_url
+        from copilot_session_tools.scanner import _normalize_git_url
 
         # Standard SSH URL
         result = _normalize_git_url("git@github.com:owner/repo.git")
@@ -873,7 +873,7 @@ class TestRepositoryUrlDetection:
 
     def test_normalize_git_url_ssh_protocol(self):
         """Test normalizing SSH protocol URLs."""
-        from copilot_repository_tools.scanner import _normalize_git_url
+        from copilot_session_tools.scanner import _normalize_git_url
 
         # SSH protocol URL
         result = _normalize_git_url("ssh://git@github.com/owner/repo.git")
@@ -885,35 +885,35 @@ class TestRepositoryUrlDetection:
 
     def test_normalize_git_url_trailing_slash(self):
         """Test that trailing slashes are handled."""
-        from copilot_repository_tools.scanner import _normalize_git_url
+        from copilot_session_tools.scanner import _normalize_git_url
 
         result = _normalize_git_url("https://github.com/owner/repo/")
         assert result == "github.com/owner/repo"
 
     def test_normalize_git_url_unknown_format(self):
         """Test that unknown formats are returned as-is."""
-        from copilot_repository_tools.scanner import _normalize_git_url
+        from copilot_session_tools.scanner import _normalize_git_url
 
         result = _normalize_git_url("some-unknown-format")
         assert result == "some-unknown-format"
 
     def test_detect_repository_url_none_workspace(self):
         """Test that None workspace path returns None."""
-        from copilot_repository_tools.scanner import detect_repository_url
+        from copilot_session_tools.scanner import detect_repository_url
 
         result = detect_repository_url(None)
         assert result is None
 
     def test_detect_repository_url_empty_workspace(self):
         """Test that empty workspace path returns None."""
-        from copilot_repository_tools.scanner import detect_repository_url
+        from copilot_session_tools.scanner import detect_repository_url
 
         result = detect_repository_url("")
         assert result is None
 
     def test_detect_repository_url_not_git_repo(self, tmp_path):
         """Test that non-git directory returns None."""
-        from copilot_repository_tools.scanner import detect_repository_url
+        from copilot_session_tools.scanner import detect_repository_url
 
         # Create a regular directory that's not a git repo
         workspace = tmp_path / "not-a-repo"
@@ -926,7 +926,7 @@ class TestRepositoryUrlDetection:
         """Test detection in an actual git repository."""
         import subprocess
 
-        from copilot_repository_tools.scanner import detect_repository_url
+        from copilot_session_tools.scanner import detect_repository_url
 
         # Create a git repo
         workspace = tmp_path / "test-repo"
@@ -948,7 +948,7 @@ class TestRepositoryUrlDetection:
         )
 
         # Clear cache so we re-check after adding remote
-        from copilot_repository_tools.scanner import _clear_repository_url_cache
+        from copilot_session_tools.scanner import _clear_repository_url_cache
 
         _clear_repository_url_cache()
 
@@ -981,7 +981,7 @@ class TestRepositoryUrlDetection:
 
     def test_detect_repository_url_exported_from_common(self):
         """Test that detect_repository_url is exported from the common package."""
-        from copilot_repository_tools import detect_repository_url
+        from copilot_session_tools import detect_repository_url
 
         # Should be callable
         assert callable(detect_repository_url)
@@ -992,7 +992,7 @@ class TestVSCodeJSONLParsing:
 
     def test_parse_vscode_jsonl_kind0_only(self, tmp_path):
         """Test parsing JSONL with only a kind=0 snapshot (no incremental ops)."""
-        from copilot_repository_tools.scanner import _parse_vscode_jsonl_file
+        from copilot_session_tools.scanner import _parse_vscode_jsonl_file
 
         session_data = {
             "kind": 0,
@@ -1027,7 +1027,7 @@ class TestVSCodeJSONLParsing:
 
     def test_parse_vscode_jsonl_with_kind2_push(self, tmp_path):
         """Test parsing JSONL with kind=0 snapshot + kind=2 push (new request appended)."""
-        from copilot_repository_tools.scanner import _parse_vscode_jsonl_file
+        from copilot_session_tools.scanner import _parse_vscode_jsonl_file
 
         # kind=0: initial snapshot with one request
         line0 = json.dumps(
@@ -1078,7 +1078,7 @@ class TestVSCodeJSONLParsing:
 
     def test_parse_vscode_jsonl_with_kind1_set(self, tmp_path):
         """Test parsing JSONL with kind=0 snapshot + kind=1 set (update property)."""
-        from copilot_repository_tools.scanner import _parse_vscode_jsonl_file
+        from copilot_session_tools.scanner import _parse_vscode_jsonl_file
 
         line0 = json.dumps(
             {
@@ -1117,7 +1117,7 @@ class TestVSCodeJSONLParsing:
 
     def test_parse_vscode_jsonl_empty_file(self, tmp_path):
         """Test parsing an empty JSONL file returns None."""
-        from copilot_repository_tools.scanner import _parse_vscode_jsonl_file
+        from copilot_session_tools.scanner import _parse_vscode_jsonl_file
 
         jsonl_file = tmp_path / "empty.jsonl"
         jsonl_file.write_text("")
@@ -1127,7 +1127,7 @@ class TestVSCodeJSONLParsing:
 
     def test_parse_vscode_jsonl_no_kind0(self, tmp_path):
         """Test parsing JSONL without kind=0 snapshot returns None."""
-        from copilot_repository_tools.scanner import _parse_vscode_jsonl_file
+        from copilot_session_tools.scanner import _parse_vscode_jsonl_file
 
         line = json.dumps({"kind": 1, "k": ["customTitle"], "v": "No Snapshot"})
         jsonl_file = tmp_path / "no-snapshot.jsonl"
@@ -1138,7 +1138,7 @@ class TestVSCodeJSONLParsing:
 
     def test_parse_vscode_jsonl_malformed_lines(self, tmp_path):
         """Test that malformed JSONL lines are skipped gracefully."""
-        from copilot_repository_tools.scanner import _parse_vscode_jsonl_file
+        from copilot_session_tools.scanner import _parse_vscode_jsonl_file
 
         line0 = json.dumps(
             {
@@ -1166,7 +1166,7 @@ class TestVSCodeJSONLParsing:
 
     def test_apply_jsonl_operations_set_nested(self):
         """Test _apply_jsonl_operations with nested path for kind=1 set."""
-        from copilot_repository_tools.scanner import _apply_jsonl_operations
+        from copilot_session_tools.scanner import _apply_jsonl_operations
 
         base = {"requests": [{"message": {"text": "old"}, "response": []}]}
         ops = [{"kind": 1, "k": ["requests", 0, "message", "text"], "v": "new"}]
@@ -1176,7 +1176,7 @@ class TestVSCodeJSONLParsing:
 
     def test_apply_jsonl_operations_push(self):
         """Test _apply_jsonl_operations with kind=2 push to array."""
-        from copilot_repository_tools.scanner import _apply_jsonl_operations
+        from copilot_session_tools.scanner import _apply_jsonl_operations
 
         base = {"requests": [{"message": {"text": "first"}}]}
         ops = [{"kind": 2, "k": ["requests"], "v": [{"message": {"text": "second"}}]}]
@@ -1187,7 +1187,7 @@ class TestVSCodeJSONLParsing:
 
     def test_apply_jsonl_operations_invalid_path(self):
         """Test _apply_jsonl_operations gracefully handles invalid paths."""
-        from copilot_repository_tools.scanner import _apply_jsonl_operations
+        from copilot_session_tools.scanner import _apply_jsonl_operations
 
         base = {"requests": []}
         ops = [{"kind": 1, "k": ["nonexistent", "path"], "v": "value"}]
@@ -1239,7 +1239,7 @@ class TestVSCodeJSONLParsing:
 
     def test_scan_session_files_includes_jsonl(self, tmp_path):
         """Test that scan_session_files yields SessionFileInfo for .jsonl files."""
-        from copilot_repository_tools.scanner import scan_session_files
+        from copilot_session_tools.scanner import scan_session_files
 
         workspace_dir = tmp_path / "workspace456"
         workspace_dir.mkdir()
@@ -1262,7 +1262,7 @@ class TestVSCodeJSONLParsing:
 
     def test_parse_session_file_vscode_jsonl(self, tmp_path):
         """Test that parse_session_file dispatches vscode jsonl to the correct parser."""
-        from copilot_repository_tools.scanner import SessionFileInfo, parse_session_file
+        from copilot_session_tools.scanner import SessionFileInfo, parse_session_file
 
         jsonl_file = tmp_path / "dispatch-test.jsonl"
         session_data = json.dumps(
