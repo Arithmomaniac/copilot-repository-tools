@@ -6,7 +6,7 @@ from unittest.mock import patch
 import pytest
 from typer.testing import CliRunner
 
-from copilot_session_tools import ChatMessage, ChatSession, Database
+from copilot_session_tools import ChatMessage, ChatSession, Database, __version__
 from copilot_session_tools.cli import app
 
 
@@ -55,7 +55,7 @@ class TestCLI:
         """Test --version flag."""
         result = runner.invoke(app, ["--version"])
         assert result.exit_code == 0
-        assert "0.1.0" in result.output
+        assert __version__ in result.output
 
     def test_scan_no_paths(self, runner, tmp_path, mock_no_vscode_paths):
         """Test scan command with no valid paths."""

@@ -274,10 +274,10 @@ class TestResponseItemKinds:
 
     def test_merge_content_blocks_keeps_thinking_separate(self):
         """Test that thinking blocks are not merged with text blocks."""
-        blocks = [
-            ("text", "Hello"),
-            ("thinking", "Let me think..."),
-            ("text", "World"),
+        blocks: list[tuple[str, str, str | None]] = [
+            ("text", "Hello", None),
+            ("thinking", "Let me think...", None),
+            ("text", "World", None),
         ]
         result = _merge_content_blocks(blocks)
         assert len(result) == 3
@@ -287,10 +287,10 @@ class TestResponseItemKinds:
 
     def test_merge_content_blocks_merges_consecutive_text(self):
         """Test that consecutive text blocks are merged."""
-        blocks = [
-            ("text", "Hello"),
-            ("text", "World"),
-            ("text", "!"),
+        blocks: list[tuple[str, str, str | None]] = [
+            ("text", "Hello", None),
+            ("text", "World", None),
+            ("text", "!", None),
         ]
         result = _merge_content_blocks(blocks)
         assert len(result) == 1
@@ -300,11 +300,11 @@ class TestResponseItemKinds:
 
     def test_tool_invocation_blocks_stay_separate(self):
         """Test that toolInvocation blocks are never merged."""
-        blocks = [
-            ("text", "Starting..."),
-            ("toolInvocation", "Running command"),
-            ("toolInvocation", "Reading file"),
-            ("text", "Done"),
+        blocks: list[tuple[str, str, str | None]] = [
+            ("text", "Starting...", None),
+            ("toolInvocation", "Running command", None),
+            ("toolInvocation", "Reading file", None),
+            ("text", "Done", None),
         ]
         result = _merge_content_blocks(blocks)
         assert len(result) == 4
@@ -586,14 +586,15 @@ class TestWorkspaceYamlParsing:
         """Helper to create minimal CLI JSONL events for title tests."""
         ctx = {"cwd": "/home/user/project"}
         start_data = {"sessionId": "test-id", "startTime": "2026-01-01T00:00:00Z", "context": ctx}
-        events = [
+        assistant_data: dict = {"content": "Sure."}
+        events: list[dict] = [
             {"type": "session.start", "timestamp": "2026-01-01T00:00:00Z", "data": start_data},
             {"type": "user.message", "timestamp": "2026-01-01T00:00:01Z", "data": {"content": "Help"}},
-            {"type": "assistant.message", "timestamp": "2026-01-01T00:00:02Z", "data": {"content": "Sure."}},
+            {"type": "assistant.message", "timestamp": "2026-01-01T00:00:02Z", "data": assistant_data},
         ]
         if intent:
             intent_args = {"intent": intent}
-            events[2]["data"]["toolRequests"] = [{"toolCallId": "tc1", "toolName": "report_intent", "arguments": intent_args}]
+            assistant_data["toolRequests"] = [{"toolCallId": "tc1", "toolName": "report_intent", "arguments": intent_args}]
             events.append(
                 {
                     "type": "tool.execution_start",

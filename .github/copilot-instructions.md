@@ -42,9 +42,24 @@ Run the type checker to ensure type safety:
 uv run ty check
 ```
 
-### 4. Run Tests
+### 4. Run Affected Tests
 
-Run the test suite to verify changes don't break existing functionality:
+Rather than running the full test suite, identify and run only the tests affected by your changes. The full test suite is enforced by CI on every PR.
+
+```bash
+# Map changed source files to their test files:
+#   src/copilot_session_tools/database.py  → tests/test_database.py
+#   src/copilot_session_tools/scanner/     → tests/test_scanner.py
+#   src/copilot_session_tools/cli.py       → tests/test_cli.py
+#   src/copilot_session_tools/web/         → tests/test_webapp.py
+#   src/copilot_session_tools/markdown_exporter.py → tests/test_markdown_exporter.py
+#   src/copilot_session_tools/html_exporter.py     → tests/test_html_exporter.py
+
+# Example: if you changed database.py and scanner/
+uv run pytest tests/test_database.py tests/test_scanner.py -v
+```
+
+If unsure which tests are affected, run the full suite:
 
 ```bash
 uv run pytest tests/ --ignore=tests/test_webapp_e2e.py -v
@@ -57,9 +72,9 @@ Before committing any changes:
 1. Run `uv run ruff check .` - fix any linting errors
 2. Run `uv run ruff format .` - format the code
 3. Run `uv run ty check` - fix any type errors  
-4. Run `uv run pytest tests/ --ignore=tests/test_webapp_e2e.py` - ensure tests pass
+4. Run `uv run pytest tests/test_<affected>.py` - run affected tests (CI runs the full suite)
 
-All of these checks are also enforced in CI via GitHub Actions and must pass before merging.
+Linting, formatting, and type checks are also enforced by a sessionEnd hook. The full test suite is enforced in CI via GitHub Actions and must pass before merging.
 
 ## Project Structure
 

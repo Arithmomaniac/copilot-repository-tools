@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "hooks": {
+    "sessionEnd": [
+      {
+        "type": "command",
+        "bash": "echo '🔍 Running end-of-session lint check...' && uv run ruff check . && uv run ruff format --check . && echo '✅ Lint and format checks passed'",
+        "powershell": "Write-Host '🔍 Running end-of-session lint check...' && uv run ruff check . && uv run ruff format --check . && Write-Host '✅ Lint and format checks passed'",
+        "cwd": ".",
+        "timeoutSec": 60
+      }
+    ]
+  }
+}
