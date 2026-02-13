@@ -31,6 +31,9 @@ Before the first release, register the GitHub repo as a trusted publisher:
 
 ## Releasing a New Version
 
+This project uses **continuous deployment**: merging a PR to `main` automatically
+tags the version and publishes to PyPI. No manual tagging required.
+
 ### 1. Bump the Version
 
 ```bash
@@ -56,24 +59,27 @@ Add a new section to `CHANGELOG.md` for the new version:
 - ...
 ```
 
-### 3. Commit and Tag
+### 3. Create a PR
 
 ```bash
 git add pyproject.toml src/copilot_session_tools/__init__.py CHANGELOG.md
 git commit -m "Release vX.Y.Z"
-git tag vX.Y.Z
-git push origin main --tags
+git push origin <branch>
+# Create PR targeting main
 ```
+
+CI enforces that every PR bumps the version. Once approved and merged:
 
 ### 4. What Happens Automatically
 
-The `release.yml` workflow will:
-
-1. **Lint & Test** — Runs ruff, ty, and pytest to validate the release
-2. **Build** — Creates wheel and sdist, verifies tag matches package version
-3. **Publish to TestPyPI** — Uploads to test.pypi.org first
-4. **Publish to PyPI** — Uploads to pypi.org
-5. **Create GitHub Release** — Auto-generates release notes from commits
+1. **CI runs** — Lint, type check, and tests on Ubuntu + Windows
+2. **Auto-tag** — CI reads the version from `pyproject.toml` and creates git tag `vX.Y.Z`
+3. **Release pipeline triggers** — The tag triggers `release.yml`:
+   - Lint & test (release validation)
+   - Build wheel + sdist
+   - Publish to TestPyPI
+   - Publish to PyPI
+   - Create GitHub Release with auto-generated notes
 
 ### 5. Verify the Release
 
