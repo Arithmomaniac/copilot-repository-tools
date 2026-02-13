@@ -11,8 +11,11 @@ permissions:
 
 jobs:
   lint:
-    name: Lint & Type Check
-    runs-on: ubuntu-latest
+    name: Lint & Type Check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -38,8 +41,11 @@ jobs:
         run: uv run ty check
 
   test:
-    name: Tests
-    runs-on: ubuntu-latest
+    name: Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -57,3 +63,39 @@ jobs:
 
       - name: Run tests
         run: uv run pytest tests/ --ignore=tests/test_webapp_e2e.py -v
+
+  version-check:
+    name: Version Bump Check
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+
+      - name: Get PR version
+        id: pr_version
+        run: |
+          PR_VERSION=$(grep '^version = ' pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$PR_VERSION" >> $GITHUB_OUTPUT
+          echo "PR version: $PR_VERSION"
+
+      - name: Checkout main branch
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          path: main-branch
+
+      - name: Get main version
+        id: main_version
+        run: |
+          MAIN_VERSION=$(grep '^version = ' main-branch/pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$MAIN_VERSION" >> $GITHUB_OUTPUT
+          echo "Main version: $MAIN_VERSION"
+
+      - name: Check version was bumped
+        run: |
+          if [ "${{ steps.pr_version.outputs.version }}" = "${{ steps.main_version.outputs.version }}" ]; then
+            echo "::error::Version in pyproject.toml (${{ steps.pr_version.outputs.version }}) has not been bumped from main (${{ steps.main_version.outputs.version }}). Please update the version before merging."
+            exit 1
+          fi
+          echo "✅ Version bumped: ${{ steps.main_version.outputs.version }} → ${{ steps.pr_version.outputs.version }}"

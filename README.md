@@ -1,6 +1,8 @@
 # Copilot Session Tools
 
-Create a searchable archive of your VS Code and GitHub Copilot CLI chat history, with a web viewer similar to [simonw/claude-code-transcripts](https://github.com/simonw/claude-code-transcripts).
+[![CI](https://github.com/Arithmomaniac/copilot-session-tools/actions/workflows/ci.yml/badge.svg)](https://github.com/Arithmomaniac/copilot-session-tools/actions/workflows/ci.yml) [![PyPI](https://img.shields.io/pypi/v/copilot-session-tools)](https://pypi.org/project/copilot-session-tools/) [![Python](https://img.shields.io/pypi/pyversions/copilot-session-tools)](https://pypi.org/project/copilot-session-tools/) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+Create a searchable archiveof your VS Code and GitHub Copilot CLI chat history, with a web viewer similar to [simonw/claude-code-transcripts](https://github.com/simonw/claude-code-transcripts).
 
 This project was informed by and borrows patterns from several excellent open-source projects:
 

@@ -12,7 +12,7 @@ This project borrows patterns from several open-source projects:
 - tad-hq/universal-session-viewer: FTS5 full-text search design
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 from .database import Database, ParsedQuery, parse_search_query
 from .html_exporter import (
