@@ -110,10 +110,46 @@ jobs:
         with:
           repository-url: https://test.pypi.org/legacy/
 
+  smoke-test:
+    name: Smoke Test (TestPyPI)
+    runs-on: ubuntu-latest
+    needs: [publish-testpypi]
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install from TestPyPI
+        run: |
+          TAG_VERSION=${GITHUB_REF_NAME#v}
+          for i in 1 2 3 4 5; do
+            echo "Attempt $i: installing copilot-session-tools==${TAG_VERSION} from TestPyPI..."
+            pip install --index-url https://test.pypi.org/simple/ \
+              --extra-index-url https://pypi.org/simple/ \
+              "copilot-session-tools[cli]==${TAG_VERSION}" && break
+            echo "Package not available yet, waiting 15s..."
+            sleep 15
+          done
+
+      - name: Verify import works
+        run: python -c "import copilot_session_tools"
+
+      - name: Verify version matches tag
+        run: |
+          TAG_VERSION=${GITHUB_REF_NAME#v}
+          python -c "from copilot_session_tools import __version__; tag='${TAG_VERSION}'; assert __version__ == tag, f'{__version__} != {tag}'"
+
+      - name: Verify CLI works
+        run: copilot-session-tools --version
+
+      - name: Verify CLI help
+        run: copilot-session-tools --help
+
   publish-pypi:
     name: Publish to PyPI
     runs-on: ubuntu-latest
-    needs: [publish-testpypi]
+    needs: [smoke-test]
     environment: pypi
     steps:
       - name: Download build artifacts
