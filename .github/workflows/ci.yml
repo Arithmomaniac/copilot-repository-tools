@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   lint:
@@ -155,3 +156,11 @@ jobs:
           git tag -a "v${{ steps.version.outputs.version }}" -m "Release v${{ steps.version.outputs.version }}"
           git push origin "v${{ steps.version.outputs.version }}"
           echo "🏷️ Created and pushed tag v${{ steps.version.outputs.version }}"
+
+      - name: Trigger release workflow
+        if: steps.check_tag.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run release.yml --field tag="v${{ steps.version.outputs.version }}"
+          echo "🚀 Triggered release workflow for v${{ steps.version.outputs.version }}"
