@@ -39,15 +39,30 @@ See [claude-plugins.dev](https://claude-plugins.dev) for browsing available skil
 
 ## Prerequisites
 
-- **CLI**: `copilot-session-tools` — installed via `uv` from `C:\_SRC\copilot-session-tools`
-- **Database**: `C:\_SRC\copilot-session-tools\copilot_chats.db` (run `stats` for current size/count)
-- **Run from repo root**: The CLI defaults to `./copilot_chats.db` in the current directory
+The `copilot-session-tools` CLI must be installed and available on PATH. The database is stored at `~/.copilot-session-tools/copilot_chats.db` by default.
 
-All commands below assume you `cd` to the repo first:
+### Step 0: Ensure CLI is installed
+
+Check if the CLI is available:
 
 ```powershell
-cd C:\_SRC\copilot-session-tools
+copilot-session-tools --help
 ```
+
+If the command is not found, install it using whichever package manager is available (in preference order):
+
+```bash
+# Option 1: uv (recommended — fast, isolated)
+uv tool install copilot-session-tools[all]
+
+# Option 2: pipx (isolated)
+pipx install copilot-session-tools[all]
+
+# Option 3: pip (global)
+pip install copilot-session-tools[all]
+```
+
+The `[all]` extra includes both the CLI and web viewer dependencies.
 
 ## Favor CLI over Python
 
@@ -59,7 +74,7 @@ cd C:\_SRC\copilot-session-tools
 For direct SQL queries, use `sqlite3` on the database file rather than writing Python:
 
 ```powershell
-sqlite3 "C:\_SRC\copilot-session-tools\copilot_chats.db" "SELECT session_id, workspace_name, created_at FROM sessions ORDER BY created_at DESC LIMIT 10"
+sqlite3 "$HOME/.copilot-session-tools/copilot_chats.db" "SELECT session_id, workspace_name, created_at FROM sessions ORDER BY created_at DESC LIMIT 10"
 ```
 
 ## Instructions
@@ -281,23 +296,23 @@ When the CLI search doesn't support your query shape, use SQLite directly:
 
 ```powershell
 # Find sessions by workspace name
-sqlite3 "C:\_SRC\copilot-session-tools\copilot_chats.db" `
+sqlite3 "$HOME/.copilot-session-tools/copilot_chats.db" `
   "SELECT session_id, workspace_name, created_at FROM sessions WHERE workspace_name LIKE '%zts%' ORDER BY created_at DESC LIMIT 20"
 
 # Count messages per session (find long conversations)
-sqlite3 "C:\_SRC\copilot-session-tools\copilot_chats.db" `
+sqlite3 "$HOME/.copilot-session-tools/copilot_chats.db" `
   "SELECT s.session_id, s.workspace_name, COUNT(m.id) as msg_count FROM sessions s JOIN messages m ON s.session_id = m.session_id GROUP BY s.session_id ORDER BY msg_count DESC LIMIT 20"
 
 # Find sessions with tool invocations of a specific tool
-sqlite3 "C:\_SRC\copilot-session-tools\copilot_chats.db" `
+sqlite3 "$HOME/.copilot-session-tools/copilot_chats.db" `
   "SELECT DISTINCT s.session_id, s.workspace_name, s.created_at FROM sessions s JOIN messages m ON s.session_id = m.session_id JOIN tool_invocations ti ON m.id = ti.message_id WHERE ti.name LIKE '%build%' ORDER BY s.created_at DESC LIMIT 20"
 
 # Find file changes by path pattern
-sqlite3 "C:\_SRC\copilot-session-tools\copilot_chats.db" `
+sqlite3 "$HOME/.copilot-session-tools/copilot_chats.db" `
   "SELECT DISTINCT s.session_id, s.workspace_name, fc.path FROM sessions s JOIN messages m ON s.session_id = m.session_id JOIN file_changes fc ON m.id = fc.message_id WHERE fc.path LIKE '%Dockerfile%' ORDER BY s.created_at DESC LIMIT 20"
 
 # Find command runs
-sqlite3 "C:\_SRC\copilot-session-tools\copilot_chats.db" `
+sqlite3 "$HOME/.copilot-session-tools/copilot_chats.db" `
   "SELECT s.session_id, cr.command, cr.status FROM sessions s JOIN messages m ON s.session_id = m.session_id JOIN command_runs cr ON m.id = cr.message_id WHERE cr.command LIKE '%az pipelines%' ORDER BY cr.timestamp DESC LIMIT 20"
 ```
 

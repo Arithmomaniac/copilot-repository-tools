@@ -68,16 +68,20 @@ git push origin <branch>
 # Create PR targeting main
 ```
 
-CI enforces that every PR bumps the version. Once approved and merged:
+CI enforces that PRs bump the version when package-affecting files change
+(`src/`, `pyproject.toml`, `README.md`, `LICENSE`, `CHANGELOG.md`).
+PRs that only change tests, CI config, docs, or skills skip the version check.
+Once approved and merged:
 
 ### 4. What Happens Automatically
 
 1. **CI runs** — Lint, type check, and tests on Ubuntu + Windows
 2. **Auto-tag** — CI reads the version from `pyproject.toml` and creates git tag `vX.Y.Z`
-3. **Release pipeline triggers** — The tag triggers `release.yml`:
+3. **Release pipeline triggers** — CI dispatches `release.yml` via `workflow_dispatch`:
    - Lint & test (release validation)
    - Build wheel + sdist
    - Publish to TestPyPI
+   - **Smoke test** — Installs from TestPyPI and verifies import, version, and CLI
    - Publish to PyPI
    - Create GitHub Release with auto-generated notes
 
@@ -102,7 +106,7 @@ This project follows [Semantic Versioning](https://semver.org/):
 - **MINOR** (0.X.0): New features, backward-compatible
 - **PATCH** (0.0.X): Bug fixes, backward-compatible
 
-The CI enforces that every PR to `main` must bump the version.
+The CI enforces that PRs to `main` must bump the version when package-affecting files change.
 
 ## Troubleshooting
 

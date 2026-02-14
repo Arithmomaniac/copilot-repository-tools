@@ -39,6 +39,23 @@ if sys.platform == "win32":
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # ty: ignore[call-non-callable]
 
+
+def _default_db_path() -> Path:
+    """Return the default database path: ~/.copilot-session-tools/copilot_chats.db"""
+    return Path.home() / ".copilot-session-tools" / "copilot_chats.db"
+
+
+_DEFAULT_DB = _default_db_path()
+
+
+def _ensure_db_exists(db: Path) -> None:
+    """Check that the database file exists, with a friendly error if not."""
+    if not db.exists():
+        typer.echo(f"Error: Database not found at '{db}'.", err=True)
+        typer.echo("Run 'copilot-session-tools scan' first to create the database.", err=True)
+        raise typer.Exit(code=2)
+
+
 app = typer.Typer(
     name="copilot-session-tools",
     help="Create a searchable archive of VS Code GitHub Copilot chats.",
@@ -97,7 +114,7 @@ def scan(
             "-d",
             help="Path to SQLite database file.",
         ),
-    ] = Path("copilot_chats.db"),
+    ] = _DEFAULT_DB,
     storage_path: Annotated[
         list[Path] | None,
         typer.Option(
@@ -153,6 +170,7 @@ def scan(
         console.print("[red]Error: edition must be 'stable', 'insider', or 'both'[/red]")
         raise typer.Exit(1)
 
+    db.parent.mkdir(parents=True, exist_ok=True)
     database = Database(db)
 
     # Determine storage paths
@@ -271,9 +289,8 @@ def search(
             "--db",
             "-d",
             help="Path to SQLite database file.",
-            exists=True,
         ),
-    ] = Path("copilot_chats.db"),
+    ] = _DEFAULT_DB,
     limit: Annotated[
         int,
         typer.Option(
@@ -388,6 +405,7 @@ def search(
     Use --full to show complete content instead of truncated snippets.
     Use --sort to sort by relevance (default) or date.
     """
+    _ensure_db_exists(db)
     if role and role not in ("user", "assistant"):
         console.print("[red]Error: role must be 'user' or 'assistant'[/red]")
         raise typer.Exit(1)
@@ -468,11 +486,11 @@ def stats(
             "--db",
             "-d",
             help="Path to SQLite database file.",
-            exists=True,
         ),
-    ] = Path("copilot_chats.db"),
+    ] = _DEFAULT_DB,
 ):
     """Show database statistics."""
+    _ensure_db_exists(db)
     database = Database(db)
     stats_data = database.get_stats()
 
@@ -511,9 +529,8 @@ def export(
             "--db",
             "-d",
             help="Path to SQLite database file.",
-            exists=True,
         ),
-    ] = Path("copilot_chats.db"),
+    ] = _DEFAULT_DB,
     output: Annotated[
         str,
         typer.Option(
@@ -524,6 +541,7 @@ def export(
     ] = "-",
 ):
     """Export the database as JSON."""
+    _ensure_db_exists(db)
     database = Database(db)
     json_data = database.export_json()
 
@@ -542,9 +560,8 @@ def export_markdown(
             "--db",
             "-d",
             help="Path to SQLite database file.",
-            exists=True,
         ),
-    ] = Path("copilot_chats.db"),
+    ] = _DEFAULT_DB,
     output_dir: Annotated[
         Path,
         typer.Option(
@@ -600,6 +617,7 @@ def export_markdown(
     - Tool call summaries in italics
     - Thinking block notices in italics (content omitted)
     """
+    _ensure_db_exists(db)
     database = Database(db)
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -651,9 +669,8 @@ def export_html(
             "--db",
             "-d",
             help="Path to SQLite database file.",
-            exists=True,
         ),
-    ] = Path("copilot_chats.db"),
+    ] = _DEFAULT_DB,
     output_dir: Annotated[
         Path,
         typer.Option(
@@ -686,6 +703,7 @@ def export_html(
     copy buttons, AJAX). The HTML is self-contained with no external
     dependencies.
     """
+    _ensure_db_exists(db)
     database = Database(db)
 
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -733,11 +751,12 @@ def import_json(
             "-d",
             help="Path to SQLite database file.",
         ),
-    ] = Path("copilot_chats.db"),
+    ] = _DEFAULT_DB,
 ):
     """Import sessions from a JSON file."""
     import json
 
+    db.parent.mkdir(parents=True, exist_ok=True)
     database = Database(db)
 
     with json_file.open(encoding="utf-8") as f:
@@ -792,9 +811,8 @@ def rebuild(
             "--db",
             "-d",
             help="Path to SQLite database file.",
-            exists=True,
         ),
-    ] = Path("copilot_chats.db"),
+    ] = _DEFAULT_DB,
     verbose: Annotated[
         bool,
         typer.Option(
@@ -813,6 +831,7 @@ def rebuild(
     Use this after schema changes to regenerate all derived data without needing
     to re-scan the original VS Code storage.
     """
+    _ensure_db_exists(db)
     database = Database(db)
 
     # Check if there are any raw sessions to rebuild from
@@ -850,11 +869,10 @@ def optimize(
             "--db",
             "-d",
             help="Path to SQLite database file.",
-            exists=True,
         ),
-    ] = Path("copilot_chats.db"),
+    ] = _DEFAULT_DB,
 ):
-    """Optimize the full-text search index for better query performance.
+    """Optimize the full-text search indexfor better query performance.
 
     This command merges FTS5 index segments, reducing fragmentation and
     improving search speed. Recommended to run periodically, especially
@@ -864,6 +882,7 @@ def optimize(
     1. Merges all FTS index segments into fewer, larger segments
     2. Runs an integrity check to verify index consistency
     """
+    _ensure_db_exists(db)
     database = Database(db)
 
     console.print("Optimizing FTS5 search index...")
@@ -893,9 +912,8 @@ def raw_json(
             "--db",
             "-d",
             help="Path to SQLite database file.",
-            exists=True,
         ),
-    ] = Path("copilot_chats.db"),
+    ] = _DEFAULT_DB,
     output: Annotated[
         Path | None,
         typer.Option(
@@ -921,6 +939,7 @@ def raw_json(
     This is useful for debugging, data recovery, or inspecting the original
     session data format.
     """
+    _ensure_db_exists(db)
     database = Database(db)
 
     raw_data = database.get_raw_json(session_id, prefer_file=not db_only)
@@ -943,7 +962,7 @@ def raw_json(
 
 @app.command()
 def web(
-    db: Annotated[Path, typer.Option("--db", "-d", help="Path to SQLite database file.")] = Path("copilot_chats.db"),
+    db: Annotated[Path, typer.Option("--db", "-d", help="Path to SQLite database file.")] = _DEFAULT_DB,
     host: Annotated[str, typer.Option("--host", "-H", help="Host to bind to.")] = "127.0.0.1",
     port: Annotated[int, typer.Option("--port", "-p", help="Port to bind to.")] = 5000,
     title: Annotated[str, typer.Option("--title", "-t", help="Title for the archive.")] = "Copilot Chat Archive",
@@ -957,10 +976,7 @@ def web(
         console.print("Install with: pip install copilot-session-tools[web]")
         raise typer.Exit(1) from err
 
-    if not db.exists():
-        console.print(f"[red]Database file '{db}' not found.[/red]")
-        console.print("Run 'copilot-session-tools scan' first to import chat sessions.")
-        raise typer.Exit(1)
+    _ensure_db_exists(db)
 
     database = Database(str(db))
     db_stats = database.get_stats()

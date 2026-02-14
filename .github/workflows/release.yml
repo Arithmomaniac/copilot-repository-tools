@@ -4,10 +4,19 @@ on:
   push:
     tags:
       - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g. v0.1.2)'
+        required: true
+        type: string
 
 permissions:
   contents: write
   id-token: write
+
+env:
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
   lint:
@@ -16,6 +25,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -43,6 +54,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -65,6 +78,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Install uv
         uses: astral-sh/setup-uv@v4
@@ -76,7 +91,7 @@ jobs:
 
       - name: Verify tag matches package version
         run: |
-          TAG_VERSION=${GITHUB_REF#refs/tags/v}
+          TAG_VERSION=${RELEASE_TAG#v}
           PKG_VERSION=$(grep '^version = ' pyproject.toml | head -1 | sed 's/version = "\(.*\)"/\1/')
           if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
             echo "::error::Tag version ($TAG_VERSION) does not match package version ($PKG_VERSION)"
@@ -122,7 +137,7 @@ jobs:
 
       - name: Install from TestPyPI
         run: |
-          TAG_VERSION=${GITHUB_REF_NAME#v}
+          TAG_VERSION=${RELEASE_TAG#v}
           for i in 1 2 3 4 5; do
             echo "Attempt $i: installing copilot-session-tools==${TAG_VERSION} from TestPyPI..."
             pip install --index-url https://test.pypi.org/simple/ \
@@ -137,7 +152,7 @@ jobs:
 
       - name: Verify version matches tag
         run: |
-          TAG_VERSION=${GITHUB_REF_NAME#v}
+          TAG_VERSION=${RELEASE_TAG#v}
           python -c "from copilot_session_tools import __version__; tag='${TAG_VERSION}'; assert __version__ == tag, f'{__version__} != {tag}'"
 
       - name: Verify CLI works
@@ -168,10 +183,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
           generate_release_notes: true
           draft: false
           prerelease: false

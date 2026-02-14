@@ -1,13 +1,14 @@
 """Tests for the CLI module."""
 
 import json
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 from typer.testing import CliRunner
 
 from copilot_session_tools import ChatMessage, ChatSession, Database, __version__
-from copilot_session_tools.cli import app
+from copilot_session_tools.cli import _default_db_path, _ensure_db_exists, app
 
 
 @pytest.fixture
@@ -438,3 +439,37 @@ class TestOptimizeCommand:
         result = runner.invoke(app, ["optimize", "--db", str(tmp_path / "nonexistent.db")])
         # Typer returns exit code 2 for validation errors (exists=True on file path)
         assert result.exit_code == 2
+
+
+class TestDefaultDbPath:
+    """Tests for _default_db_path() helper."""
+
+    def test_returns_path_in_home_directory(self):
+        """Default DB path should be under user's home directory."""
+        result = _default_db_path()
+        assert result.parent.parent == Path.home()
+        assert result.name == "copilot_chats.db"
+        assert result.parent.name == ".copilot-session-tools"
+
+    def test_returns_path_object(self):
+        """Should return a Path object, not a string."""
+        result = _default_db_path()
+        assert isinstance(result, Path)
+
+
+class TestEnsureDbExists:
+    """Tests for _ensure_db_exists() helper."""
+
+    def test_raises_exit_when_db_missing(self, tmp_path):
+        """Should raise typer.Exit when database doesn't exist."""
+        import typer
+
+        nonexistent = tmp_path / "nonexistent.db"
+        with pytest.raises(typer.Exit):
+            _ensure_db_exists(nonexistent)
+
+    def test_no_error_when_db_exists(self, tmp_path):
+        """Should not raise when database exists."""
+        existing = tmp_path / "test.db"
+        existing.touch()
+        _ensure_db_exists(existing)  # Should not raise

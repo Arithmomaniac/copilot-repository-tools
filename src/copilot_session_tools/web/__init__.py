@@ -36,14 +36,16 @@ def main():
     import sys
     from pathlib import Path
 
+    _default_db = str(Path.home() / ".copilot-session-tools" / "copilot_chats.db")
+
     parser = argparse.ArgumentParser(
         description="Start the Copilot Chat Archive web server",
     )
     parser.add_argument(
         "--db",
         "-d",
-        default="copilot_chats.db",
-        help="Path to SQLite database file (default: copilot_chats.db)",
+        default=_default_db,
+        help=f"Path to SQLite database file (default: {_default_db})",
     )
     parser.add_argument(
         "--host",
