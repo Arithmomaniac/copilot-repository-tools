@@ -75,7 +75,7 @@ class TestCLI:
     def test_stats_missing_db(self, runner, tmp_path):
         """Test stats command with missing database."""
         result = runner.invoke(app, ["stats", "--db", str(tmp_path / "missing.db")])
-        # Typer returns non-zero exit code for parameter validation errors (exists=True)
+        # _ensure_db_exists returns exit code 2 when DB is missing
         assert result.exit_code != 0
         assert "does not exist" in result.output or "not found" in result.output or "Invalid value" in result.output
 
@@ -373,7 +373,7 @@ class TestRebuildCommand:
     def test_rebuild_command_missing_db(self, runner, tmp_path):
         """Test rebuild command with non-existent database."""
         result = runner.invoke(app, ["rebuild", "--db", str(tmp_path / "nonexistent.db")])
-        # Typer returns exit code 2 for validation errors (exists=True on file path)
+        # _ensure_db_exists returns exit code 2 when DB is missing
         assert result.exit_code == 2
 
     def test_rebuild_command_empty_db(self, runner, tmp_path):
@@ -437,7 +437,7 @@ class TestOptimizeCommand:
     def test_optimize_command_missing_db(self, runner, tmp_path):
         """Test optimize command with non-existent database."""
         result = runner.invoke(app, ["optimize", "--db", str(tmp_path / "nonexistent.db")])
-        # Typer returns exit code 2 for validation errors (exists=True on file path)
+        # _ensure_db_exists returns exit code 2 when DB is missing
         assert result.exit_code == 2
 
 
