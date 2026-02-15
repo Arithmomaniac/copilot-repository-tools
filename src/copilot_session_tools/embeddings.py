@@ -10,7 +10,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    import numpy as np
     from sentence_transformers import SentenceTransformer
 
 # Embedding dimension for the default model (all-MiniLM-L6-v2)
@@ -22,7 +21,7 @@ DEFAULT_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 
 class EmbeddingGenerator:
     """Generate embeddings for text content using sentence-transformers.
-    
+
     This class manages loading and caching of the embedding model,
     and provides methods to generate embeddings for individual texts
     or batches of texts.
@@ -30,7 +29,7 @@ class EmbeddingGenerator:
 
     def __init__(self, model_name: str = DEFAULT_MODEL_NAME):
         """Initialize the embedding generator.
-        
+
         Args:
             model_name: Name of the sentence-transformers model to use.
                        Defaults to all-MiniLM-L6-v2 (384 dimensions).
@@ -40,10 +39,10 @@ class EmbeddingGenerator:
 
     def _load_model(self) -> SentenceTransformer:
         """Load the sentence-transformers model (lazy loading).
-        
+
         Returns:
             The loaded SentenceTransformer model.
-            
+
         Raises:
             ImportError: If sentence-transformers is not installed.
         """
@@ -51,10 +50,7 @@ class EmbeddingGenerator:
             try:
                 from sentence_transformers import SentenceTransformer
             except ImportError as e:
-                msg = (
-                    "sentence-transformers is required for vector search. "
-                    "Install with: pip install copilot-session-tools[vector]"
-                )
+                msg = "sentence-transformers is required for vector search. Install with: pip install copilot-session-tools[vector]"
                 raise ImportError(msg) from e
 
             self._model = SentenceTransformer(self.model_name)
@@ -62,10 +58,10 @@ class EmbeddingGenerator:
 
     def embed(self, text: str) -> list[float]:
         """Generate embedding for a single text.
-        
+
         Args:
             text: The text to embed.
-            
+
         Returns:
             List of floats representing the embedding vector.
         """
@@ -76,12 +72,12 @@ class EmbeddingGenerator:
 
     def embed_batch(self, texts: list[str], batch_size: int = 32, show_progress: bool = False) -> list[list[float]]:
         """Generate embeddings for multiple texts in batches.
-        
+
         Args:
             texts: List of texts to embed.
             batch_size: Number of texts to process in each batch.
             show_progress: Whether to show a progress bar.
-            
+
         Returns:
             List of embedding vectors, one per input text.
         """
@@ -98,13 +94,14 @@ class EmbeddingGenerator:
 
 def is_vector_search_available() -> bool:
     """Check if vector search dependencies are available.
-    
+
     Returns:
         True if both sqlite-vec and sentence-transformers are installed.
     """
     try:
         import sqlite_vec  # noqa: F401
         from sentence_transformers import SentenceTransformer  # noqa: F401
+
         return True
     except ImportError:
         return False

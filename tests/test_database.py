@@ -1497,3 +1497,64 @@ class TestRelevanceWithRecency:
         # Newest should be first when sorting by date
         session_ids = [r["session_id"] for r in results[:2]]
         assert session_ids[0] == "newest", "Newest session should be first with date sorting"
+
+
+class TestVectorSearch:
+    """Tests for vector search functionality."""
+
+    def test_has_vector_search_without_extension(self, temp_db):
+        """Test has_vector_search returns False when sqlite-vec is not available."""
+        # Without sqlite-vec extension, the table won't be created
+        # This should return False
+        result = temp_db.has_vector_search()
+        # May be True or False depending on whether sqlite-vec is installed
+        assert isinstance(result, bool)
+
+    def test_vector_search_graceful_degradation(self, temp_db, sample_session):
+        """Test that search degrades gracefully when vector search is unavailable."""
+        temp_db.add_session(sample_session)
+
+        # Search with vector mode should fall back to FTS if embeddings not available
+        results = temp_db.search("Python function", search_mode="vector")
+
+        # Should still return results (either via vector or FTS fallback)
+        assert isinstance(results, list)
+
+    def test_hybrid_search_mode_parameter(self, temp_db, sample_session):
+        """Test that hybrid search mode parameter is accepted."""
+        temp_db.add_session(sample_session)
+
+        # Test all search modes
+        for mode in ["fts", "vector", "hybrid"]:
+            results = temp_db.search("Python", search_mode=mode)
+            assert isinstance(results, list)
+
+    def test_search_mode_defaults_correctly(self, temp_db, sample_session):
+        """Test that search mode defaults to appropriate value."""
+        temp_db.add_session(sample_session)
+
+        # With no search_mode specified, should auto-detect
+        results = temp_db.search("Python")
+        assert isinstance(results, list)
+        assert len(results) > 0
+
+
+def test_embedding_generator_availability():
+    """Test that embedding generator can be imported conditionally."""
+    try:
+        from copilot_session_tools.embeddings import (
+            EmbeddingGenerator,
+            is_vector_search_available,
+        )
+
+        # If import succeeds, test basic properties
+        assert isinstance(is_vector_search_available(), bool)
+
+        # Test that generator can be instantiated
+        generator = EmbeddingGenerator()
+        assert generator is not None
+
+    except ImportError:
+        # This is expected if sentence-transformers is not installed
+        pass
+

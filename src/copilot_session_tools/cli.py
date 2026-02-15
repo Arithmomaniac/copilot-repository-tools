@@ -395,7 +395,7 @@ def search(
     - Date filters: start_date:2024-01-01 end_date:2024-12-31 (yyyy-mm-dd format, inclusive)
 
     Search modes:
-    
+
     \b
     - fts: Keyword-based full-text search (fast, exact matches)
     - vector: Semantic vector search (slower, meaning-based)
@@ -431,7 +431,7 @@ def search(
     if sort_by not in ("relevance", "date"):
         console.print("[red]Error: sort must be 'relevance' or 'date'[/red]")
         raise typer.Exit(1)
-    
+
     if search_mode and search_mode not in ("fts", "vector", "hybrid"):
         console.print("[red]Error: search-mode must be 'fts', 'vector', or 'hybrid'[/red]")
         raise typer.Exit(1)
@@ -912,45 +912,46 @@ def embed(
     ] = False,
 ):
     """Generate embeddings for vector search.
-    
+
     This command generates embeddings for all messages that don't have them yet.
     Embeddings enable semantic vector search that complements keyword-based search.
-    
+
     Requires: pip install copilot-session-tools[vector]
     """
     _ensure_db_exists(db)
     database = Database(db)
-    
+
     # Check if vector search is available
     if not database.has_vector_search():
         console.print("[red]Error: Vector search is not available.[/red]")
         console.print("Ensure sqlite-vec is installed: pip install copilot-session-tools[vector]")
         raise typer.Exit(1)
-    
+
     console.print("Generating embeddings for messages...")
     console.print(f"Batch size: {batch_size}")
-    
+
     try:
+
         def progress_callback(processed, total):
             if verbose or processed % 100 == 0:
                 console.print(f"  Embedded: {processed}/{total} messages")
-        
+
         result = database.populate_embeddings(
             batch_size=batch_size,
             progress_callback=progress_callback if verbose else None,
         )
-        
+
         console.print("\n[green]Embedding complete:[/green]")
         console.print(f"  Total messages: {result['total']}")
         console.print(f"  Newly embedded: {result['embedded']}")
-        
-    except ImportError:
+
+    except ImportError as e:
         console.print("[red]Error: sentence-transformers is not installed.[/red]")
         console.print("Install with: pip install copilot-session-tools[vector]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
     except Exception as e:
         console.print(f"[red]Error generating embeddings: {e}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
 
 @app.command()

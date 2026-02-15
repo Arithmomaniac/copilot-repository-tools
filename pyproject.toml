@@ -139,6 +139,9 @@ ignore = [
 "src/**/web/__init__.py" = [
     "T201",  # print found (startup messages)
 ]
+"src/**/database.py" = [
+    "S608",  # Possible SQL injection - false positive in _build_rrf_hybrid_search_query (limit is validated integer)
+]
 
 [tool.ty.environment]
 python-version = "3.12"

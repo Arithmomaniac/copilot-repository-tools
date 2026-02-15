@@ -210,9 +210,9 @@ def _build_rrf_hybrid_search_query(
     limit: int = 20,
 ) -> tuple[str, list]:
     """Build SQL query for hybrid search using Reciprocal Rank Fusion (RRF).
-    
+
     Combines FTS5 keyword search with vector similarity search using RRF scoring.
-    
+
     Args:
         fts_query: The FTS5 query string.
         query_embedding_bytes: The query embedding as bytes (FLOAT array format).
@@ -220,11 +220,12 @@ def _build_rrf_hybrid_search_query(
         weight_fts: Weight for FTS5 scores (0.0-1.0).
         weight_vec: Weight for vector scores (0.0-1.0).
         limit: Maximum number of results to return.
-        
+
     Returns:
         Tuple of (SQL query string, list of parameters).
     """
-    query = f"""
+    # S608: This is safe - limit is an integer parameter validated by the caller
+    query = f"""  # noqa: S608
         WITH vec_matches AS (
             SELECT message_id, ROW_NUMBER() OVER (ORDER BY distance) AS vec_rank
             FROM message_embeddings
@@ -266,17 +267,17 @@ def _build_rrf_hybrid_search_query(
         ORDER BY hybrid_score DESC
         LIMIT ?
     """
-    
+
     params = [
         query_embedding_bytes,  # vec0 MATCH parameter
-        fts_query,              # FTS5 MATCH parameter
-        k,                      # k for vector rank
-        k,                      # k for FTS rank
-        weight_vec,             # weight for vector score
-        weight_fts,             # weight for FTS score
-        limit,                  # final LIMIT
+        fts_query,  # FTS5 MATCH parameter
+        k,  # k for vector rank
+        k,  # k for FTS rank
+        weight_vec,  # weight for vector score
+        weight_fts,  # weight for FTS score
+        limit,  # final LIMIT
     ]
-    
+
     return query, params
 
 
@@ -556,20 +557,21 @@ class Database:
         conn = sqlite3.connect(str(self.db_path))
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
-        
+
         # Load sqlite-vec extension if available
         try:
             import sqlite_vec
-            conn.enable_load_extension(True)
+
+            conn.enable_load_extension(True)  # noqa: FBT003
             sqlite_vec.load(conn)
-            conn.enable_load_extension(False)
+            conn.enable_load_extension(False)  # noqa: FBT003
         except ImportError:
             # sqlite-vec not installed, vector search will be unavailable
             pass
-        except Exception:
+        except Exception:  # noqa: S110
             # Failed to load extension, but continue without it
             pass
-            
+
         try:
             yield conn
             conn.commit()
@@ -616,13 +618,13 @@ class Database:
             conn.executescript(self.RAW_SCHEMA)
             # Create derived tables
             conn.executescript(self.DERIVED_SCHEMA)
-            
+
             # Create vector embeddings table if sqlite-vec is available
             self._ensure_vector_table(conn)
 
     def _ensure_vector_table(self, conn: sqlite3.Connection):
         """Create the vector embeddings table if sqlite-vec is available.
-        
+
         Args:
             conn: Database connection.
         """
@@ -1299,7 +1301,7 @@ class Database:
         if search_mode is None:
             # Auto-detect: use hybrid if vector search available, otherwise FTS
             search_mode = "hybrid" if self.has_vector_search() else "fts"
-        
+
         # If hybrid or vector mode requested but not available, fall back to FTS
         if search_mode in ("hybrid", "vector") and not self.has_vector_search():
             search_mode = "fts"
@@ -1313,29 +1315,29 @@ class Database:
         if search_mode == "hybrid" and fts_query and include_messages:
             try:
                 from .embeddings import EmbeddingGenerator
-                
+
                 generator = EmbeddingGenerator()
                 query_embedding = generator.embed(fts_query)
-                query_embedding_bytes = struct.pack(f'{len(query_embedding)}f', *query_embedding)
-                
+                query_embedding_bytes = struct.pack(f"{len(query_embedding)}f", *query_embedding)
+
                 # Build hybrid search query using RRF
                 hybrid_query, hybrid_params = _build_rrf_hybrid_search_query(
                     fts_query=fts_query,
                     query_embedding_bytes=query_embedding_bytes,
                     limit=limit,
                 )
-                
+
                 with self._get_connection() as conn:
                     cursor = conn.cursor()
                     cursor.execute(hybrid_query, hybrid_params)
                     results = [dict(row) for row in cursor.fetchall()]
-                    
+
                 # Apply skip for pagination
                 if skip > 0:
                     results = results[skip:]
-                    
+
                 return results[:limit]
-                
+
             except (ImportError, RuntimeError):
                 # Fall back to FTS if embeddings fail
                 search_mode = "fts"
@@ -1988,7 +1990,7 @@ class Database:
 
     def has_vector_search(self) -> bool:
         """Check if vector search is available in this database.
-        
+
         Returns:
             True if the message_embeddings table exists and is accessible.
         """
@@ -2002,32 +2004,32 @@ class Database:
 
     def populate_embeddings(self, batch_size: int = 32, progress_callback=None) -> dict:
         """Generate embeddings for messages that don't have them yet.
-        
+
         This is an incremental operation - only generates embeddings for messages
         that haven't been embedded yet.
-        
+
         Args:
             batch_size: Number of messages to embed in each batch.
             progress_callback: Optional callable that receives (processed, total) counts.
-            
+
         Returns:
             Dictionary with embedding statistics.
-            
+
         Raises:
             ImportError: If vector search dependencies are not available.
             RuntimeError: If vector table does not exist.
         """
         from .embeddings import EmbeddingGenerator
-        
+
         if not self.has_vector_search():
             msg = "Vector search is not available. Ensure sqlite-vec is installed and the database schema is initialized."
             raise RuntimeError(msg)
-        
+
         generator = EmbeddingGenerator()
-        
+
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            
+
             # Get messages that don't have embeddings yet
             cursor.execute("""
                 SELECT m.id, m.content
@@ -2036,43 +2038,43 @@ class Database:
                 WHERE e.message_id IS NULL
                 ORDER BY m.id
             """)
-            
+
             messages_to_embed = cursor.fetchall()
             total_count = len(messages_to_embed)
-            
+
             if total_count == 0:
                 return {
                     "total": 0,
                     "embedded": 0,
                     "skipped": 0,
                 }
-            
+
             # Process in batches
             embedded_count = 0
             for i in range(0, total_count, batch_size):
-                batch = messages_to_embed[i:i + batch_size]
+                batch = messages_to_embed[i : i + batch_size]
                 message_ids = [row[0] for row in batch]
                 contents = [row[1] for row in batch]
-                
+
                 # Generate embeddings for this batch
                 embeddings = generator.embed_batch(contents, batch_size=batch_size, show_progress=False)
-                
+
                 # Store embeddings in database
-                for message_id, embedding in zip(message_ids, embeddings):
+                for message_id, embedding in zip(message_ids, embeddings, strict=True):
                     # Serialize embedding as bytes (FLOAT array format for sqlite-vec)
-                    embedding_bytes = struct.pack(f'{len(embedding)}f', *embedding)
+                    embedding_bytes = struct.pack(f"{len(embedding)}f", *embedding)
                     cursor.execute(
                         "INSERT INTO message_embeddings(message_id, embedding) VALUES (?, ?)",
                         (message_id, embedding_bytes),
                     )
-                
+
                 embedded_count += len(batch)
-                
+
                 if progress_callback:
                     progress_callback(embedded_count, total_count)
-            
+
             conn.commit()
-        
+
         return {
             "total": total_count,
             "embedded": embedded_count,
