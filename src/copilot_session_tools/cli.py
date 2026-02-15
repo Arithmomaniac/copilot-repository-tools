@@ -66,6 +66,9 @@ console = Console()
 # Number of threads for parallel file parsing
 PARSE_WORKERS = 4
 
+# Valid search modes for the search command
+VALID_SEARCH_MODES = ["fts", "vector", "hybrid"]
+
 
 def version_callback(value: bool):
     """Print version and exit."""
@@ -432,8 +435,8 @@ def search(
         console.print("[red]Error: sort must be 'relevance' or 'date'[/red]")
         raise typer.Exit(1)
 
-    if search_mode and search_mode not in ("fts", "vector", "hybrid"):
-        console.print("[red]Error: search-mode must be 'fts', 'vector', or 'hybrid'[/red]")
+    if search_mode and search_mode not in VALID_SEARCH_MODES:
+        console.print(f"[red]Error: search-mode must be one of: {', '.join(VALID_SEARCH_MODES)}[/red]")
         raise typer.Exit(1)
 
     # Handle search mode options

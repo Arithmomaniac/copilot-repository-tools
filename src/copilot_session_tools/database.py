@@ -223,8 +223,16 @@ def _build_rrf_hybrid_search_query(
 
     Returns:
         Tuple of (SQL query string, list of parameters).
+
+    Raises:
+        ValueError: If limit is not a positive integer.
     """
-    # S608: This is safe - limit is an integer parameter validated by the caller
+    # Validate limit parameter before using in SQL string
+    if not isinstance(limit, int) or limit <= 0:
+        msg = f"limit must be a positive integer, got {limit}"
+        raise ValueError(msg)
+
+    # S608: This is safe - limit is validated as a positive integer above
     query = f"""  # noqa: S608
         WITH vec_matches AS (
             SELECT message_id, ROW_NUMBER() OVER (ORDER BY distance) AS vec_rank
@@ -549,6 +557,7 @@ class Database:
             db_path: Path to the SQLite database file.
         """
         self.db_path = Path(db_path)
+        self._vector_search_available: bool | None = None  # Cache for has_vector_search
         self._ensure_schema()
 
     @contextmanager
@@ -1994,13 +2003,19 @@ class Database:
         Returns:
             True if the message_embeddings table exists and is accessible.
         """
+        # Cache the result since it doesn't change during object lifetime
+        if self._vector_search_available is not None:
+            return self._vector_search_available
+
         with self._get_connection() as conn:
             cursor = conn.cursor()
             try:
                 cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='message_embeddings'")
-                return cursor.fetchone() is not None
+                self._vector_search_available = cursor.fetchone() is not None
             except sqlite3.Error:
-                return False
+                self._vector_search_available = False
+
+        return self._vector_search_available
 
     def populate_embeddings(self, batch_size: int = 32, progress_callback=None) -> dict:
         """Generate embeddings for messages that don't have them yet.
