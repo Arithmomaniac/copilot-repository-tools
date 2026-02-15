@@ -66,6 +66,9 @@ console = Console()
 # Number of threads for parallel file parsing
 PARSE_WORKERS = 4
 
+# Valid search modes for the search command
+VALID_SEARCH_MODES = ["fts", "vector", "hybrid"]
+
 
 def version_callback(value: bool):
     """Print version and exit."""
@@ -375,6 +378,14 @@ def search(
             help="Sort results by relevance (default) or date.",
         ),
     ] = "relevance",
+    search_mode: Annotated[
+        str | None,
+        typer.Option(
+            "--search-mode",
+            "-m",
+            help="Search mode: fts (keyword), vector (semantic), or hybrid (both). Default: auto-detect.",
+        ),
+    ] = None,
 ):
     """Search chat messages in the database.
 
@@ -386,6 +397,14 @@ def search(
     - Field filters in query: role:user, role:assistant, workspace:name, title:name, repository:url (or repo:url)
     - Date filters: start_date:2024-01-01 end_date:2024-12-31 (yyyy-mm-dd format, inclusive)
 
+    Search modes:
+
+    \b
+    - fts: Keyword-based full-text search (fast, exact matches)
+    - vector: Semantic vector search (slower, meaning-based)
+    - hybrid: Combines both using Reciprocal Rank Fusion (best results)
+    - (default): Auto-detects hybrid if embeddings available, otherwise fts
+
     Examples:
 
     \b
@@ -395,6 +414,7 @@ def search(
       copilot-session-tools search "repo:github.com/owner/repo"
       copilot-session-tools search "start_date:2024-01-01 end_date:2024-06-30"
       copilot-session-tools search '"exact phrase"'
+      copilot-session-tools search "best practices" --search-mode hybrid
 
     Use --role to filter by user requests or assistant responses.
     Use --title to filter by session/workspace name.
@@ -404,6 +424,7 @@ def search(
     Use --tools-only or --files-only to search only specific content types.
     Use --full to show complete content instead of truncated snippets.
     Use --sort to sort by relevance (default) or date.
+    Use --search-mode to choose search strategy (fts, vector, or hybrid).
     """
     _ensure_db_exists(db)
     if role and role not in ("user", "assistant"):
@@ -412,6 +433,10 @@ def search(
 
     if sort_by not in ("relevance", "date"):
         console.print("[red]Error: sort must be 'relevance' or 'date'[/red]")
+        raise typer.Exit(1)
+
+    if search_mode and search_mode not in VALID_SEARCH_MODES:
+        console.print(f"[red]Error: search-mode must be one of: {', '.join(VALID_SEARCH_MODES)}[/red]")
         raise typer.Exit(1)
 
     # Handle search mode options
@@ -440,6 +465,7 @@ def search(
         session_title=title_filter,
         sort_by=sort_by,
         repository=repository_filter,
+        search_mode=search_mode,  # type: ignore[arg-type]
     )
 
     if not results:
@@ -859,6 +885,76 @@ def rebuild(
     console.print(f"  {stats['session_count']} sessions")
     console.print(f"  {stats['message_count']} messages")
     console.print(f"  {stats['workspace_count']} workspaces")
+
+
+@app.command()
+def embed(
+    db: Annotated[
+        Path,
+        typer.Option(
+            "--db",
+            "-d",
+            help="Path to SQLite database file.",
+        ),
+    ] = _DEFAULT_DB,
+    batch_size: Annotated[
+        int,
+        typer.Option(
+            "--batch-size",
+            "-b",
+            help="Number of messages to embed in each batch.",
+        ),
+    ] = 32,
+    verbose: Annotated[
+        bool,
+        typer.Option(
+            "--verbose",
+            "-v",
+            help="Show verbose output.",
+        ),
+    ] = False,
+):
+    """Generate embeddings for vector search.
+
+    This command generates embeddings for all messages that don't have them yet.
+    Embeddings enable semantic vector search that complements keyword-based search.
+
+    Requires: pip install copilot-session-tools[vector]
+    """
+    _ensure_db_exists(db)
+    database = Database(db)
+
+    # Check if vector search is available
+    if not database.has_vector_search():
+        console.print("[red]Error: Vector search is not available.[/red]")
+        console.print("Ensure sqlite-vec is installed: pip install copilot-session-tools[vector]")
+        raise typer.Exit(1)
+
+    console.print("Generating embeddings for messages...")
+    console.print(f"Batch size: {batch_size}")
+
+    try:
+
+        def progress_callback(processed, total):
+            if verbose or processed % 100 == 0:
+                console.print(f"  Embedded: {processed}/{total} messages")
+
+        result = database.populate_embeddings(
+            batch_size=batch_size,
+            progress_callback=progress_callback if verbose else None,
+        )
+
+        console.print("\n[green]Embedding complete:[/green]")
+        console.print(f"  Total messages: {result['total']}")
+        console.print(f"  Newly embedded: {result['embedded']}")
+
+    except ImportError as e:
+        console.print("[red]Error: sentence-transformers is not installed.[/red]")
+        console.print("Install with: pip install copilot-session-tools[vector]")
+        raise typer.Exit(1) from e
+    except Exception as e:
+        console.print(f"[red]Error generating embeddings: {e}[/red]")
+        raise typer.Exit(1) from e
 
 
 @app.command()

@@ -37,8 +37,12 @@ cli = [
 web = [
     "flask>=3.0.0",
 ]
+vector = [
+    "sqlite-vec>=0.1.1",
+    "sentence-transformers>=2.2.0",
+]
 all = [
-    "copilot-session-tools[cli,web]",
+    "copilot-session-tools[cli,web,vector]",
 ]
 
 [project.scripts]
@@ -134,6 +138,9 @@ ignore = [
 ]
 "src/**/web/__init__.py" = [
     "T201",  # print found (startup messages)
+]
+"src/**/database.py" = [
+    "S608",  # Possible SQL injection - false positive in _build_rrf_hybrid_search_query (limit is validated integer)
 ]
 
 [tool.ty.environment]
