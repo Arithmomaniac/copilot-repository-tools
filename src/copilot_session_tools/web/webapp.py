@@ -316,9 +316,9 @@ def create_app(
         search_snippets = {}  # session_id -> list of snippets with message links
 
         if query:
-            # Use FTS search with sort option
+            # Use FTS search with sort option (auto-detects hybrid search if available)
             # The db.search() returns results in the correct order based on sort_by
-            search_results = db.search(query, limit=100, sort_by=sort_by)
+            search_results = db.search(query, limit=100, sort_by=sort_by, search_mode=None)  # None = auto-detect
 
             # Group results by session and collect snippets
             # session_ids preserves the order from search results (for relevance sorting)

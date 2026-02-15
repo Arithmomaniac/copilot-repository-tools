@@ -40,6 +40,18 @@ from .scanner import (
     scan_chat_sessions,
 )
 
+# Optional embeddings module (available if vector extras installed)
+try:
+    from .embeddings import (
+        EMBEDDING_DIMENSION,  # noqa: F401
+        EmbeddingGenerator,  # noqa: F401
+        is_vector_search_available,  # noqa: F401
+    )
+
+    _HAS_EMBEDDINGS = True
+except ImportError:
+    _HAS_EMBEDDINGS = False
+
 __all__ = [
     # Scanner - Data models
     "ChatMessage",
@@ -70,3 +82,13 @@ __all__ = [
     "session_to_html",
     "session_to_markdown",
 ]
+
+# Add embeddings to __all__ if available
+if _HAS_EMBEDDINGS:
+    __all__.extend(
+        [
+            "EMBEDDING_DIMENSION",
+            "EmbeddingGenerator",
+            "is_vector_search_available",
+        ]
+    )

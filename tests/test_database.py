@@ -1557,4 +1557,3 @@ def test_embedding_generator_availability():
     except ImportError:
         # This is expected if sentence-transformers is not installed
         pass
-
