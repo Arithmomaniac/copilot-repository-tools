@@ -37,8 +37,12 @@ cli = [
 web = [
     "flask>=3.0.0",
 ]
+vector = [
+    "sqlite-vec>=0.1.1",
+    "sentence-transformers>=2.2.0",
+]
 all = [
-    "copilot-session-tools[cli,web]",
+    "copilot-session-tools[cli,web,vector]",
 ]
 
 [project.scripts]

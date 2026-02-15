@@ -13,11 +13,12 @@ import contextlib
 import json
 import re
 import sqlite3
+import struct
 import zlib
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 import orjson
 
@@ -198,6 +199,85 @@ def parse_search_query(query: str) -> ParsedQuery:
         start_date=start_date,
         end_date=end_date,
     )
+
+
+def _build_rrf_hybrid_search_query(
+    fts_query: str,
+    query_embedding_bytes: bytes,
+    k: int = 60,
+    weight_fts: float = 0.3,
+    weight_vec: float = 0.7,
+    limit: int = 20,
+) -> tuple[str, list]:
+    """Build SQL query for hybrid search using Reciprocal Rank Fusion (RRF).
+    
+    Combines FTS5 keyword search with vector similarity search using RRF scoring.
+    
+    Args:
+        fts_query: The FTS5 query string.
+        query_embedding_bytes: The query embedding as bytes (FLOAT array format).
+        k: RRF constant (typically 60).
+        weight_fts: Weight for FTS5 scores (0.0-1.0).
+        weight_vec: Weight for vector scores (0.0-1.0).
+        limit: Maximum number of results to return.
+        
+    Returns:
+        Tuple of (SQL query string, list of parameters).
+    """
+    query = f"""
+        WITH vec_matches AS (
+            SELECT message_id, ROW_NUMBER() OVER (ORDER BY distance) AS vec_rank
+            FROM message_embeddings
+            WHERE embedding MATCH ?
+            ORDER BY distance
+            LIMIT {limit * 2}
+        ),
+        fts_matches AS (
+            SELECT rowid AS message_id, ROW_NUMBER() OVER (ORDER BY rank) AS fts_rank
+            FROM messages_fts
+            WHERE messages_fts MATCH ?
+            ORDER BY rank
+            LIMIT {limit * 2}
+        ),
+        combined AS (
+            SELECT 
+                COALESCE(v.message_id, f.message_id) AS message_id,
+                COALESCE(1.0 / (? + v.vec_rank), 0.0) AS vector_score,
+                COALESCE(1.0 / (? + f.fts_rank), 0.0) AS fts_score
+            FROM vec_matches v
+            FULL OUTER JOIN fts_matches f ON v.message_id = f.message_id
+        )
+        SELECT 
+            m.id,
+            m.session_id,
+            m.message_index,
+            m.role,
+            m.content,
+            s.workspace_name,
+            s.custom_title,
+            s.created_at,
+            s.vscode_edition,
+            m.content as highlighted,
+            'message' as match_type,
+            (? * vector_score + ? * fts_score) AS hybrid_score
+        FROM combined c
+        JOIN messages m ON c.message_id = m.id
+        JOIN sessions s ON m.session_id = s.session_id
+        ORDER BY hybrid_score DESC
+        LIMIT ?
+    """
+    
+    params = [
+        query_embedding_bytes,  # vec0 MATCH parameter
+        fts_query,              # FTS5 MATCH parameter
+        k,                      # k for vector rank
+        k,                      # k for FTS rank
+        weight_vec,             # weight for vector score
+        weight_fts,             # weight for FTS score
+        limit,                  # final LIMIT
+    ]
+    
+    return query, params
 
 
 # SQL LIKE pattern to detect ISO timestamp format (e.g., "2025-01-15T10:30:00Z")
@@ -434,10 +514,18 @@ class Database:
         VALUES ('delete', old.id, old.content);
         INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
     END;
+    
+    -- Vector embeddings table for semantic search (using sqlite-vec)
+    -- This table is created only if sqlite-vec extension is available
+    -- CREATE VIRTUAL TABLE IF NOT EXISTS message_embeddings USING vec0(
+    --     message_id INTEGER PRIMARY KEY,
+    --     embedding FLOAT[384]
+    -- );
     """
 
     # List of derived tables that can be dropped and recreated
     DERIVED_TABLES: ClassVar[list[str]] = [
+        "message_embeddings",  # Vector table must be dropped before messages
         "messages_fts",  # FTS table must be dropped first
         "content_blocks",
         "command_runs",
@@ -468,6 +556,20 @@ class Database:
         conn = sqlite3.connect(str(self.db_path))
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
+        
+        # Load sqlite-vec extension if available
+        try:
+            import sqlite_vec
+            conn.enable_load_extension(True)
+            sqlite_vec.load(conn)
+            conn.enable_load_extension(False)
+        except ImportError:
+            # sqlite-vec not installed, vector search will be unavailable
+            pass
+        except Exception:
+            # Failed to load extension, but continue without it
+            pass
+            
         try:
             yield conn
             conn.commit()
@@ -514,6 +616,29 @@ class Database:
             conn.executescript(self.RAW_SCHEMA)
             # Create derived tables
             conn.executescript(self.DERIVED_SCHEMA)
+            
+            # Create vector embeddings table if sqlite-vec is available
+            self._ensure_vector_table(conn)
+
+    def _ensure_vector_table(self, conn: sqlite3.Connection):
+        """Create the vector embeddings table if sqlite-vec is available.
+        
+        Args:
+            conn: Database connection.
+        """
+        try:
+            cursor = conn.cursor()
+            # Check if sqlite-vec is loaded by trying to create a test vec0 table
+            cursor.execute("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS message_embeddings USING vec0(
+                    message_id INTEGER PRIMARY KEY,
+                    embedding FLOAT[384]
+                )
+            """)
+            conn.commit()
+        except sqlite3.OperationalError:
+            # sqlite-vec not available, skip vector table creation
+            pass
 
     def add_session(self, session: ChatSession, store_raw: bool = False) -> bool:
         """Add a chat session to the database.
@@ -1118,8 +1243,9 @@ class Database:
         repository: str | None = None,
         start_date: str | None = None,
         end_date: str | None = None,
+        search_mode: Literal["fts", "vector", "hybrid"] | None = None,
     ) -> list[dict]:
-        """Search messages using full-text search with field filtering.
+        """Search messages using full-text search with optional vector/hybrid search.
 
         Supports advanced query syntax:
         - Multiple words: "python function" → matches both words (AND logic)
@@ -1145,6 +1271,8 @@ class Database:
                         Can also be specified in query as 'start_date:yyyy-mm-dd'.
             end_date: Filter results on or before this date (yyyy-mm-dd format, inclusive).
                       Can also be specified in query as 'end_date:yyyy-mm-dd'.
+            search_mode: Search mode - 'fts', 'vector', or 'hybrid'. If None, defaults to
+                        'hybrid' when vector search is available, 'fts' otherwise.
 
         Returns:
             List of matching messages with session info.
@@ -1166,6 +1294,51 @@ class Database:
         # If no FTS query after parsing, we can't do FTS search
         # But we might still have field filters to apply
         fts_query = parsed.fts_query
+
+        # Determine search mode
+        if search_mode is None:
+            # Auto-detect: use hybrid if vector search available, otherwise FTS
+            search_mode = "hybrid" if self.has_vector_search() else "fts"
+        
+        # If hybrid or vector mode requested but not available, fall back to FTS
+        if search_mode in ("hybrid", "vector") and not self.has_vector_search():
+            search_mode = "fts"
+
+        # For hybrid/vector search, we need a query to embed
+        if search_mode in ("hybrid", "vector") and not fts_query:
+            # No content query to embed, fall back to FTS-only or filter-only
+            search_mode = "fts"
+
+        # Execute hybrid search if requested and available
+        if search_mode == "hybrid" and fts_query and include_messages:
+            try:
+                from .embeddings import EmbeddingGenerator
+                
+                generator = EmbeddingGenerator()
+                query_embedding = generator.embed(fts_query)
+                query_embedding_bytes = struct.pack(f'{len(query_embedding)}f', *query_embedding)
+                
+                # Build hybrid search query using RRF
+                hybrid_query, hybrid_params = _build_rrf_hybrid_search_query(
+                    fts_query=fts_query,
+                    query_embedding_bytes=query_embedding_bytes,
+                    limit=limit,
+                )
+                
+                with self._get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(hybrid_query, hybrid_params)
+                    results = [dict(row) for row in cursor.fetchall()]
+                    
+                # Apply skip for pagination
+                if skip > 0:
+                    results = results[skip:]
+                    
+                return results[:limit]
+                
+            except (ImportError, RuntimeError):
+                # Fall back to FTS if embeddings fail
+                search_mode = "fts"
 
         # Check if we have any filters to apply (even without FTS query)
         has_filters = effective_role or effective_title or effective_workspace or effective_repository or effective_edition or effective_start_date or effective_end_date
@@ -1812,6 +1985,99 @@ class Database:
                 return zlib.decompress(compressed_json)
 
             return None
+
+    def has_vector_search(self) -> bool:
+        """Check if vector search is available in this database.
+        
+        Returns:
+            True if the message_embeddings table exists and is accessible.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            try:
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='message_embeddings'")
+                return cursor.fetchone() is not None
+            except sqlite3.Error:
+                return False
+
+    def populate_embeddings(self, batch_size: int = 32, progress_callback=None) -> dict:
+        """Generate embeddings for messages that don't have them yet.
+        
+        This is an incremental operation - only generates embeddings for messages
+        that haven't been embedded yet.
+        
+        Args:
+            batch_size: Number of messages to embed in each batch.
+            progress_callback: Optional callable that receives (processed, total) counts.
+            
+        Returns:
+            Dictionary with embedding statistics.
+            
+        Raises:
+            ImportError: If vector search dependencies are not available.
+            RuntimeError: If vector table does not exist.
+        """
+        from .embeddings import EmbeddingGenerator
+        
+        if not self.has_vector_search():
+            msg = "Vector search is not available. Ensure sqlite-vec is installed and the database schema is initialized."
+            raise RuntimeError(msg)
+        
+        generator = EmbeddingGenerator()
+        
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # Get messages that don't have embeddings yet
+            cursor.execute("""
+                SELECT m.id, m.content
+                FROM messages m
+                LEFT JOIN message_embeddings e ON m.id = e.message_id
+                WHERE e.message_id IS NULL
+                ORDER BY m.id
+            """)
+            
+            messages_to_embed = cursor.fetchall()
+            total_count = len(messages_to_embed)
+            
+            if total_count == 0:
+                return {
+                    "total": 0,
+                    "embedded": 0,
+                    "skipped": 0,
+                }
+            
+            # Process in batches
+            embedded_count = 0
+            for i in range(0, total_count, batch_size):
+                batch = messages_to_embed[i:i + batch_size]
+                message_ids = [row[0] for row in batch]
+                contents = [row[1] for row in batch]
+                
+                # Generate embeddings for this batch
+                embeddings = generator.embed_batch(contents, batch_size=batch_size, show_progress=False)
+                
+                # Store embeddings in database
+                for message_id, embedding in zip(message_ids, embeddings):
+                    # Serialize embedding as bytes (FLOAT array format for sqlite-vec)
+                    embedding_bytes = struct.pack(f'{len(embedding)}f', *embedding)
+                    cursor.execute(
+                        "INSERT INTO message_embeddings(message_id, embedding) VALUES (?, ?)",
+                        (message_id, embedding_bytes),
+                    )
+                
+                embedded_count += len(batch)
+                
+                if progress_callback:
+                    progress_callback(embedded_count, total_count)
+            
+            conn.commit()
+        
+        return {
+            "total": total_count,
+            "embedded": embedded_count,
+            "skipped": 0,
+        }
 
     def optimize_fts(self) -> dict:
         """Optimize the FTS5 full-text search index for better query performance.
