@@ -63,6 +63,7 @@ dev = [
     "pytest-benchmark>=4.0.0",
     "ruff>=0.14.11",
     "ty>=0.0.12",
+    "pytest-regressions>=2.10.0",
 ]
 
 [tool.pytest.ini_options]
