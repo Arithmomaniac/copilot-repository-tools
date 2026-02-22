@@ -44,10 +44,7 @@ if sys.platform == "win32":
 
 def _default_db_path() -> Path:
     """Return the default database path: ~/.copilot/session-store.db"""
-    db_path = Path.home() / ".copilot" / "session-store.db"
-    if not db_path.exists():
-        raise FileNotFoundError(f"Session store database not found at {db_path}. Ensure the Copilot CLI is installed and has been used at least once.")
-    return db_path
+    return Path.home() / ".copilot" / "session-store.db"
 
 
 _DEFAULT_DB = Path.home() / ".copilot" / "session-store.db"
