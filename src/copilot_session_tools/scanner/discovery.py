@@ -331,6 +331,8 @@ def parse_session_file(file_info: SessionFileInfo) -> list[ChatSession]:
     Returns:
         List of ChatSession objects (may be multiple for vscdb files).
     """
+    sessions: list[ChatSession] = []
+
     if file_info.file_type == "json":
         session = _parse_chat_session_file(
             file_info.file_path,
@@ -338,10 +340,11 @@ def parse_session_file(file_info: SessionFileInfo) -> list[ChatSession]:
             file_info.workspace_path,
             file_info.vscode_edition,
         )
-        return [session] if session else []
+        if session:
+            sessions.append(session)
 
     elif file_info.file_type == "vscdb":
-        return list(
+        sessions = list(
             _parse_vscdb_file(
                 file_info.file_path,
                 file_info.workspace_name,
@@ -360,6 +363,12 @@ def parse_session_file(file_info: SessionFileInfo) -> list[ChatSession]:
             )
         else:
             session = _parse_cli_jsonl_file(file_info.file_path)
-        return [session] if session else []
+        if session:
+            sessions.append(session)
 
-    return []
+    # Stamp source_format based on how the session was parsed
+    source_format = "cli" if file_info.session_type == "cli" else file_info.file_type
+    for s in sessions:
+        s.source_format = source_format
+
+    return sessions

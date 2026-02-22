@@ -61,6 +61,68 @@ class TestCLISessionSnapshot:
         file_regression.check(html, fullpath=BASELINES_DIR / "cli.html", encoding="utf-8")
 
 
+_SESSION_STORE_DB = Path.home() / ".copilot" / "session-store.db"
+# Same session as the CLI fixture so enriched/unenriched snapshots are directly comparable
+_UNENRICHED_SESSION_ID = "01488532-ff4e-41c6-b137-5f75a48742d3"
+_session_store_exists = _SESSION_STORE_DB.exists()
+
+
+@pytest.mark.skipif(not _session_store_exists, reason="Session store DB not found")
+class TestCLIUnenrichedSnapshot:
+    """Snapshot test for unenriched CLI session rendering (built-in turns only)."""
+
+    @pytest.fixture(autouse=True)
+    def load_from_db(self):
+        import sqlite3
+
+        from copilot_session_tools.html_exporter import _get_jinja_env
+        from copilot_session_tools.scanner.models import ChatSession
+
+        conn = sqlite3.connect(str(_SESSION_STORE_DB))
+        conn.row_factory = sqlite3.Row
+        session_row = conn.execute("SELECT * FROM sessions WHERE id = ?", (_UNENRICHED_SESSION_ID,)).fetchone()
+        if not session_row:
+            conn.close()
+            pytest.skip(f"Session {_UNENRICHED_SESSION_ID} not in session store")
+
+        turn_rows = conn.execute(
+            "SELECT turn_index, user_message, assistant_response FROM turns WHERE session_id = ? ORDER BY turn_index",
+            (_UNENRICHED_SESSION_ID,),
+        ).fetchall()
+        conn.close()
+
+        self.turns = [dict(r) for r in turn_rows]
+        self.session = ChatSession(
+            session_id=_UNENRICHED_SESSION_ID,
+            workspace_name=session_row["repository"],
+            workspace_path=session_row["cwd"],
+            messages=[],
+            created_at=session_row["created_at"],
+            updated_at=session_row["updated_at"],
+            vscode_edition="cli",
+            custom_title=session_row["summary"],
+            type="cli",
+            source_format="cli",
+        )
+        self.env = _get_jinja_env()
+
+    def test_unenriched_html(self, file_regression):
+        # Count individual messages (matching how _get_builtin_session_as_chat_session works)
+        msg_count = sum((1 if t.get("user_message") else 0) + (1 if t.get("assistant_response") else 0) for t in self.turns)
+        template = self.env.get_template("session.html")
+        html = template.render(
+            title=self.session.custom_title or self.session.workspace_name or "Unenriched Session",
+            session=self.session,
+            message_count=msg_count,
+            first_user_prompt=None,
+            message_metadata={},
+            static=True,
+            is_enriched=False,
+            turns=self.turns,
+        )
+        file_regression.check(html, fullpath=BASELINES_DIR / "cli-unenriched.html", encoding="utf-8")
+
+
 # --- VS Code Session Snapshots ---
 
 # Discover all vscode-* fixture dirs and their session files

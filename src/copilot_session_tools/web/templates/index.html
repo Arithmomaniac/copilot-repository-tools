@@ -476,6 +476,28 @@ header .stats {
     }
 }
 
+.enrichment-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: 0.75em;
+    font-weight: 500;
+    background-color: var(--bg-tertiary);
+    color: var(--text-secondary);
+}
+
+.enrichment-badge.enriched {
+    background-color: #dafbe1;
+    color: #1a7f37;
+}
+
+@media (prefers-color-scheme: dark) {
+    .enrichment-badge.enriched {
+        background-color: #238636;
+        color: #dafbe1;
+    }
+}
+
 .no-results {
     text-align: center;
     color: var(--text-secondary);
@@ -735,6 +757,7 @@ footer a {
         </div>
         {% endif %}
 
+        {% if has_cst_tables %}
         <div class="refresh-actions">
             <form method="POST" action="/refresh">
                 <input type="hidden" name="full" value="false">
@@ -745,6 +768,7 @@ footer a {
                 <button type="submit" class="rebuild-btn" title="Re-import all sessions from scratch">🔨 Rebuild All</button>
             </form>
         </div>
+        {% endif %}
 
         {% if query %}
         <div class="search-info">
@@ -843,6 +867,11 @@ footer a {
                     <span>Created: {{ session.created_at | format_timestamp }}</span>
                     {% endif %}
                     <span class="edition-badge {{ session.vscode_edition }}">{{ session.vscode_edition }}</span>
+                    {% if session.is_enriched %}
+                    <span class="enrichment-badge enriched">✓ Enriched</span>
+                    {% else %}
+                    <span class="enrichment-badge">Basic</span>
+                    {% endif %}
                 </div>
                 {% if query and search_snippets and session.session_id in search_snippets %}
                 <div class="search-snippets">

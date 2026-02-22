@@ -101,8 +101,9 @@ class ChatSession:
     source_file_mtime: float | None = None  # File modification time for incremental refresh
     source_file_size: int | None = None  # File size in bytes for incremental refresh
     type: str = "vscode"  # 'vscode' or 'cli'
-    raw_json: bytes | None = None  # Original raw JSON bytes from source file
     repository_url: str | None = None  # Git remote URL for repository-scoped memories
+    parser_version: int = 1
+    source_format: str | None = None  # 'cli', 'json', 'jsonl', 'vscdb'
 
 
 @dataclass

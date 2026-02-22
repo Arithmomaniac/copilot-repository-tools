@@ -4,22 +4,18 @@ Schema design inspired by:
 - tad-hq/universal-session-viewer: FTS5 full-text search
 - jazzyalex/agent-sessions: SQLite indexing patterns
 
-The schema has two parts:
-1. raw_sessions - Stores compressed raw JSON as the source of truth for rebuilding
-2. Derived tables (sessions, messages, etc.) - Can be dropped and recreated from raw_sessions
+The database is ~/.copilot/session-store.db which already has built-in tables
+(sessions, turns, checkpoints, session_files, session_refs, search_index,
+schema_version) managed by Copilot CLI. We add our own cst_* tables alongside.
 """
 
-import contextlib
 import json
 import re
 import sqlite3
-import zlib
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar
-
-import orjson
 
 
 @dataclass
@@ -273,6 +269,8 @@ _SORT_ORDER_CLAUSES = {
     "date": "ORDER BY s.created_at DESC",
 }
 
+from datetime import UTC
+
 from .markdown_exporter import message_to_markdown
 from .scanner import (
     ChatMessage,
@@ -281,8 +279,116 @@ from .scanner import (
     ContentBlock,
     FileChange,
     ToolInvocation,
-    _extract_session_from_dict,
 )
+
+CST_SCHEMA_VERSION = 1
+
+CST_SCHEMA = """
+CREATE TABLE IF NOT EXISTS cst_schema_version (
+    version INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS cst_sessions (
+    session_id TEXT PRIMARY KEY,
+    workspace_name TEXT,
+    workspace_path TEXT,
+    created_at TEXT,
+    updated_at TEXT,
+    source_file TEXT,
+    vscode_edition TEXT DEFAULT 'stable',
+    custom_title TEXT,
+    requester_username TEXT,
+    responder_username TEXT,
+    source_file_mtime REAL,
+    source_file_size INTEGER,
+    type TEXT DEFAULT 'vscode',
+    repository_url TEXT,
+    parser_version INTEGER NOT NULL DEFAULT 1,
+    source_format TEXT
+);
+
+CREATE TABLE IF NOT EXISTS cst_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL REFERENCES cst_sessions(session_id) ON DELETE CASCADE,
+    message_index INTEGER NOT NULL,
+    role TEXT NOT NULL,
+    content TEXT,
+    timestamp TEXT,
+    cached_markdown TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_cst_messages_session ON cst_messages(session_id);
+
+CREATE TABLE IF NOT EXISTS cst_tool_invocations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id INTEGER NOT NULL REFERENCES cst_messages(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    input TEXT,
+    result TEXT,
+    status TEXT,
+    start_time INTEGER,
+    end_time INTEGER,
+    source_type TEXT,
+    invocation_message TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_cst_tool_invocations_message ON cst_tool_invocations(message_id);
+
+CREATE TABLE IF NOT EXISTS cst_file_changes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id INTEGER NOT NULL REFERENCES cst_messages(id) ON DELETE CASCADE,
+    path TEXT NOT NULL,
+    diff TEXT,
+    content TEXT,
+    explanation TEXT,
+    language_id TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_cst_file_changes_message ON cst_file_changes(message_id);
+
+CREATE TABLE IF NOT EXISTS cst_command_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id INTEGER NOT NULL REFERENCES cst_messages(id) ON DELETE CASCADE,
+    command TEXT NOT NULL,
+    title TEXT,
+    result TEXT,
+    status TEXT,
+    output TEXT,
+    timestamp INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_cst_command_runs_message ON cst_command_runs(message_id);
+
+CREATE TABLE IF NOT EXISTS cst_content_blocks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_id INTEGER NOT NULL REFERENCES cst_messages(id) ON DELETE CASCADE,
+    block_index INTEGER NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'text',
+    content TEXT,
+    description TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_cst_content_blocks_message ON cst_content_blocks(message_id);
+"""
+
+CST_FTS_SCHEMA = """
+CREATE VIRTUAL TABLE IF NOT EXISTS cst_messages_fts USING fts5(
+    content,
+    session_id UNINDEXED,
+    message_id UNINDEXED,
+    role UNINDEXED
+);
+
+CREATE TRIGGER IF NOT EXISTS cst_messages_ai AFTER INSERT ON cst_messages BEGIN
+    INSERT INTO cst_messages_fts(rowid, content, session_id, message_id, role)
+    VALUES (new.id, new.content, new.session_id, new.id, new.role);
+END;
+
+CREATE TRIGGER IF NOT EXISTS cst_messages_ad AFTER DELETE ON cst_messages BEGIN
+    DELETE FROM cst_messages_fts WHERE rowid = old.id;
+END;
+
+CREATE TRIGGER IF NOT EXISTS cst_messages_au AFTER UPDATE ON cst_messages BEGIN
+    DELETE FROM cst_messages_fts WHERE rowid = old.id;
+    INSERT INTO cst_messages_fts(rowid, content, session_id, message_id, role)
+    VALUES (new.id, new.content, new.session_id, new.id, new.role);
+END;
+"""
 
 
 class Database:
@@ -290,184 +396,51 @@ class Database:
 
     Uses FTS5 for full-text search (inspired by tad-hq/universal-session-viewer).
 
-    The database has a two-layer design:
-    1. raw_sessions table stores compressed raw JSON as the source of truth
-    2. Derived tables (sessions, messages, etc.) can be dropped and rebuilt
+    Adds cst_* tables alongside the built-in Copilot CLI tables
+    (sessions, turns, checkpoints, etc.) in ~/.copilot/session-store.db.
     """
 
-    # Schema for the raw data table - source of truth
-    RAW_SCHEMA = """
-    CREATE TABLE IF NOT EXISTS raw_sessions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        session_id TEXT UNIQUE NOT NULL,
-        raw_json_compressed BLOB,
-        workspace_name TEXT,
-        workspace_path TEXT,
-        source_file TEXT,
-        vscode_edition TEXT DEFAULT 'stable',
-        source_file_mtime REAL,
-        source_file_size INTEGER,
-        repository_url TEXT,
-        imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_raw_sessions_session_id ON raw_sessions(session_id);
-    CREATE INDEX IF NOT EXISTS idx_raw_sessions_workspace ON raw_sessions(workspace_name);
-    CREATE INDEX IF NOT EXISTS idx_raw_sessions_repository ON raw_sessions(repository_url);
-    """
-
-    # Schema for derived tables that can be dropped and recreated
-    DERIVED_SCHEMA = """
-    CREATE TABLE IF NOT EXISTS sessions (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        session_id TEXT UNIQUE NOT NULL,
-        workspace_name TEXT,
-        workspace_path TEXT,
-        created_at TEXT,
-        updated_at TEXT,
-        source_file TEXT,
-        vscode_edition TEXT DEFAULT 'stable',
-        custom_title TEXT,
-        requester_username TEXT,
-        responder_username TEXT,
-        imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        source_file_mtime REAL,
-        source_file_size INTEGER,
-        type TEXT DEFAULT 'vscode',
-        repository_url TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS messages (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        session_id TEXT NOT NULL,
-        message_index INTEGER NOT NULL,
-        role TEXT NOT NULL,
-        content TEXT NOT NULL,
-        timestamp TEXT,
-        cached_markdown TEXT,
-        FOREIGN KEY (session_id) REFERENCES sessions(session_id) ON DELETE CASCADE
-    );
-
-    -- Tool invocations table (from Arbuzov/copilot-chat-history types)
-    CREATE TABLE IF NOT EXISTS tool_invocations (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        message_id INTEGER NOT NULL,
-        name TEXT NOT NULL,
-        input TEXT,
-        result TEXT,
-        status TEXT,
-        start_time INTEGER,
-        end_time INTEGER,
-        source_type TEXT,
-        invocation_message TEXT,
-        FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
-    );
-
-    -- File changes table (from Arbuzov/copilot-chat-history types)
-    CREATE TABLE IF NOT EXISTS file_changes (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        message_id INTEGER NOT NULL,
-        path TEXT NOT NULL,
-        diff TEXT,
-        content TEXT,
-        explanation TEXT,
-        language_id TEXT,
-        FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
-    );
-
-    -- Command runs table (from Arbuzov/copilot-chat-history types)
-    CREATE TABLE IF NOT EXISTS command_runs (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        message_id INTEGER NOT NULL,
-        command TEXT NOT NULL,
-        title TEXT,
-        result TEXT,
-        status TEXT,
-        output TEXT,
-        timestamp INTEGER,
-        FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
-    );
-
-    -- Content blocks table for structured message content with kind (thinking, text, etc.)
-    CREATE TABLE IF NOT EXISTS content_blocks (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        message_id INTEGER NOT NULL,
-        block_index INTEGER NOT NULL,
-        kind TEXT NOT NULL DEFAULT 'text',
-        content TEXT NOT NULL,
-        description TEXT,
-        FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_sessions_workspace ON sessions(workspace_name);
-    CREATE INDEX IF NOT EXISTS idx_sessions_created ON sessions(created_at);
-    CREATE INDEX IF NOT EXISTS idx_sessions_repository ON sessions(repository_url);
-    CREATE INDEX IF NOT EXISTS idx_sessions_edition ON sessions(vscode_edition);
-    CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id);
-    CREATE INDEX IF NOT EXISTS idx_messages_role ON messages(role);
-    CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
-    CREATE INDEX IF NOT EXISTS idx_messages_session_index ON messages(session_id, message_index);
-    CREATE INDEX IF NOT EXISTS idx_tool_invocations_message ON tool_invocations(message_id);
-    CREATE INDEX IF NOT EXISTS idx_file_changes_message ON file_changes(message_id);
-    CREATE INDEX IF NOT EXISTS idx_command_runs_message ON command_runs(message_id);
-    CREATE INDEX IF NOT EXISTS idx_content_blocks_message ON content_blocks(message_id);
-    
-    -- Full-text search for messages (FTS5 inspired by tad-hq/universal-session-viewer)
-    CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
-        content,
-        content='messages',
-        content_rowid='id'
-    );
-
-    -- Triggers to keep FTS in sync
-    CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
-        INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
-    END;
-
-    CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
-        INSERT INTO messages_fts(messages_fts, rowid, content) 
-        VALUES ('delete', old.id, old.content);
-    END;
-
-    CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
-        INSERT INTO messages_fts(messages_fts, rowid, content) 
-        VALUES ('delete', old.id, old.content);
-        INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
-    END;
-    """
-
-    # List of derived tables that can be dropped and recreated
+    # List of cst_* tables that can be dropped and recreated
     DERIVED_TABLES: ClassVar[list[str]] = [
-        "messages_fts",  # FTS table must be dropped first
-        "content_blocks",
-        "command_runs",
-        "file_changes",
-        "tool_invocations",
-        "messages",
-        "sessions",
+        "cst_messages_fts",  # FTS table must be dropped first
+        "cst_content_blocks",
+        "cst_command_runs",
+        "cst_file_changes",
+        "cst_tool_invocations",
+        "cst_messages",
+        "cst_sessions",
     ]
 
     # List of triggers that need to be dropped/recreated with derived tables
-    DERIVED_TRIGGERS: ClassVar[list[str]] = ["messages_ai", "messages_ad", "messages_au"]
+    DERIVED_TRIGGERS: ClassVar[list[str]] = [
+        "cst_messages_ai",
+        "cst_messages_ad",
+        "cst_messages_au",
+    ]
 
-    # Compression level for zlib (0-9, 6 is a good balance of speed and compression)
-    COMPRESSION_LEVEL = 1  # Fast compression; level 1 is 2x faster than 6 with similar ratio for JSON
-
-    def __init__(self, db_path: str | Path):
+    def __init__(self, db_path: str | Path, *, unenriched_only: bool = False):
         """Initialize the database connection.
 
         Args:
             db_path: Path to the SQLite database file.
+            unenriched_only: If True, disable cst_* table reads (use built-in tables only).
         """
         self.db_path = Path(db_path)
+        self.unenriched_only = unenriched_only
         self._ensure_schema()
+        self._check_builtin_schema_version()
 
     @contextmanager
     def _get_connection(self):
-        """Get a database connection context manager."""
+        """Get a database connection context manager.
+
+        Verifies this is a valid session-store.db by checking for the
+        built-in schema_version table before yielding the connection.
+        """
         conn = sqlite3.connect(str(self.db_path))
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA busy_timeout = 5000")
         try:
             yield conn
             conn.commit()
@@ -478,51 +451,106 @@ class Database:
             conn.close()
 
     def _ensure_schema(self):
-        """Ensure the database schema exists.
+        """Ensure the cst_* schema exists in the database.
 
-        With the new two-layer design:
-        - raw_sessions is the source of truth (never needs migration)
-        - Derived tables can be dropped and rebuilt, so no migrations needed
+        Creates cst_* tables and FTS triggers alongside the built-in
+        Copilot CLI tables. Does NOT create or touch built-in tables.
         """
         with self._get_connection() as conn:
-            # Check if raw_sessions exists and needs migration
             cursor = conn.cursor()
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='raw_sessions'")
-            raw_sessions_exists = cursor.fetchone() is not None
 
-            if raw_sessions_exists:
-                # Check if repository_url column exists, add if missing
-                cursor.execute("PRAGMA table_info(raw_sessions)")
-                columns = {row[1] for row in cursor.fetchall()}
-                if "repository_url" not in columns:
-                    cursor.execute("ALTER TABLE raw_sessions ADD COLUMN repository_url TEXT")
-                    conn.commit()
+            # Create cst_* tables
+            conn.executescript(CST_SCHEMA)
+            # Create FTS table and triggers
+            conn.executescript(CST_FTS_SCHEMA)
 
-            # Check if sessions table exists and needs migration
-            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='sessions'")
-            sessions_exists = cursor.fetchone() is not None
+            # Insert initial schema version if not exists
+            cursor.execute("SELECT COUNT(*) FROM cst_schema_version")
+            if cursor.fetchone()[0] == 0:
+                cursor.execute(
+                    "INSERT INTO cst_schema_version (version) VALUES (?)",
+                    (CST_SCHEMA_VERSION,),
+                )
 
-            if sessions_exists:
-                # Check if repository_url column exists in sessions, add if missing
-                cursor.execute("PRAGMA table_info(sessions)")
-                columns = {row[1] for row in cursor.fetchall()}
-                if "repository_url" not in columns:
-                    cursor.execute("ALTER TABLE sessions ADD COLUMN repository_url TEXT")
-                    conn.commit()
+    def _check_builtin_schema_version(self):
+        """Warn if the built-in session store schema has been updated beyond our known version."""
+        try:
+            with self._get_connection() as conn:
+                row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
+                if row and row[0] > 1:
+                    import warnings
 
-            # Create raw_sessions table first (source of truth) - uses IF NOT EXISTS
-            conn.executescript(self.RAW_SCHEMA)
-            # Create derived tables
-            conn.executescript(self.DERIVED_SCHEMA)
+                    warnings.warn(
+                        f"Session store schema version {row[0]} is newer than expected (1). Some features may not work correctly. Consider updating copilot-session-tools.",
+                        stacklevel=2,
+                    )
+        except Exception:  # noqa: S110
+            pass  # Table might not exist if DB is not a session-store.db
 
-    def add_session(self, session: ChatSession, store_raw: bool = False) -> bool:
+    def has_cst_tables(self) -> bool:
+        """Check if cst_* extension tables exist in the database."""
+        if self.unenriched_only:
+            return False
+        try:
+            with self._get_connection() as conn:
+                row = conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='cst_sessions'").fetchone()
+                return row[0] > 0
+        except Exception:
+            return False
+
+    def discover_sessions_needing_enrichment(self) -> list[dict]:
+        """Find CLI sessions needing enrichment by comparing built-in turns vs cst_messages.
+
+        Compares built-in turns count against cst_messages user-role count for each session.
+        Returns sessions where:
+        - No cst_sessions row exists (new, never enriched)
+        - Turn count differs (session has new messages since last enrichment)
+
+        Uses direct sqlite_master probe (not has_cst_tables()) so this works
+        correctly even when --unenriched-only is set — scan should still enrich.
+        """
+        with self._get_connection() as conn:
+            try:
+                # Check physical table existence, not the unenriched_only flag
+                cst_exists = conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='cst_sessions'").fetchone()[0] > 0
+
+                if cst_exists:
+                    rows = conn.execute("""
+                        SELECT
+                            s.id as session_id,
+                            COUNT(DISTINCT t.turn_index) as builtin_turns,
+                            (SELECT COUNT(*) FROM cst_messages cm
+                             WHERE cm.session_id = s.id AND cm.role = 'user') as cst_user_msgs,
+                            CASE WHEN cs.session_id IS NULL THEN 'new'
+                                 ELSE 'stale' END as status
+                        FROM sessions s
+                        LEFT JOIN turns t ON s.id = t.session_id
+                        LEFT JOIN cst_sessions cs ON s.id = cs.session_id
+                        GROUP BY s.id
+                        HAVING cst_user_msgs != builtin_turns
+                            OR cs.session_id IS NULL
+                    """).fetchall()
+                else:
+                    rows = conn.execute("""
+                        SELECT
+                            s.id as session_id,
+                            COUNT(DISTINCT t.turn_index) as builtin_turns,
+                            0 as cst_user_msgs,
+                            'new' as status
+                        FROM sessions s
+                        LEFT JOIN turns t ON s.id = t.session_id
+                        GROUP BY s.id
+                    """).fetchall()
+
+                return [dict(r) for r in rows]
+            except sqlite3.OperationalError:
+                return []
+
+    def add_session(self, session: ChatSession) -> bool:
         """Add a chat session to the database.
 
         Args:
             session: The ChatSession to add.
-            store_raw: If True, store the raw JSON in the database. If False (default),
-                      only store metadata and derived tables. Raw JSON can still be
-                      retrieved from the source file if it exists.
 
         Returns:
             True if the session was added, False if it already exists.
@@ -530,15 +558,15 @@ class Database:
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
-            # Check if session already exists in raw_sessions
-            cursor.execute("SELECT id FROM raw_sessions WHERE session_id = ?", (session.session_id,))
+            # Check if session already exists
+            cursor.execute("SELECT session_id FROM cst_sessions WHERE session_id = ?", (session.session_id,))
             if cursor.fetchone():
                 return False
 
-            self._add_session_impl(cursor, session, store_raw=store_raw)
+            self._add_session_impl(cursor, session)
             return True
 
-    def add_sessions_batch(self, sessions: list[ChatSession], store_raw: bool = False) -> tuple[int, int]:
+    def add_sessions_batch(self, sessions: list[ChatSession]) -> tuple[int, int]:
         """Add multiple sessions in a single transaction.
 
         Much faster than calling add_session() repeatedly as it uses
@@ -546,7 +574,6 @@ class Database:
 
         Args:
             sessions: List of ChatSession objects to add.
-            store_raw: If True, store the raw JSON in the database.
 
         Returns:
             Tuple of (added_count, skipped_count).
@@ -559,51 +586,26 @@ class Database:
 
             for session in sessions:
                 # Check if session already exists
-                cursor.execute("SELECT id FROM raw_sessions WHERE session_id = ?", (session.session_id,))
+                cursor.execute("SELECT session_id FROM cst_sessions WHERE session_id = ?", (session.session_id,))
                 if cursor.fetchone():
                     skipped += 1
                     continue
 
                 # Add the session within this transaction
-                self._add_session_impl(cursor, session, store_raw=store_raw)
+                self._add_session_impl(cursor, session)
                 added += 1
 
         return added, skipped
 
-    def _add_session_impl(self, cursor, session: ChatSession, store_raw: bool = False):
+    def _add_session_impl(self, cursor, session: ChatSession):
         """Internal implementation of add_session that uses an existing cursor.
 
         Used by add_sessions_batch for efficient batch inserts.
         """
-        # Store compressed raw JSON only if requested
-        compressed_json = None
-        if store_raw and session.raw_json:
-            compressed_json = zlib.compress(session.raw_json, level=self.COMPRESSION_LEVEL)
-
+        # Insert into cst_sessions table
         cursor.execute(
             """
-            INSERT INTO raw_sessions 
-            (session_id, raw_json_compressed, workspace_name, workspace_path, 
-             source_file, vscode_edition, source_file_mtime, source_file_size, repository_url)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                session.session_id,
-                compressed_json,
-                session.workspace_name,
-                session.workspace_path,
-                session.source_file,
-                session.vscode_edition,
-                session.source_file_mtime,
-                session.source_file_size,
-                session.repository_url,
-            ),
-        )
-
-        # Insert into derived sessions table
-        cursor.execute(
-            """
-            INSERT INTO sessions 
+            INSERT INTO cst_sessions 
             (session_id, workspace_name, workspace_path, created_at, updated_at, 
              source_file, vscode_edition, custom_title, requester_username, responder_username,
              source_file_mtime, source_file_size, type, repository_url)
@@ -638,7 +640,7 @@ class Database:
 
             cursor.execute(
                 """
-                INSERT INTO messages 
+                INSERT INTO cst_messages 
                 (session_id, message_index, role, content, timestamp, cached_markdown)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
@@ -653,17 +655,11 @@ class Database:
             )
             message_id = cursor.lastrowid
 
-            # Insert FTS entry
-            cursor.execute(
-                "INSERT INTO messages_fts (rowid, content) VALUES (?, ?)",
-                (message_id, msg.content),
-            )
-
             # Insert tool invocations
             for tool in msg.tool_invocations:
                 cursor.execute(
                     """
-                    INSERT INTO tool_invocations
+                    INSERT INTO cst_tool_invocations
                     (message_id, name, input, result, status, start_time, end_time, source_type, invocation_message)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
@@ -684,7 +680,7 @@ class Database:
             for change in msg.file_changes:
                 cursor.execute(
                     """
-                    INSERT INTO file_changes
+                    INSERT INTO cst_file_changes
                     (message_id, path, diff, content, explanation, language_id)
                     VALUES (?, ?, ?, ?, ?, ?)
                     """,
@@ -702,7 +698,7 @@ class Database:
             for cmd in msg.command_runs:
                 cursor.execute(
                     """
-                    INSERT INTO command_runs
+                    INSERT INTO cst_command_runs
                     (message_id, command, title, result, status, output, timestamp)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
@@ -721,7 +717,7 @@ class Database:
             for block_idx, block in enumerate(msg.content_blocks):
                 cursor.execute(
                     """
-                    INSERT INTO content_blocks
+                    INSERT INTO cst_content_blocks
                     (message_id, block_index, kind, content, description)
                     VALUES (?, ?, ?, ?, ?)
                     """,
@@ -734,24 +730,41 @@ class Database:
                     ),
                 )
 
-    def update_session(self, session: ChatSession, store_raw: bool = False):
+    def update_session(self, session: ChatSession):
         """Update an existing session or add it if it doesn't exist.
 
         Args:
             session: The ChatSession to update.
-            store_raw: If True, store the raw JSON in the database.
         """
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
-            # Delete from raw_sessions first (source of truth)
-            cursor.execute("DELETE FROM raw_sessions WHERE session_id = ?", (session.session_id,))
+            # Delete existing session and related data atomically
+            cursor.execute("DELETE FROM cst_messages_fts WHERE session_id = ?", (session.session_id,))
+            cursor.execute("DELETE FROM cst_messages WHERE session_id = ?", (session.session_id,))
+            cursor.execute("DELETE FROM cst_sessions WHERE session_id = ?", (session.session_id,))
 
-            # Delete existing session and messages (cascades)
-            cursor.execute("DELETE FROM sessions WHERE session_id = ?", (session.session_id,))
+            # Re-insert in the same transaction
+            self._add_session_impl(cursor, session)
 
-        # Add the session (this will add to both raw_sessions and derived tables)
-        self.add_session(session, store_raw=store_raw)
+    def get_sessions_needing_reparse(self, current_parser_version: int) -> list[dict]:
+        """Find cst_sessions with parser_version < current_parser_version."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cst_sessions'")
+            if cursor.fetchone() is None:
+                return []
+            rows = conn.execute(
+                "SELECT session_id, type, source_format, source_file, parser_version FROM cst_sessions WHERE parser_version < ?",
+                (current_parser_version,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def delete_cst_session(self, session_id: str) -> bool:
+        """Delete all cst_* data for a session. Returns True if session existed."""
+        with self._get_connection() as conn:
+            cursor = conn.execute("DELETE FROM cst_sessions WHERE session_id = ?", (session_id,))
+            return cursor.rowcount > 0
 
     def needs_update(self, session_id: str, file_mtime: float | None, file_size: int | None) -> bool:
         """Check if a session needs to be updated based on file metadata.
@@ -771,9 +784,8 @@ class Database:
         """
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            # Check raw_sessions table (source of truth)
             cursor.execute(
-                "SELECT source_file_mtime, source_file_size FROM raw_sessions WHERE session_id = ?",
+                "SELECT source_file_mtime, source_file_size FROM cst_sessions WHERE session_id = ?",
                 (session_id,),
             )
             row = cursor.fetchone()
@@ -813,7 +825,7 @@ class Database:
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT source_file_mtime, source_file_size FROM raw_sessions WHERE source_file = ?",
+                "SELECT source_file_mtime, source_file_size FROM cst_sessions WHERE source_file = ?",
                 (source_file,),
             )
             row = cursor.fetchone()
@@ -835,13 +847,13 @@ class Database:
         """
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT source_file, source_file_mtime, source_file_size FROM raw_sessions WHERE source_file IS NOT NULL")
+            cursor.execute("SELECT source_file, source_file_mtime, source_file_size FROM cst_sessions WHERE source_file IS NOT NULL")
             return {row[0]: (row[1], row[2]) for row in cursor.fetchall()}
 
     def _reconstruct_message(self, cursor, message_id: int, msg_row) -> ChatMessage:
         """Reconstruct a ChatMessage from database rows by querying related tables."""
         # Query tool_invocations for this message
-        cursor.execute("SELECT * FROM tool_invocations WHERE message_id = ?", (message_id,))
+        cursor.execute("SELECT * FROM cst_tool_invocations WHERE message_id = ?", (message_id,))
         tool_invocations = []
         for t in cursor.fetchall():
             t_keys = t.keys()
@@ -859,7 +871,7 @@ class Database:
             )
 
         # Query file_changes
-        cursor.execute("SELECT * FROM file_changes WHERE message_id = ?", (message_id,))
+        cursor.execute("SELECT * FROM cst_file_changes WHERE message_id = ?", (message_id,))
         file_changes = [
             FileChange(
                 path=f["path"],
@@ -872,7 +884,7 @@ class Database:
         ]
 
         # Query command_runs
-        cursor.execute("SELECT * FROM command_runs WHERE message_id = ?", (message_id,))
+        cursor.execute("SELECT * FROM cst_command_runs WHERE message_id = ?", (message_id,))
         command_runs = [
             CommandRun(
                 command=c["command"],
@@ -886,7 +898,7 @@ class Database:
         ]
 
         # Query content_blocks
-        cursor.execute("SELECT * FROM content_blocks WHERE message_id = ? ORDER BY block_index", (message_id,))
+        cursor.execute("SELECT * FROM cst_content_blocks WHERE message_id = ? ORDER BY block_index", (message_id,))
         content_blocks = [
             ContentBlock(
                 kind=b["kind"],
@@ -911,7 +923,62 @@ class Database:
         )
 
     def get_session(self, session_id: str) -> ChatSession | None:
-        """Get a session by its ID.
+        """Get a session by ID. Checks cst_sessions first (enriched), falls back to built-in (unenriched).
+
+        Args:
+            session_id: The session ID to look up.
+
+        Returns:
+            ChatSession if found, None otherwise.
+        """
+        # Try enriched path first
+        if self.has_cst_tables():
+            session = self._get_cst_session(session_id)
+            if session:
+                return session
+
+        # Fall back to built-in (unenriched)
+        return self._get_builtin_session_as_chat_session(session_id)
+
+    def _get_builtin_session_as_chat_session(self, session_id: str) -> ChatSession | None:
+        """Convert built-in session/turns data to a ChatSession.
+
+        Args:
+            session_id: The session ID to look up in built-in tables.
+
+        Returns:
+            ChatSession if found, None otherwise.
+        """
+        session_data = self.get_builtin_session(session_id)
+        if not session_data:
+            return None
+
+        turns = self.get_builtin_turns(session_id)
+        messages: list[ChatMessage] = []
+        for turn in turns:
+            user_msg = turn.get("user_message")
+            if user_msg:
+                messages.append(ChatMessage(role="user", content=user_msg))
+            assistant_msg = turn.get("assistant_response")
+            if assistant_msg:
+                messages.append(ChatMessage(role="assistant", content=assistant_msg))
+
+        return ChatSession(
+            session_id=session_id,
+            workspace_name=session_data.get("repository"),
+            workspace_path=session_data.get("cwd"),
+            messages=messages,
+            created_at=session_data.get("created_at"),
+            updated_at=session_data.get("updated_at"),
+            vscode_edition="cli",
+            custom_title=session_data.get("summary"),
+            type="cli",
+            repository_url=session_data.get("repository"),
+            source_format="cli",
+        )
+
+    def _get_cst_session(self, session_id: str) -> ChatSession | None:
+        """Get a session from cst_* tables by its ID.
 
         Args:
             session_id: The session ID to look up.
@@ -922,7 +989,7 @@ class Database:
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
-            cursor.execute("SELECT * FROM sessions WHERE session_id = ?", (session_id,))
+            cursor.execute("SELECT * FROM cst_sessions WHERE session_id = ?", (session_id,))
             row = cursor.fetchone()
             if not row:
                 return None
@@ -931,7 +998,7 @@ class Database:
             cursor.execute(
                 """
                 SELECT id, role, content, timestamp, cached_markdown 
-                FROM messages 
+                FROM cst_messages 
                 WHERE session_id = ? 
                 ORDER BY message_index
                 """,
@@ -1005,7 +1072,7 @@ class Database:
                 cursor.execute(
                     """
                     SELECT id, role, content, timestamp, cached_markdown, message_index
-                    FROM messages 
+                    FROM cst_messages 
                     WHERE session_id = ? AND message_index >= ? AND message_index <= ?
                     ORDER BY message_index
                     """,
@@ -1015,7 +1082,7 @@ class Database:
                 cursor.execute(
                     """
                     SELECT id, role, content, timestamp, cached_markdown, message_index
-                    FROM messages 
+                    FROM cst_messages 
                     WHERE session_id = ? 
                     ORDER BY message_index
                     """,
@@ -1057,52 +1124,109 @@ class Database:
         workspace_name: str | None = None,
         limit: int | None = None,
         offset: int = 0,
+        session_type: str | None = None,
     ) -> list[dict]:
-        """List sessions with optional filtering.
+        """List sessions from both built-in and cst_* tables.
+
+        Returns dicts with at minimum: session_id, title, session_type, start_time,
+        updated_at, is_enriched, source.  Also includes workspace_name, workspace_path,
+        vscode_edition, custom_title, repository_url, message_count, last_message_at,
+        first_user_prompt for backward compatibility with cst-sourced rows.
+
+        Deduplicates by session_id — cst_sessions takes precedence over built-in.
 
         Args:
-            workspace_name: Optional workspace name filter.
+            workspace_name: Optional workspace name filter (cst rows only).
             limit: Maximum number of sessions to return.
             offset: Number of sessions to skip.
+            session_type: Optional filter: 'cli', 'vscode', etc.
 
         Returns:
-            List of session info dictionaries.
+            List of session info dictionaries sorted by updated_at descending.
         """
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
+        results: dict[str, dict] = {}
 
-            query = """
-                SELECT 
-                    s.session_id,
-                    s.workspace_name,
-                    s.workspace_path,
-                    s.created_at,
-                    s.updated_at,
-                    s.vscode_edition,
-                    s.custom_title,
-                    s.repository_url,
-                    COUNT(m.id) as message_count,
-                    MAX(m.timestamp) as last_message_at,
-                    (SELECT content FROM messages m2 
-                     WHERE m2.session_id = s.session_id AND m2.role = 'user' 
-                     ORDER BY m2.message_index LIMIT 1) as first_user_prompt
-                FROM sessions s
-                LEFT JOIN messages m ON s.session_id = m.session_id
-            """
-            params = []
+        # 1. Read from cst_sessions if available
+        if self.has_cst_tables():
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
 
-            if workspace_name:
-                query += " WHERE s.workspace_name = ?"
-                params.append(workspace_name)
+                query = """
+                    SELECT 
+                        s.session_id,
+                        s.workspace_name,
+                        s.workspace_path,
+                        s.created_at,
+                        s.updated_at,
+                        s.vscode_edition,
+                        s.custom_title,
+                        s.repository_url,
+                        s.type as session_type,
+                        s.source_format,
+                        COUNT(m.id) as message_count,
+                        MAX(m.timestamp) as last_message_at,
+                        (SELECT content FROM cst_messages m2 
+                         WHERE m2.session_id = s.session_id AND m2.role = 'user' 
+                         ORDER BY m2.message_index LIMIT 1) as first_user_prompt
+                    FROM cst_sessions s
+                    LEFT JOIN cst_messages m ON s.session_id = m.session_id
+                """
+                conditions = []
+                params: list = []
 
-            query += " GROUP BY s.session_id ORDER BY last_message_at DESC, s.created_at DESC"
+                if workspace_name:
+                    conditions.append("s.workspace_name = ?")
+                    params.append(workspace_name)
+                if session_type:
+                    conditions.append("s.type = ?")
+                    params.append(session_type)
 
-            if limit:
-                query += " LIMIT ? OFFSET ?"
-                params.extend([limit, offset])
+                if conditions:
+                    query += " WHERE " + " AND ".join(conditions)
 
-            cursor.execute(query, params)
-            return [dict(row) for row in cursor.fetchall()]
+                query += " GROUP BY s.session_id ORDER BY last_message_at DESC, s.created_at DESC"
+
+                cursor.execute(query, params)
+                for row in cursor.fetchall():
+                    d = dict(row)
+                    d["title"] = d.get("custom_title") or d.get("workspace_name")
+                    d["start_time"] = d.get("created_at")
+                    d["is_enriched"] = True
+                    d["source"] = "cst"
+                    if not d.get("session_type"):
+                        d["session_type"] = d.get("source_format") or "vscode"
+                    results[d["session_id"]] = d
+
+        # 2. Read from built-in sessions (cli type only)
+        if session_type is None or session_type == "cli":
+            builtin = self.list_builtin_sessions(limit=10000)
+            for row in builtin:
+                sid = row["id"]
+                if sid not in results:  # cst_sessions takes precedence
+                    results[sid] = {
+                        "session_id": sid,
+                        "title": row.get("summary"),
+                        "session_type": "cli",
+                        "start_time": row.get("created_at"),
+                        "updated_at": row.get("updated_at"),
+                        "is_enriched": False,
+                        "source": "builtin",
+                        # Backward-compat fields
+                        "workspace_name": row.get("repository"),
+                        "workspace_path": row.get("cwd"),
+                        "created_at": row.get("created_at"),
+                        "vscode_edition": "cli",
+                        "custom_title": row.get("summary"),
+                        "repository_url": row.get("repository"),
+                        "message_count": 0,
+                        "last_message_at": row.get("updated_at"),
+                        "first_user_prompt": None,
+                    }
+
+        # Sort by updated_at desc, apply limit/offset
+        sorted_results = sorted(results.values(), key=lambda x: x.get("updated_at") or "", reverse=True)
+        effective_limit = limit if limit else len(sorted_results)
+        return sorted_results[offset : offset + effective_limit]
 
     def search(
         self,
@@ -1146,10 +1270,13 @@ class Database:
             end_date: Filter results on or before this date (yyyy-mm-dd format, inclusive).
                       Can also be specified in query as 'end_date:yyyy-mm-dd'.
 
+        Also queries the built-in search_index FTS table and merges results.
+
         Returns:
             List of matching messages with session info.
         """
         results = []
+        builtin_results: dict[str, dict] = {}
 
         # Parse the query to extract field filters and convert to FTS5 format
         parsed = parse_search_query(query)
@@ -1166,6 +1293,28 @@ class Database:
         # If no FTS query after parsing, we can't do FTS search
         # But we might still have field filters to apply
         fts_query = parsed.fts_query
+
+        # Search built-in search_index FTS table for unenriched results
+        if fts_query and include_messages:
+            try:
+                with self._get_connection() as conn:
+                    rows = conn.execute(
+                        "SELECT session_id, content, rank FROM search_index WHERE search_index MATCH ? ORDER BY rank LIMIT ?",
+                        (fts_query, limit * 2),
+                    ).fetchall()
+                    for row in rows:
+                        sid = row["session_id"]
+                        if sid not in builtin_results:
+                            builtin_results[sid] = {
+                                "session_id": sid,
+                                "content": (row["content"] or "")[:500],
+                                "highlighted": (row["content"] or "")[:500],
+                                "match_type": "builtin_search",
+                                "is_enriched": False,
+                                "rank": row["rank"],
+                            }
+            except Exception:  # noqa: S110
+                pass  # search_index might not exist
 
         # Check if we have any filters to apply (even without FTS query)
         has_filters = effective_role or effective_title or effective_workspace or effective_repository or effective_edition or effective_start_date or effective_end_date
@@ -1191,13 +1340,13 @@ class Database:
                             s.custom_title,
                             s.created_at,
                             s.vscode_edition,
-                            highlight(messages_fts, 0, '<mark>', '</mark>') as highlighted,
+                            highlight(cst_messages_fts, 0, '<mark>', '</mark>') as highlighted,
                             'message' as match_type,
                             rank
-                        FROM messages_fts
-                        JOIN messages m ON messages_fts.rowid = m.id
-                        JOIN sessions s ON m.session_id = s.session_id
-                        WHERE messages_fts MATCH ?
+                        FROM cst_messages_fts
+                        JOIN cst_messages m ON cst_messages_fts.rowid = m.id
+                        JOIN cst_sessions s ON m.session_id = s.session_id
+                        WHERE cst_messages_fts MATCH ?
                     """
                     params = [fts_query]
 
@@ -1229,8 +1378,8 @@ class Database:
 
                     # Note: order_clause is safe because it comes from _SORT_ORDER_CLAUSES whitelist
 
-                    message_query += f" {order_clause} LIMIT ? OFFSET ?"
-                    params.extend([limit, skip])
+                    message_query += f" {order_clause} LIMIT ?"
+                    params.append(limit + skip)
 
                     cursor.execute(message_query, params)
                     results.extend([dict(row) for row in cursor.fetchall()])
@@ -1250,8 +1399,8 @@ class Database:
                             s.vscode_edition,
                             m.content as highlighted,
                             'message' as match_type
-                        FROM messages m
-                        JOIN sessions s ON m.session_id = s.session_id
+                        FROM cst_messages m
+                        JOIN cst_sessions s ON m.session_id = s.session_id
                         WHERE 1=1
                     """
                     params = []
@@ -1282,8 +1431,8 @@ class Database:
                         message_query += f" AND {date_clause}"
                         params.extend(date_params)
 
-                    message_query += " ORDER BY s.created_at DESC LIMIT ? OFFSET ?"
-                    params.extend([limit, skip])
+                    message_query += " ORDER BY s.created_at DESC LIMIT ?"
+                    params.append(limit + skip)
 
                     cursor.execute(message_query, params)
                     results.extend([dict(row) for row in cursor.fetchall()])
@@ -1305,9 +1454,9 @@ class Database:
                         s.vscode_edition,
                         t.name || ': ' || COALESCE(t.input, '') as highlighted,
                         'tool_invocation' as match_type
-                    FROM tool_invocations t
-                    JOIN messages m ON t.message_id = m.id
-                    JOIN sessions s ON m.session_id = s.session_id
+                    FROM cst_tool_invocations t
+                    JOIN cst_messages m ON t.message_id = m.id
+                    JOIN cst_sessions s ON m.session_id = s.session_id
                     WHERE (t.name LIKE ? OR t.input LIKE ? OR t.result LIKE ?)
                 """
                 params = [f"%{search_terms}%", f"%{search_terms}%", f"%{search_terms}%"]
@@ -1355,9 +1504,9 @@ class Database:
                         s.vscode_edition,
                         f.path as highlighted,
                         'file_change' as match_type
-                    FROM file_changes f
-                    JOIN messages m ON f.message_id = m.id
-                    JOIN sessions s ON m.session_id = s.session_id
+                    FROM cst_file_changes f
+                    JOIN cst_messages m ON f.message_id = m.id
+                    JOIN cst_sessions s ON m.session_id = s.session_id
                     WHERE (f.path LIKE ? OR f.explanation LIKE ? OR f.diff LIKE ?)
                 """
                 params = [f"%{search_terms}%", f"%{search_terms}%", f"%{search_terms}%"]
@@ -1390,7 +1539,14 @@ class Database:
                 cursor.execute(file_query, params)
                 results.extend([dict(row) for row in cursor.fetchall()])
 
-        return results[:limit]
+        # Merge built-in search_index results that weren't covered by cst search
+        cst_session_ids = {r["session_id"] for r in results}
+        for sid, builtin_row in builtin_results.items():
+            if sid not in cst_session_ids:
+                results.append(builtin_row)
+
+        # Apply skip/limit to merged results for correct pagination
+        return results[skip : skip + limit]
 
     def get_workspaces(self) -> list[dict]:
         """Get all unique workspaces.
@@ -1407,7 +1563,7 @@ class Database:
                     workspace_path,
                     COUNT(*) as session_count,
                     MAX(created_at) as last_activity
-                FROM sessions
+                FROM cst_sessions
                 WHERE workspace_name IS NOT NULL
                 GROUP BY workspace_name, workspace_path
                 ORDER BY last_activity DESC
@@ -1429,7 +1585,7 @@ class Database:
                     repository_url,
                     COUNT(*) as session_count,
                     MAX(created_at) as last_activity
-                FROM sessions
+                FROM cst_sessions
                 WHERE repository_url IS NOT NULL
                 GROUP BY repository_url
                 ORDER BY last_activity DESC
@@ -1441,28 +1597,47 @@ class Database:
         """Get database statistics.
 
         Returns:
-            Dictionary with stats.
+            Dictionary with stats (combines enriched cst_* and built-in counts).
         """
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
-            cursor.execute("SELECT COUNT(*) FROM sessions")
-            session_count = cursor.fetchone()[0]
+            cst_session_count = 0
+            cst_message_count = 0
+            workspace_count = 0
+            editions: dict = {}
 
-            cursor.execute("SELECT COUNT(*) FROM messages")
-            message_count = cursor.fetchone()[0]
+            if self.has_cst_tables():
+                cursor.execute("SELECT COUNT(*) FROM cst_sessions")
+                cst_session_count = cursor.fetchone()[0]
 
-            cursor.execute("SELECT COUNT(DISTINCT workspace_name) FROM sessions")
-            workspace_count = cursor.fetchone()[0]
+                cursor.execute("SELECT COUNT(*) FROM cst_messages")
+                cst_message_count = cursor.fetchone()[0]
 
-            cursor.execute("SELECT vscode_edition, COUNT(*) FROM sessions GROUP BY vscode_edition")
-            editions = dict(cursor.fetchall())
+                cursor.execute("SELECT COUNT(DISTINCT workspace_name) FROM cst_sessions")
+                workspace_count = cursor.fetchone()[0]
+
+                cursor.execute("SELECT vscode_edition, COUNT(*) FROM cst_sessions GROUP BY vscode_edition")
+                editions = dict(cursor.fetchall())
+
+            # Count built-in sessions not in cst_*
+            builtin_only_count = 0
+            try:
+                if self.has_cst_tables():
+                    cursor.execute("SELECT COUNT(*) FROM sessions WHERE id NOT IN (SELECT session_id FROM cst_sessions)")
+                else:
+                    cursor.execute("SELECT COUNT(*) FROM sessions")
+                builtin_only_count = cursor.fetchone()[0]
+            except Exception:  # noqa: S110
+                pass
 
             return {
-                "session_count": session_count,
-                "message_count": message_count,
+                "session_count": cst_session_count + builtin_only_count,
+                "message_count": cst_message_count,
                 "workspace_count": workspace_count,
                 "editions": editions,
+                "enriched_count": cst_session_count,
+                "unenriched_count": builtin_only_count,
             }
 
     def export_json(self) -> str:
@@ -1495,324 +1670,6 @@ class Database:
                 )
         return json.dumps(sessions, indent=2)
 
-    def rebuild_derived_tables(self, progress_callback=None) -> dict:
-        """Drop and recreate all derived tables from raw_sessions.
-
-        This method allows the schema to evolve without migrations - simply
-        drop the derived tables and rebuild them from the raw JSON source.
-
-        Args:
-            progress_callback: Optional callable that receives (processed, total) counts.
-
-        Returns:
-            Dictionary with rebuild statistics.
-        """
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-
-            # Disable foreign keys temporarily for dropping tables
-            conn.execute("PRAGMA foreign_keys = OFF")
-
-            # Drop derived tables in order (FTS first, then dependent tables)
-            # Note: DERIVED_TABLES is a class constant with hardcoded table names,
-            # so f-string usage is safe. Validation is additional defense-in-depth.
-            for table in self.DERIVED_TABLES:
-                # Validate table name is alphanumeric with underscores only
-                if not all(c.isalnum() or c == "_" for c in table):
-                    raise ValueError(f"Invalid table name: {table}")
-                with contextlib.suppress(sqlite3.OperationalError):
-                    # FTS tables might need special handling
-                    cursor.execute(f"DROP TABLE IF EXISTS {table}")
-
-            # Drop triggers (validated against DERIVED_TRIGGERS list)
-            # Note: DERIVED_TRIGGERS is a class constant with hardcoded trigger names,
-            # so f-string usage is safe. Validation is additional defense-in-depth.
-            for trigger in self.DERIVED_TRIGGERS:
-                # Validate trigger name is alphanumeric with underscores only
-                if not all(c.isalnum() or c == "_" for c in trigger):
-                    raise ValueError(f"Invalid trigger name: {trigger}")
-                cursor.execute(f"DROP TRIGGER IF EXISTS {trigger}")
-
-            conn.commit()
-
-            # Recreate derived tables schema
-            conn.executescript(self.DERIVED_SCHEMA)
-            conn.execute("PRAGMA foreign_keys = ON")
-
-            # Count total raw sessions
-            cursor.execute("SELECT COUNT(*) FROM raw_sessions")
-            total_count = cursor.fetchone()[0]
-
-            # Rebuild from raw_sessions
-            cursor.execute("""
-                SELECT session_id, raw_json_compressed, workspace_name, workspace_path,
-                       source_file, vscode_edition, source_file_mtime, source_file_size
-                FROM raw_sessions
-            """)
-
-            processed = 0
-            errors = 0
-
-            for row in cursor.fetchall():
-                try:
-                    _session_id = row[0]  # Unused but kept for reference
-                    compressed_json = row[1]
-                    workspace_name = row[2]
-                    workspace_path = row[3]
-                    source_file = row[4]
-                    vscode_edition = row[5]
-                    source_file_mtime = row[6]
-                    source_file_size = row[7]
-
-                    # Get raw JSON: try source file first, then database
-                    raw_json = None
-                    if source_file:
-                        try:
-                            source_path = Path(source_file)
-                            if source_path.exists() and source_path.is_file():
-                                raw_json = source_path.read_bytes()
-                        except (OSError, PermissionError):
-                            pass
-
-                    if raw_json is None and compressed_json is not None:
-                        raw_json = zlib.decompress(compressed_json)
-
-                    if raw_json is None:
-                        # Cannot rebuild this session - no source available
-                        errors += 1
-                        processed += 1
-                        continue
-
-                    data = orjson.loads(raw_json)
-
-                    # Re-parse session from raw JSON
-                    session = _extract_session_from_dict(
-                        data,
-                        workspace_name=workspace_name,
-                        workspace_path=workspace_path,
-                        edition=vscode_edition,
-                        source_file=source_file,
-                        raw_json=raw_json,  # Keep raw JSON for consistency
-                    )
-
-                    if session:
-                        # Override metadata from raw_sessions table
-                        session.source_file_mtime = source_file_mtime
-                        session.source_file_size = source_file_size
-
-                        # Insert into derived tables only (not raw_sessions)
-                        self._insert_derived_session(conn, session)
-
-                    processed += 1
-
-                    if progress_callback:
-                        progress_callback(processed, total_count)
-
-                except (zlib.error, orjson.JSONDecodeError, KeyError, TypeError):
-                    # Log error for debugging, but continue processing other sessions
-                    # These errors can occur when raw JSON is malformed or cannot be parsed
-                    errors += 1
-                    processed += 1
-
-            conn.commit()
-
-        return {
-            "total": total_count,
-            "processed": processed,
-            "errors": errors,
-        }
-
-    def _insert_derived_session(self, conn, session: ChatSession):
-        """Insert a session into derived tables only (not raw_sessions).
-
-        This is an internal method used by rebuild_derived_tables.
-        """
-        cursor = conn.cursor()
-
-        # Insert into sessions table
-        cursor.execute(
-            """
-            INSERT INTO sessions 
-            (session_id, workspace_name, workspace_path, created_at, updated_at, 
-             source_file, vscode_edition, custom_title, requester_username, responder_username,
-             source_file_mtime, source_file_size, type, repository_url)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                session.session_id,
-                session.workspace_name,
-                session.workspace_path,
-                session.created_at,
-                session.updated_at,
-                session.source_file,
-                session.vscode_edition,
-                session.custom_title,
-                session.requester_username,
-                session.responder_username,
-                session.source_file_mtime,
-                session.source_file_size,
-                session.type,
-                session.repository_url,
-            ),
-        )
-
-        # Insert messages and associated data
-        for idx, msg in enumerate(session.messages):
-            # Generate cached markdown for this message
-            cached_md = message_to_markdown(
-                msg,
-                message_number=idx + 1,
-                include_diffs=True,
-                include_tool_inputs=True,
-            )
-
-            cursor.execute(
-                """
-                INSERT INTO messages 
-                (session_id, message_index, role, content, timestamp, cached_markdown)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    session.session_id,
-                    idx,
-                    msg.role,
-                    msg.content,
-                    msg.timestamp,
-                    cached_md,
-                ),
-            )
-            message_id = cursor.lastrowid
-
-            # Insert tool invocations
-            for tool in msg.tool_invocations:
-                cursor.execute(
-                    """
-                    INSERT INTO tool_invocations
-                    (message_id, name, input, result, status, start_time, end_time, source_type, invocation_message)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        message_id,
-                        tool.name,
-                        tool.input,
-                        tool.result,
-                        tool.status,
-                        tool.start_time,
-                        tool.end_time,
-                        tool.source_type,
-                        tool.invocation_message,
-                    ),
-                )
-
-            # Insert file changes
-            for change in msg.file_changes:
-                cursor.execute(
-                    """
-                    INSERT INTO file_changes
-                    (message_id, path, diff, content, explanation, language_id)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        message_id,
-                        change.path,
-                        change.diff,
-                        change.content,
-                        change.explanation,
-                        change.language_id,
-                    ),
-                )
-
-            # Insert command runs
-            for cmd in msg.command_runs:
-                cursor.execute(
-                    """
-                    INSERT INTO command_runs
-                    (message_id, command, title, result, status, output, timestamp)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        message_id,
-                        cmd.command,
-                        cmd.title,
-                        cmd.result,
-                        cmd.status,
-                        cmd.output,
-                        cmd.timestamp,
-                    ),
-                )
-
-            # Insert content blocks
-            for block_idx, block in enumerate(msg.content_blocks):
-                cursor.execute(
-                    """
-                    INSERT INTO content_blocks
-                    (message_id, block_index, kind, content, description)
-                    VALUES (?, ?, ?, ?, ?)
-                    """,
-                    (
-                        message_id,
-                        block_idx,
-                        block.kind,
-                        block.content,
-                        block.description,
-                    ),
-                )
-
-    def get_raw_session_count(self) -> int:
-        """Get the count of raw sessions stored in the database.
-
-        Returns:
-            Number of sessions in raw_sessions table.
-        """
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM raw_sessions")
-            return cursor.fetchone()[0]
-
-    def get_raw_json(self, session_id: str, prefer_file: bool = True) -> bytes | None:
-        """Get the raw JSON for a specific session.
-
-        By default, tries to read from the original source file first (if it exists
-        and is accessible), falling back to the compressed database copy. Set
-        prefer_file=False to always use the database copy.
-
-        Args:
-            session_id: The session ID to retrieve.
-            prefer_file: If True (default), try reading from source file first.
-                        If False, always use database copy.
-
-        Returns:
-            Raw JSON bytes if found, None otherwise.
-        """
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                "SELECT raw_json_compressed, source_file FROM raw_sessions WHERE session_id = ?",
-                (session_id,),
-            )
-            row = cursor.fetchone()
-            if not row:
-                return None
-
-            compressed_json = row[0]
-            source_file = row[1]
-
-            # Try reading from original file first
-            if prefer_file and source_file:
-                try:
-                    source_path = Path(source_file)
-                    if source_path.exists() and source_path.is_file():
-                        return source_path.read_bytes()
-                except (OSError, PermissionError):
-                    # Fall back to database copy on any file access error
-                    pass
-
-            # Fall back to database copy (if stored)
-            if compressed_json is not None:
-                return zlib.decompress(compressed_json)
-
-            return None
-
     def optimize_fts(self) -> dict:
         """Optimize the FTS5 full-text search index for better query performance.
 
@@ -1826,18 +1683,18 @@ class Database:
             cursor = conn.cursor()
 
             # Get segment count before optimization
-            cursor.execute("SELECT COUNT(*) FROM messages_fts_data")
+            cursor.execute("SELECT COUNT(*) FROM cst_messages_fts_data")
             segments_before = cursor.fetchone()[0]
 
             # Run FTS5 optimize command - merges all segments into one
-            cursor.execute("INSERT INTO messages_fts(messages_fts) VALUES('optimize')")
+            cursor.execute("INSERT INTO cst_messages_fts(cst_messages_fts) VALUES('optimize')")
 
             # Get segment count after optimization
-            cursor.execute("SELECT COUNT(*) FROM messages_fts_data")
+            cursor.execute("SELECT COUNT(*) FROM cst_messages_fts_data")
             segments_after = cursor.fetchone()[0]
 
             # Also run integrity check
-            cursor.execute("INSERT INTO messages_fts(messages_fts) VALUES('integrity-check')")
+            cursor.execute("INSERT INTO cst_messages_fts(cst_messages_fts) VALUES('integrity-check')")
 
             conn.commit()
 
@@ -1846,3 +1703,265 @@ class Database:
                 "segments_after": segments_after,
                 "optimized": True,
             }
+
+    def get_builtin_session(self, session_id: str) -> dict | None:
+        """Read a session from the built-in sessions table."""
+        try:
+            with self._get_connection() as conn:
+                row = conn.execute(
+                    "SELECT id, cwd, repository, branch, summary, created_at, updated_at FROM sessions WHERE id = ?",
+                    (session_id,),
+                ).fetchone()
+                return dict(row) if row else None
+        except sqlite3.OperationalError:
+            return None
+
+    def get_builtin_turns(self, session_id: str) -> list[dict]:
+        """Read turns from the built-in turns table for a session."""
+        try:
+            with self._get_connection() as conn:
+                rows = conn.execute(
+                    "SELECT turn_index, user_message, assistant_response FROM turns WHERE session_id = ? ORDER BY turn_index",
+                    (session_id,),
+                ).fetchall()
+                return [dict(r) for r in rows]
+        except sqlite3.OperationalError:
+            return []
+
+    def get_builtin_checkpoints(self, session_id: str) -> list[dict]:
+        """Read checkpoints from the built-in checkpoints table."""
+        try:
+            with self._get_connection() as conn:
+                rows = conn.execute(
+                    "SELECT checkpoint_number, title, overview, history, work_done, technical_details, "
+                    "important_files, next_steps FROM checkpoints WHERE session_id = ? ORDER BY checkpoint_number",
+                    (session_id,),
+                ).fetchall()
+                return [dict(r) for r in rows]
+        except sqlite3.OperationalError:
+            return []
+
+    def get_builtin_files(self, session_id: str) -> list[dict]:
+        """Read file references from the built-in session_files table."""
+        try:
+            with self._get_connection() as conn:
+                rows = conn.execute(
+                    "SELECT file_path, tool_name, turn_index, first_seen_at FROM session_files WHERE session_id = ?",
+                    (session_id,),
+                ).fetchall()
+                return [dict(r) for r in rows]
+        except sqlite3.OperationalError:
+            return []
+
+    def get_builtin_refs(self, session_id: str) -> list[dict]:
+        """Read refs from the built-in session_refs table."""
+        try:
+            with self._get_connection() as conn:
+                rows = conn.execute(
+                    "SELECT ref_type, ref_value, turn_index, created_at FROM session_refs WHERE session_id = ?",
+                    (session_id,),
+                ).fetchall()
+                return [dict(r) for r in rows]
+        except sqlite3.OperationalError:
+            return []
+
+    def list_builtin_sessions(self, limit: int = 100, offset: int = 0) -> list[dict]:
+        """List sessions from the built-in sessions table."""
+        try:
+            with self._get_connection() as conn:
+                rows = conn.execute(
+                    "SELECT id, cwd, repository, branch, summary, created_at, updated_at FROM sessions ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+                    (limit, offset),
+                ).fetchall()
+                return [dict(r) for r in rows]
+        except sqlite3.OperationalError:
+            return []
+
+    def count_builtin_turns(self, session_id: str) -> int:
+        """Count turns for a session in the built-in turns table."""
+        try:
+            with self._get_connection() as conn:
+                row = conn.execute(
+                    "SELECT COUNT(*) FROM turns WHERE session_id = ?",
+                    (session_id,),
+                ).fetchone()
+                return row[0] if row else 0
+        except sqlite3.OperationalError:
+            return 0
+
+    def enrich_session(self, session: ChatSession) -> None:
+        """Write/update cst_* tables for a parsed ChatSession.
+
+        Idempotent: deletes existing data for this session_id, then inserts fresh.
+
+        Args:
+            session: The parsed ChatSession to enrich.
+        """
+        from datetime import datetime
+
+        enriched_at = datetime.now(UTC).isoformat()
+
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Delete existing data for idempotency
+            cursor.execute("DELETE FROM cst_messages_fts WHERE session_id = ?", (session.session_id,))
+            cursor.execute("DELETE FROM cst_messages WHERE session_id = ?", (session.session_id,))
+            cursor.execute("DELETE FROM cst_sessions WHERE session_id = ?", (session.session_id,))
+
+            # Insert session
+            cursor.execute(
+                """
+                INSERT INTO cst_sessions
+                (session_id, workspace_name, workspace_path, created_at, updated_at,
+                 source_file, vscode_edition, custom_title, requester_username, responder_username,
+                 source_file_mtime, source_file_size, type, repository_url,
+                 parser_version, source_format)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    session.session_id,
+                    session.workspace_name,
+                    session.workspace_path,
+                    session.created_at,
+                    session.updated_at or enriched_at,
+                    session.source_file,
+                    session.vscode_edition,
+                    session.custom_title,
+                    session.requester_username,
+                    session.responder_username,
+                    session.source_file_mtime,
+                    session.source_file_size,
+                    session.type,
+                    session.repository_url,
+                    session.parser_version,
+                    session.source_format,
+                ),
+            )
+
+            # Insert messages and related data
+            for idx, msg in enumerate(session.messages):
+                cached_markdown = message_to_markdown(
+                    msg,
+                    message_number=idx + 1,
+                    include_diffs=True,
+                    include_tool_inputs=True,
+                )
+
+                cursor.execute(
+                    """
+                    INSERT INTO cst_messages
+                    (session_id, message_index, role, content, timestamp, cached_markdown)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        session.session_id,
+                        idx,
+                        msg.role,
+                        msg.content,
+                        msg.timestamp,
+                        cached_markdown,
+                    ),
+                )
+                message_id = cursor.lastrowid
+
+                # Insert content blocks
+                for block_idx, block in enumerate(msg.content_blocks):
+                    cursor.execute(
+                        """
+                        INSERT INTO cst_content_blocks
+                        (message_id, block_index, kind, content, description)
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (message_id, block_idx, block.kind, block.content, block.description),
+                    )
+
+                # Insert tool invocations
+                for tool in msg.tool_invocations:
+                    cursor.execute(
+                        """
+                        INSERT INTO cst_tool_invocations
+                        (message_id, name, input, result, status, start_time, end_time,
+                         source_type, invocation_message)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            message_id,
+                            tool.name,
+                            tool.input,
+                            tool.result,
+                            tool.status,
+                            tool.start_time,
+                            tool.end_time,
+                            tool.source_type,
+                            tool.invocation_message,
+                        ),
+                    )
+
+                # Insert command runs
+                for cmd in msg.command_runs:
+                    cursor.execute(
+                        """
+                        INSERT INTO cst_command_runs
+                        (message_id, command, title, result, status, output, timestamp)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            message_id,
+                            cmd.command,
+                            cmd.title,
+                            cmd.result,
+                            cmd.status,
+                            cmd.output,
+                            cmd.timestamp,
+                        ),
+                    )
+
+                # Insert file changes
+                for change in msg.file_changes:
+                    cursor.execute(
+                        """
+                        INSERT INTO cst_file_changes
+                        (message_id, path, diff, content, explanation, language_id)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            message_id,
+                            change.path,
+                            change.diff,
+                            change.content,
+                            change.explanation,
+                            change.language_id,
+                        ),
+                    )
+
+    def cleanup_orphaned_cst_sessions(self) -> list[str]:
+        """Find and delete cst_sessions whose session_id doesn't exist in the built-in sessions table.
+
+        Only targets CLI sessions (source_type='cli') since VS Code sessions
+        only exist in cst_* tables.
+
+        Returns:
+            List of deleted session_ids.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Find orphaned CLI sessions
+            rows = cursor.execute(
+                """
+                SELECT cs.session_id FROM cst_sessions cs
+                WHERE cs.type = 'cli'
+                AND cs.session_id NOT IN (SELECT id FROM sessions)
+                """,
+            ).fetchall()
+
+            orphaned_ids = [row[0] for row in rows]
+
+            # Delete orphaned sessions and all related data
+            for session_id in orphaned_ids:
+                cursor.execute("DELETE FROM cst_messages_fts WHERE session_id = ?", (session_id,))
+                cursor.execute("DELETE FROM cst_messages WHERE session_id = ?", (session_id,))
+                cursor.execute("DELETE FROM cst_sessions WHERE session_id = ?", (session_id,))
+
+            return orphaned_ids

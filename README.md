@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/Arithmomaniac/copilot-session-tools/actions/workflows/ci.yml/badge.svg)](https://github.com/Arithmomaniac/copilot-session-tools/actions/workflows/ci.yml) [![PyPI](https://img.shields.io/pypi/v/copilot-session-tools)](https://pypi.org/project/copilot-session-tools/) [![Python](https://img.shields.io/pypi/pyversions/copilot-session-tools)](https://pypi.org/project/copilot-session-tools/) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Create a searchable archiveof your VS Code and GitHub Copilot CLI chat history, with a web viewer similar to [simonw/claude-code-transcripts](https://github.com/simonw/claude-code-transcripts).
+Extend the GitHub Copilot CLI's built-in session store with searchable, enriched chat history — plus VS Code session support and a web viewer similar to [simonw/claude-code-transcripts](https://github.com/simonw/claude-code-transcripts).
 
 This project was informed by and borrows patterns from several excellent open-source projects:
 
@@ -13,12 +13,24 @@ This project was informed by and borrows patterns from several excellent open-so
 | [jazzyalex/agent-sessions](https://github.com/jazzyalex/agent-sessions) | Multi-agent session concept, SQLite indexing patterns |
 | [tad-hq/universal-session-viewer](https://github.com/tad-hq/universal-session-viewer) | FTS5 full-text search design, session metadata schema |
 
+## How It Works
+
+The default database is **`~/.copilot/session-store.db`** — the Copilot CLI's own built-in session store. This tool extends it by adding `cst_*` tables for enriched data, without modifying the CLI's built-in tables.
+
+**Two-tier architecture:**
+
+1. **Built-in data (immediate):** CLI sessions are visible immediately from the Copilot CLI's session store — basic session metadata, turns, and messages.
+2. **Enriched data (after `scan`):** Running `scan` parses the raw session files and adds full detail to the `cst_*` tables — tool invocations, file changes, thinking blocks, command runs, and more.
+
+**VS Code sessions** are only available after scanning (they are not part of the Copilot CLI's built-in session store).
+
 ## Features
 
+- **Extend** the Copilot CLI's built-in session store with enriched metadata
 - **Scan** VS Code workspace storage to find Copilot chat sessions (format based on [Arbuzov/copilot-chat-history](https://github.com/Arbuzov/copilot-chat-history))
 - **Support** for both VS Code Stable and Insiders editions
 - **GitHub Copilot CLI** chat history support (JSONL format from `~/.copilot/session-state`)
-- **Store** chat history in a SQLite database with FTS5 full-text search (inspired by [tad-hq/universal-session-viewer](https://github.com/tad-hq/universal-session-viewer))
+- **Store** enriched data in `cst_*` tables with FTS5 full-text search (inspired by [tad-hq/universal-session-viewer](https://github.com/tad-hq/universal-session-viewer))
 - **Browse** your archive with a web interface (similar to [simonw/claude-code-transcripts](https://github.com/simonw/claude-code-transcripts))
 - **Export/Import** sessions as JSON, Markdown, or self-contained HTML for backup or migration
 - **Tool invocations & file changes** tracking from chat sessions
@@ -62,12 +74,27 @@ uv sync --all-extras
 
 ## Usage
 
-### 1. Scan for Chat Sessions
+### Default Database
 
-Scan your VS Code workspace storage and GitHub Copilot CLI sessions to import into the database:
+The tool uses `~/.copilot/session-store.db` by default — the Copilot CLI's built-in database. The Copilot CLI must be installed and used at least once before this tool can work. Override with `--db`:
 
 ```bash
-# Scan both VS Code (Stable and Insiders) and CLI sessions
+copilot-session-tools --db custom.db scan
+```
+
+### Global Flags
+
+```bash
+# Disable cst_* table reads; show only built-in session store data
+copilot-session-tools --unenriched-only search "auth"
+```
+
+### 1. Scan and Enrich Sessions
+
+Scan VS Code workspace storage and enrich CLI sessions with full detail (tool invocations, file changes, thinking blocks, etc.):
+
+```bash
+# Scan both VS Code (Stable and Insiders) and enrich CLI sessions
 copilot-session-tools scan
 
 # Scan only VS Code Stable
@@ -75,9 +102,6 @@ copilot-session-tools scan --edition stable
 
 # Scan only VS Code Insiders
 copilot-session-tools scan --edition insider
-
-# Use a custom database path
-copilot-session-tools scan --db my_chats.db
 
 # Scan custom storage paths
 copilot-session-tools scan --storage-path /path/to/workspaceStorage
@@ -91,14 +115,16 @@ copilot-session-tools scan --full
 
 **Incremental Updates**: By default, the `scan` command only adds new sessions and updates changed ones based on file modification time. Use `--full` to re-import all sessions.
 
-**CLI Support**: The scanner automatically detects and imports GitHub Copilot CLI chat sessions from `~/.copilot/session-state/` by default.
+**CLI Sessions**: CLI sessions are already visible from the built-in store without scanning. Running `scan` enriches them with parsed detail (tool invocations, file changes, etc.).
+
+**VS Code Sessions**: Only available after scanning — they are not part of the Copilot CLI's built-in session store.
 
 ### 2. Start the Web Server
 
 Browse your chat archive in a web interface:
 
 ```bash
-# Start the web server (uses copilot_chats.db by default)
+# Start the web server (uses ~/.copilot/session-store.db by default)
 copilot-session-tools web
 
 # Custom options
@@ -215,67 +241,30 @@ The scanner automatically detects and imports both VS Code and CLI sessions by d
 
 ## Database Schema
 
-The SQLite database uses a two-layer design:
+The tool extends the Copilot CLI's built-in session store (`~/.copilot/session-store.db`) with `cst_*` enrichment tables. The built-in tables are **never modified** by this tool.
 
-1. **`raw_sessions` table** - Stores compressed raw JSON as the source of truth
-2. **Derived tables** - Can be dropped and recreated from raw_sessions without migrations
+**Built-in tables** (managed by Copilot CLI):
+- `sessions`, `turns`, `checkpoints`, `session_files`, `session_refs`, `search_index` — basic session data, immediately available
 
-```sql
--- Raw sessions table (source of truth)
-CREATE TABLE raw_sessions (
-    id INTEGER PRIMARY KEY,
-    session_id TEXT UNIQUE NOT NULL,
-    raw_json_compressed BLOB NOT NULL,  -- zlib-compressed original JSON
-    workspace_name TEXT,
-    workspace_path TEXT,
-    source_file TEXT,
-    vscode_edition TEXT,
-    source_file_mtime REAL,
-    source_file_size INTEGER,
-    imported_at TIMESTAMP
-);
+**Enrichment tables** (managed by this tool, prefixed `cst_`):
+- `cst_raw_sessions` — Compressed raw JSON from session files (source of truth for enrichment)
+- `cst_sessions`, `cst_messages` — Enriched session and message data with parsed detail
+- `cst_messages_fts` — FTS5 full-text search index
+- `cst_tool_invocations`, `cst_file_changes`, `cst_command_runs` — Extracted structured data
 
--- Derived sessions table
-CREATE TABLE sessions (
-    id INTEGER PRIMARY KEY,
-    session_id TEXT UNIQUE NOT NULL,
-    workspace_name TEXT,
-    workspace_path TEXT,
-    created_at TEXT,
-    updated_at TEXT,
-    source_file TEXT,
-    vscode_edition TEXT,
-    custom_title TEXT,
-    imported_at TIMESTAMP,
-    type TEXT DEFAULT 'vscode'  -- 'vscode' or 'cli'
-);
+### Recovery
 
--- Messages table
-CREATE TABLE messages (
-    id INTEGER PRIMARY KEY,
-    session_id TEXT NOT NULL,
-    message_index INTEGER NOT NULL,
-    role TEXT NOT NULL,
-    content TEXT NOT NULL,
-    timestamp TEXT,
-    cached_markdown TEXT
-);
-
--- Full-text search virtual table
-CREATE VIRTUAL TABLE messages_fts USING fts5(content);
-
--- Tool invocations, file changes, and command runs are also tracked
-```
-
-### Rebuilding Derived Tables
-
-When the schema changes, you can rebuild all derived tables from the stored raw JSON:
+If the `cst_*` tables get corrupted, you can safely delete them and re-scan:
 
 ```bash
-copilot-session-tools rebuild --db copilot_chats.db
+# Delete all cst_* tables (built-in data is unaffected)
+sqlite3 ~/.copilot/session-store.db "SELECT 'DROP TABLE ' || name || ';' FROM sqlite_master WHERE name LIKE 'cst_%';" | sqlite3 ~/.copilot/session-store.db
+
+# Re-scan to rebuild enrichment data
+copilot-session-tools scan --full
 ```
 
-This drops and recreates the sessions, messages, and related tables without needing to re-scan the original VS Code storage.
+The built-in session data from the Copilot CLI is never modified and remains intact.
 
 ## Web Viewer Features
 

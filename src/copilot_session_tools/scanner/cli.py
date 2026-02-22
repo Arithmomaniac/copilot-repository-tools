@@ -5,6 +5,8 @@ from pathlib import Path
 
 import orjson
 
+from copilot_session_tools.scanner import PARSER_VERSION
+
 from .content import _format_tool_display_message, _get_file_metadata
 from .git import detect_repository_url
 from .models import (
@@ -644,7 +646,7 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                 if custom_title:
                     break
 
-        return ChatSession(
+        session = ChatSession(
             session_id=session_id,
             workspace_name=workspace_name,
             workspace_path=workspace_path,
@@ -661,5 +663,7 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
             type="cli",
             repository_url=repository_url,
         )
+        session.parser_version = PARSER_VERSION
+        return session
     except (OSError, Exception):
         return None

@@ -168,6 +168,75 @@ header h1 {
     word-break: break-all;
 }
 
+.unenriched-banner {
+    background-color: #fff8c5;
+    border: 1px solid #d4a72c;
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin-bottom: 20px;
+    color: #6a5300;
+    font-size: 0.9em;
+}
+
+.unenriched-banner .scan-now-btn {
+    display: inline-block;
+    margin-left: 10px;
+    padding: 2px 10px;
+    background-color: #d4a72c;
+    color: #fff;
+    border-radius: 4px;
+    text-decoration: none;
+    font-size: 0.85em;
+    font-weight: 500;
+}
+
+.unenriched-banner .scan-now-btn:hover {
+    background-color: #b8922a;
+}
+
+@media (prefers-color-scheme: dark) {
+    .unenriched-banner {
+        background-color: #3d3500;
+        border-color: #9e6a03;
+        color: #e3b341;
+    }
+    .unenriched-banner .scan-now-btn {
+        background-color: #9e6a03;
+        color: #fff8c5;
+    }
+    .unenriched-banner .scan-now-btn:hover {
+        background-color: #b8922a;
+    }
+}
+
+.basic-turn {
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    margin-bottom: 16px;
+    overflow: hidden;
+}
+
+.basic-turn-user, .basic-turn-assistant {
+    padding: 12px 16px;
+}
+
+.basic-turn-user {
+    background-color: var(--user-bg);
+}
+
+.basic-turn-assistant {
+    background-color: var(--assistant-bg);
+    border-top: 1px solid var(--border-color);
+}
+
+.basic-turn-label {
+    font-weight: 600;
+    font-size: 0.8em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+    margin-bottom: 6px;
+}
+
 .message {
     padding: 16px;
     margin-bottom: 16px;
@@ -1059,6 +1128,7 @@ footer a {
             {% endif %}
         </div>
 
+        {% if is_enriched %}
         {% if not static %}
         <!-- Copy Markdown Toolbar -->
         <div class="copy-markdown-toolbar">
@@ -1384,6 +1454,46 @@ footer a {
             </div>
             {% endfor %}
         </div>
+        {% else %}
+        {# Unenriched path: show basic turns data #}
+        {% if not static %}
+        <div class="unenriched-banner">
+            ⚠️ This session has not been enriched yet. Showing basic data from Copilot's built-in session store.
+            <form method="POST" action="/enrich/{{ session.session_id }}" style="display:inline">
+                <button type="submit" class="scan-now-btn">Scan Now</button>
+            </form>
+        </div>
+        {% endif %}
+        <div class="messages">
+            {% if turns %}
+                {% set ns = namespace(msg_num=0) %}
+                {% for turn in turns %}
+                    {% if turn.user_message %}
+                    {% set ns.msg_num = ns.msg_num + 1 %}
+                    <div class="message user basic-turn" id="msg-{{ ns.msg_num }}">
+                        <div class="message-header">
+                            <div class="message-role">user</div>
+                            <a href="#msg-{{ ns.msg_num }}" class="message-anchor" title="Link to this message">#{{ ns.msg_num }}</a>
+                        </div>
+                        {{ turn.user_message | markdown | safe }}
+                    </div>
+                    {% endif %}
+                    {% if turn.assistant_response %}
+                    {% set ns.msg_num = ns.msg_num + 1 %}
+                    <div class="message assistant basic-turn" id="msg-{{ ns.msg_num }}">
+                        <div class="message-header">
+                            <div class="message-role">assistant</div>
+                            <a href="#msg-{{ ns.msg_num }}" class="message-anchor" title="Link to this message">#{{ ns.msg_num }}</a>
+                        </div>
+                        {{ turn.assistant_response | markdown | safe }}
+                    </div>
+                    {% endif %}
+                {% endfor %}
+            {% else %}
+                <p class="no-results">No turns found for this session.</p>
+            {% endif %}
+        </div>
+        {% endif %}
     </main>
 
     <footer>
