@@ -1200,9 +1200,25 @@ class Database:
         # 2. Read from built-in sessions (cli type only)
         if session_type is None or session_type == "cli":
             builtin = self.list_builtin_sessions(limit=10000)
+            # Batch-query turn counts for unenriched sessions
+            unenriched_sids = [row["id"] for row in builtin if row["id"] not in results]
+            turn_counts: dict[str, int] = {}
+            if unenriched_sids:
+                try:
+                    with self._get_connection() as conn:
+                        placeholders = ",".join("?" * len(unenriched_sids))
+                        rows = conn.execute(
+                            f"SELECT session_id, SUM((user_message IS NOT NULL AND user_message != '') + (assistant_response IS NOT NULL AND assistant_response != '')) "  # noqa: S608
+                            f"FROM turns WHERE session_id IN ({placeholders}) GROUP BY session_id",
+                            unenriched_sids,
+                        ).fetchall()
+                        turn_counts = dict(rows)
+                except sqlite3.OperationalError:
+                    pass
             for row in builtin:
                 sid = row["id"]
                 if sid not in results:  # cst_sessions takes precedence
+                    tc = turn_counts.get(sid, 0)
                     results[sid] = {
                         "session_id": sid,
                         "title": row.get("summary"),
@@ -1218,7 +1234,7 @@ class Database:
                         "vscode_edition": "cli",
                         "custom_title": row.get("summary"),
                         "repository_url": row.get("repository"),
-                        "message_count": 0,
+                        "message_count": tc,  # Actual non-null message count
                         "last_message_at": row.get("updated_at"),
                         "first_user_prompt": None,
                     }
@@ -1620,20 +1636,38 @@ class Database:
                 cursor.execute("SELECT vscode_edition, COUNT(*) FROM cst_sessions GROUP BY vscode_edition")
                 editions = dict(cursor.fetchall())
 
-            # Count built-in sessions not in cst_*
+            # Count built-in sessions and turns not in cst_*
             builtin_only_count = 0
+            builtin_message_count = 0
             try:
                 if self.has_cst_tables():
                     cursor.execute("SELECT COUNT(*) FROM sessions WHERE id NOT IN (SELECT session_id FROM cst_sessions)")
+                    builtin_only_count = cursor.fetchone()[0]
+                    cursor.execute(
+                        "SELECT SUM((user_message IS NOT NULL AND user_message != '') + (assistant_response IS NOT NULL AND assistant_response != '')) "
+                        "FROM turns WHERE session_id NOT IN (SELECT session_id FROM cst_sessions)"
+                    )
+                    row = cursor.fetchone()
+                    builtin_message_count = row[0] or 0
                 else:
                     cursor.execute("SELECT COUNT(*) FROM sessions")
-                builtin_only_count = cursor.fetchone()[0]
+                    builtin_only_count = cursor.fetchone()[0]
+                    cursor.execute("SELECT SUM((user_message IS NOT NULL AND user_message != '') + (assistant_response IS NOT NULL AND assistant_response != '')) FROM turns")
+                    row = cursor.fetchone()
+                    builtin_message_count = row[0] or 0
             except Exception:  # noqa: S110
                 pass
 
+            # Each built-in turn may have user, assistant, or both
+            total_message_count = cst_message_count + builtin_message_count
+
+            # Include unenriched CLI sessions in the cli edition count
+            if builtin_only_count > 0:
+                editions["cli"] = editions.get("cli", 0) + builtin_only_count
+
             return {
                 "session_count": cst_session_count + builtin_only_count,
-                "message_count": cst_message_count,
+                "message_count": total_message_count,
                 "workspace_count": workspace_count,
                 "editions": editions,
                 "enriched_count": cst_session_count,

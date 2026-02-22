@@ -240,6 +240,20 @@ def _shorten_path(path: str) -> str:
     return path
 
 
+def _humanize_server_name(server_name: str) -> str:
+    """Convert MCP server name to human-readable form."""
+    return " ".join(word.capitalize() for word in server_name.replace("-", " ").replace("_", " ").split())
+
+
+def _extract_best_param(arguments: dict) -> str:
+    """Extract the most descriptive parameter value from tool arguments."""
+    for key in ("question", "query", "intent", "identifier", "description", "url", "path", "repoName", "libraryName"):
+        val = arguments.get(key)
+        if val and isinstance(val, str):
+            return val[:100] + "..." if len(val) > 100 else val
+    return ""
+
+
 # Tool display format: (template_string, list_of_arg_keys_to_extract)
 # Templates use {arg_name} for substitution, with {short_path} auto-shortened
 _TOOL_DISPLAY_FORMATS: dict[str, tuple[str, list[str]]] = {
@@ -258,7 +272,13 @@ _TOOL_DISPLAY_FORMATS: dict[str, tuple[str, list[str]]] = {
 }
 
 
-def _format_tool_display_message(tool_name: str, arguments: dict, description: str | None = None) -> str:
+def _format_tool_display_message(
+    tool_name: str,
+    arguments: dict,
+    description: str | None = None,
+    mcp_server_name: str | None = None,
+    mcp_tool_name: str | None = None,
+) -> str:
     """Generate a display message for a tool invocation using data-driven formats."""
     fmt = _TOOL_DISPLAY_FORMATS.get(tool_name)
     if fmt:
@@ -268,11 +288,12 @@ def _format_tool_display_message(tool_name: str, arguments: dict, description: s
         for key in arg_keys:
             val = arguments.get(key, "")
             subs[key] = str(val) if val else ""
-        # Auto-generate short_path from path arg
+        # Auto-generate short_path from path arg (default to empty)
+        subs.setdefault("short_path", "")
         if "path" in arguments:
             subs["short_path"] = _shorten_path(arguments.get("path", ""))
         # Auto-generate truncated versions
-        for key in ("query", "url"):
+        for key in ("query", "url", "question"):
             if key in subs:
                 val = subs[key]
                 subs[f"{key}_short"] = val[:80] + "..." if len(val) > 80 else val
@@ -290,6 +311,16 @@ def _format_tool_display_message(tool_name: str, arguments: dict, description: s
         elif cmd == "str_replace":
             return f"Edited `{path}`"
         return f"Viewing `{path}`"
+
+    # Generic MCP tool fallback
+    if mcp_server_name and mcp_tool_name:
+        server_display = _humanize_server_name(mcp_server_name)
+        action = mcp_tool_name.replace("_", " ")
+        # Find the best descriptive parameter
+        best_param = _extract_best_param(arguments)
+        if best_param:
+            return f"🔌 {server_display}: {action} — {best_param}"
+        return f"🔌 {server_display}: {action}"
 
     # Fallback
     return description or tool_name
