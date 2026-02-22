@@ -76,3 +76,7 @@ sample_files/
 # macOS
 .DS_Store
 temp_export/
+
+# Snapshot test fixtures and baselines (real user session data, not committed)
+tests/snapshots/fixtures/
+tests/snapshots/baselines/

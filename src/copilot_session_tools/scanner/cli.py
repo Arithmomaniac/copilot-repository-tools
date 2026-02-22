@@ -541,12 +541,71 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                     )
                 )
 
+            # --- Subagent lifecycle events ---
+            elif event_type == "subagent.started":
+                display_name = event_data.get("agentDisplayName") or event_data.get("agentName", "unknown")
+                builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=f"🤖 Subagent started: {display_name}", description="subagent"))
+
+            elif event_type == "subagent.completed":
+                display_name = event_data.get("agentDisplayName") or event_data.get("agentName", "unknown")
+                builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=f"✅ Subagent completed: {display_name}", description="subagent"))
+
+            elif event_type == "subagent.failed":
+                display_name = event_data.get("agentDisplayName") or event_data.get("agentName", "unknown")
+                error = event_data.get("error") or ""
+                if len(error) > 200:
+                    error = error[:200] + "…"
+                error_suffix = f" — {error}" if error else ""
+                builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=f"❌ Subagent failed: {display_name}{error_suffix}", description="subagent"))
+
+            # --- Session lifecycle events ---
+            elif event_type == "session.handoff":
+                source_type = event_data.get("sourceType") or "unknown"
+                repo = event_data.get("repository") or {}
+                owner = repo.get("owner") or ""
+                name = repo.get("name") or ""
+                branch = repo.get("branch") or ""
+                if owner and name:
+                    repo_info = f" ({owner}/{name} @ {branch})" if branch else f" ({owner}/{name})"
+                else:
+                    repo_info = ""
+                builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=f"🔄 Session handoff from {source_type}{repo_info}", description="handoff"))
+
+            elif event_type == "session.warning":
+                message = (event_data.get("message") or "").strip()
+                if message:
+                    builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=f"⚠️ {message}", description="warning"))
+
+            elif event_type == "session.mode_changed":
+                prev_mode = event_data.get("previousMode") or "unknown"
+                new_mode = event_data.get("newMode") or "unknown"
+                builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=f"Mode changed: {prev_mode} → {new_mode}", description="mode-change"))
+
+            elif event_type == "session.context_changed":
+                cwd = event_data.get("cwd") or ""
+                branch = event_data.get("branch") or ""
+                branch_info = f" ({branch})" if branch else ""
+                builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=f"Context changed: {cwd}{branch_info}", description="context-change"))
+
+            elif event_type == "session.plan_changed":
+                operation = event_data.get("operation") or "changed"
+                builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=f"Plan {operation}", description="plan-change"))
+
             # Skip internal/metadata events (already parsed in metadata extraction or no user content)
             elif event_type in (
                 "session.start",  # Parsed above for sessionId, startTime, context
                 "session.info",  # Parsed above for workspace, auth info
                 "session.compaction_start",  # Boundary event, paired with compaction_complete
                 "session.error",  # Handled above
+                # Internal turn boundary markers
+                "assistant.turn_start",
+                "assistant.turn_end",
+                # Internal lifecycle
+                "session.resume",
+                # Internal token management
+                "session.truncation",
+                # Internal file notification
+                "session.workspace_file_changed",
             ):
                 pass
 
