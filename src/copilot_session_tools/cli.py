@@ -26,7 +26,9 @@ from copilot_session_tools import (
     scan_chat_sessions,
 )
 from copilot_session_tools.scanner import (
+    PARSER_VERSION,
     SessionFileInfo,
+    _parse_cli_jsonl_file,
     parse_session_file,
     scan_session_files,
 )
@@ -41,19 +43,30 @@ if sys.platform == "win32":
 
 
 def _default_db_path() -> Path:
-    """Return the default database path: ~/.copilot-session-tools/copilot_chats.db"""
-    return Path.home() / ".copilot-session-tools" / "copilot_chats.db"
+    """Return the default database path: ~/.copilot/session-store.db"""
+    return Path.home() / ".copilot" / "session-store.db"
 
 
-_DEFAULT_DB = _default_db_path()
+_DEFAULT_DB = Path.home() / ".copilot" / "session-store.db"
 
 
 def _ensure_db_exists(db: Path) -> None:
     """Check that the database file exists, with a friendly error if not."""
-    if not db.exists():
-        typer.echo(f"Error: Database not found at '{db}'.", err=True)
-        typer.echo("Run 'copilot-session-tools scan' first to create the database.", err=True)
-        raise typer.Exit(code=2)
+    try:
+        if not db.exists():
+            typer.echo(f"Error: Session store database not found at {db}", err=True)
+            typer.echo(
+                "The Copilot CLI must be installed and used at least once to create this database.",
+                err=True,
+            )
+            raise typer.Exit(code=2)
+    except FileNotFoundError:
+        typer.echo(f"Error: Session store database not found at {db}", err=True)
+        typer.echo(
+            "The Copilot CLI must be installed and used at least once to create this database.",
+            err=True,
+        )
+        raise typer.Exit(code=2) from None
 
 
 app = typer.Typer(
@@ -62,6 +75,9 @@ app = typer.Typer(
     no_args_is_help=True,
 )
 console = Console()
+
+# Module-level state set by the app callback
+_unenriched_only: bool = False
 
 # Number of threads for parallel file parsing
 PARSE_WORKERS = 4
@@ -100,9 +116,17 @@ def main(
             help="Show version and exit.",
         ),
     ] = False,
+    unenriched_only: Annotated[
+        bool,
+        typer.Option(
+            "--unenriched-only",
+            help="Disable cst_* table reads; use built-in tables only.",
+        ),
+    ] = False,
 ):
     """Copilot Chat Archive - Create a searchable archive of VS Code GitHub Copilot chats."""
-    pass
+    global _unenriched_only  # noqa: PLW0603
+    _unenriched_only = unenriched_only
 
 
 @app.command()
@@ -149,29 +173,19 @@ def scan(
             help="Full scan: update all sessions regardless of file changes.",
         ),
     ] = False,
-    store_raw: Annotated[
-        bool,
-        typer.Option(
-            "--store-raw",
-            help="Store raw JSON in database (enables rebuild command, increases DB size).",
-        ),
-    ] = False,
 ):
-    """Scan for and import Copilot chat sessions into the database.
+    """Scan for and import Copilot chat sessions, enriching them into the built-in store.
 
     By default, uses incremental refresh: only updates sessions whose source files
     have changed (based on file mtime and size). Use --full to force a complete
     re-import of all sessions.
-
-    Raw JSON is not stored by default to save space. Use --store-raw to enable
-    storing raw JSON, which allows using the 'rebuild' and 'raw-json' commands.
     """
     if edition not in ("stable", "insider", "both"):
         console.print("[red]Error: edition must be 'stable', 'insider', or 'both'[/red]")
         raise typer.Exit(1)
 
     db.parent.mkdir(parents=True, exist_ok=True)
-    database = Database(db)
+    database = Database(db, unenriched_only=_unenriched_only)
 
     # Determine storage paths
     if storage_path:
@@ -188,8 +202,6 @@ def scan(
         console.print("  (Full mode: will update all sessions)")
     else:
         console.print("  (Incremental mode: skipping unchanged sessions)")
-    if store_raw:
-        console.print("  (Storing raw JSON in database)")
     if verbose:
         for path, ed in paths:
             console.print(f"  Checking: {path} ({ed})")
@@ -203,13 +215,13 @@ def scan(
         for session in scan_chat_sessions(paths):
             existing = database.get_session(session.session_id)
             if existing:
-                database.update_session(session, store_raw=store_raw)
+                database.update_session(session)
                 updated += 1
                 if verbose:
                     workspace = session.workspace_name or "Unknown workspace"
                     console.print(f"  Updated: {workspace} ({len(session.messages)} messages)")
             else:
-                database.add_session(session, store_raw=store_raw)
+                database.add_session(session)
                 added += 1
                 if verbose:
                     workspace = session.workspace_name or "Unknown workspace"
@@ -253,7 +265,7 @@ def scan(
 
             # Batch insert new sessions (single transaction)
             if sessions_to_add:
-                batch_added, _batch_skipped = database.add_sessions_batch(sessions_to_add, store_raw=store_raw)
+                batch_added, _batch_skipped = database.add_sessions_batch(sessions_to_add)
                 added += batch_added
                 if verbose:
                     for session in sessions_to_add:
@@ -262,22 +274,129 @@ def scan(
 
             # Update existing sessions (must be individual due to delete+insert)
             for session in sessions_to_update:
-                database.update_session(session, store_raw=store_raw)
+                database.update_session(session)
                 updated += 1
                 if verbose:
                     workspace = session.workspace_name or "Unknown workspace"
                     console.print(f"  Updated: {workspace} ({len(session.messages)} messages)")
 
-    console.print("\n[green]Import complete:[/green]")
+    console.print("\n[green]VS Code import complete:[/green]")
     console.print(f"  Added: {added} sessions")
     console.print(f"  Updated: {updated} sessions")
     console.print(f"  Skipped (unchanged): {skipped} sessions")
+
+    # --- CLI session enrichment from built-in sessions table ---
+    console.print("\n[cyan]Enriching CLI sessions...[/cyan]")
+    enriched = 0
+    enrich_failed = 0
+    session_state_dir = Path.home() / ".copilot" / "session-state"
+
+    # Discover sessions needing enrichment (new or stale)
+    try:
+        needing_enrichment = database.discover_sessions_needing_enrichment()
+    except Exception:
+        needing_enrichment = []  # Built-in sessions table may not exist
+    for entry in needing_enrichment:
+        sid = entry["session_id"]
+        events_file = session_state_dir / sid / "events.jsonl"
+        if not events_file.exists():
+            enrich_failed += 1
+            if verbose:
+                console.print(f"  [yellow]No events.jsonl for {sid}[/yellow]")
+            continue
+        parsed = _parse_cli_jsonl_file(events_file)
+        if parsed:
+            database.enrich_session(parsed)
+            enriched += 1
+            if verbose:
+                console.print(f"  Enriched: {sid}")
+        else:
+            enrich_failed += 1
+            if verbose:
+                console.print(f"  [yellow]Failed to parse: {sid}[/yellow]")
+
+    # Reparse sessions with outdated parser version
+    reparsed = 0
+    reparse_failed = 0
+    try:
+        needing_reparse = database.get_sessions_needing_reparse(PARSER_VERSION)
+    except Exception:
+        needing_reparse = []
+    for entry in needing_reparse:
+        sid = entry["session_id"]
+        events_file = session_state_dir / sid / "events.jsonl"
+        if not events_file.exists():
+            reparse_failed += 1
+            if verbose:
+                console.print(f"  [yellow]No events.jsonl for reparse: {sid}[/yellow]")
+            continue
+        parsed = _parse_cli_jsonl_file(events_file)
+        if parsed:
+            database.enrich_session(parsed)
+            reparsed += 1
+            if verbose:
+                console.print(f"  Reparsed: {sid}")
+        else:
+            reparse_failed += 1
+            if verbose:
+                console.print(f"  [yellow]Failed to reparse: {sid}[/yellow]")
+
+    console.print(f"  Enriched: {enriched} sessions")
+    if reparsed:
+        console.print(f"  Reparsed: {reparsed} sessions (parser version upgrade)")
+    if enrich_failed or reparse_failed:
+        console.print(f"  Skipped (no events file or parse error): {enrich_failed + reparse_failed} sessions")
+
+    # --- Cleanup orphaned cst_sessions ---
+    try:
+        orphaned = database.cleanup_orphaned_cst_sessions()
+    except Exception:
+        orphaned = []
+    if orphaned:
+        console.print(f"\n[yellow]Cleaned up {len(orphaned)} orphaned session(s)[/yellow]")
 
     stats = database.get_stats()
     console.print("\n[cyan]Database now contains:[/cyan]")
     console.print(f"  {stats['session_count']} sessions")
     console.print(f"  {stats['message_count']} messages")
     console.print(f"  {stats['workspace_count']} workspaces")
+
+
+@app.command()
+def enrich(
+    session_id: str = typer.Argument(..., help="Session ID to enrich"),
+    db: Annotated[
+        Path,
+        typer.Option(
+            "--db",
+            "-d",
+            help="Path to SQLite database file.",
+        ),
+    ] = _DEFAULT_DB,
+):
+    """Enrich a single CLI session from its events.jsonl file."""
+    import re
+
+    # Validate session_id to prevent path traversal
+    if not re.match(r"^[0-9a-fA-F-]+$", session_id):
+        console.print("[red]Error: Invalid session ID format[/red]")
+        raise typer.Exit(1)
+
+    _ensure_db_exists(db)
+    database = Database(db, unenriched_only=_unenriched_only)
+
+    events_file = Path.home() / ".copilot" / "session-state" / session_id / "events.jsonl"
+    if not events_file.exists():
+        console.print(f"[red]Error: events.jsonl not found at {events_file}[/red]")
+        raise typer.Exit(1)
+
+    parsed = _parse_cli_jsonl_file(events_file)
+    if parsed is None:
+        console.print(f"[red]Error: Failed to parse events.jsonl for session {session_id}[/red]")
+        raise typer.Exit(1)
+
+    database.enrich_session(parsed)
+    console.print(f"[green]Successfully enriched session {session_id}[/green]")
 
 
 @app.command()
@@ -428,7 +547,7 @@ def search(
         include_tool_calls = False
         include_file_changes = True
 
-    database = Database(db)
+    database = Database(db, unenriched_only=_unenriched_only)
     results = database.search(
         query,
         limit=limit,
@@ -491,7 +610,7 @@ def stats(
 ):
     """Show database statistics."""
     _ensure_db_exists(db)
-    database = Database(db)
+    database = Database(db, unenriched_only=_unenriched_only)
     stats_data = database.get_stats()
 
     console.print("[bold]Database Statistics:[/bold]")
@@ -542,7 +661,7 @@ def export(
 ):
     """Export the database as JSON."""
     _ensure_db_exists(db)
-    database = Database(db)
+    database = Database(db, unenriched_only=_unenriched_only)
     json_data = database.export_json()
 
     if output == "-":
@@ -618,7 +737,7 @@ def export_markdown(
     - Thinking block notices in italics (content omitted)
     """
     _ensure_db_exists(db)
-    database = Database(db)
+    database = Database(db, unenriched_only=_unenriched_only)
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -704,7 +823,7 @@ def export_html(
     dependencies.
     """
     _ensure_db_exists(db)
-    database = Database(db)
+    database = Database(db, unenriched_only=_unenriched_only)
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -757,7 +876,7 @@ def import_json(
     import json
 
     db.parent.mkdir(parents=True, exist_ok=True)
-    database = Database(db)
+    database = Database(db, unenriched_only=_unenriched_only)
 
     with json_file.open(encoding="utf-8") as f:
         data = json.load(f)
@@ -804,64 +923,6 @@ def import_json(
 
 
 @app.command()
-def rebuild(
-    db: Annotated[
-        Path,
-        typer.Option(
-            "--db",
-            "-d",
-            help="Path to SQLite database file.",
-        ),
-    ] = _DEFAULT_DB,
-    verbose: Annotated[
-        bool,
-        typer.Option(
-            "--verbose",
-            "-v",
-            help="Show verbose output.",
-        ),
-    ] = False,
-):
-    """Rebuild derived tables from raw JSON data.
-
-    This command drops all derived tables (sessions, messages, tool_invocations,
-    file_changes, command_runs, content_blocks) and recreates them from the
-    compressed raw JSON stored in raw_sessions.
-
-    Use this after schema changes to regenerate all derived data without needing
-    to re-scan the original VS Code storage.
-    """
-    _ensure_db_exists(db)
-    database = Database(db)
-
-    # Check if there are any raw sessions to rebuild from
-    raw_count = database.get_raw_session_count()
-    if raw_count == 0:
-        console.print("[yellow]Warning: No raw sessions found in database.[/yellow]")
-        console.print("Run 'copilot-session-tools scan' first to import sessions.")
-        raise typer.Exit(1)
-
-    console.print(f"Rebuilding {raw_count} sessions from raw JSON...")
-
-    def progress_callback(processed, total):
-        if verbose:
-            console.print(f"  Processed: {processed}/{total}")
-
-    result = database.rebuild_derived_tables(progress_callback=progress_callback if verbose else None)
-
-    console.print("\n[green]Rebuild complete:[/green]")
-    console.print(f"  Processed: {result['processed']} sessions")
-    if result["errors"] > 0:
-        console.print(f"  Errors: {result['errors']} sessions")
-
-    stats = database.get_stats()
-    console.print("\n[cyan]Database now contains:[/cyan]")
-    console.print(f"  {stats['session_count']} sessions")
-    console.print(f"  {stats['message_count']} messages")
-    console.print(f"  {stats['workspace_count']} workspaces")
-
-
-@app.command()
 def optimize(
     db: Annotated[
         Path,
@@ -872,18 +933,18 @@ def optimize(
         ),
     ] = _DEFAULT_DB,
 ):
-    """Optimize the full-text search indexfor better query performance.
+    """Optimize the full-text search index for better query performance.
 
     This command merges FTS5 index segments, reducing fragmentation and
     improving search speed. Recommended to run periodically, especially
-    after bulk imports or the rebuild command.
+    after bulk imports.
 
     The optimization process:
     1. Merges all FTS index segments into fewer, larger segments
     2. Runs an integrity check to verify index consistency
     """
     _ensure_db_exists(db)
-    database = Database(db)
+    database = Database(db, unenriched_only=_unenriched_only)
 
     console.print("Optimizing FTS5 search index...")
 
@@ -898,66 +959,6 @@ def optimize(
         console.print(f"  [cyan]Merged {reduction} segments for faster queries[/cyan]")
     else:
         console.print("  [dim]Index was already optimized[/dim]")
-
-
-@app.command("raw-json")
-def raw_json(
-    session_id: Annotated[
-        str,
-        typer.Argument(help="Session ID to retrieve raw JSON for."),
-    ],
-    db: Annotated[
-        Path,
-        typer.Option(
-            "--db",
-            "-d",
-            help="Path to SQLite database file.",
-        ),
-    ] = _DEFAULT_DB,
-    output: Annotated[
-        Path | None,
-        typer.Option(
-            "--output",
-            "-o",
-            help="Output file path. If not specified, prints to stdout.",
-        ),
-    ] = None,
-    db_only: Annotated[
-        bool,
-        typer.Option(
-            "--db-only",
-            help="Only use database copy, don't try reading from source file.",
-        ),
-    ] = False,
-):
-    """Get the raw JSON for a specific session.
-
-    By default, tries to read from the original source file first (if it exists),
-    falling back to the compressed database copy. Use --db-only to always use
-    the database copy.
-
-    This is useful for debugging, data recovery, or inspecting the original
-    session data format.
-    """
-    _ensure_db_exists(db)
-    database = Database(db)
-
-    raw_data = database.get_raw_json(session_id, prefer_file=not db_only)
-
-    if raw_data is None:
-        console.print(f"[red]Session not found: {session_id}[/red]")
-        raise typer.Exit(1)
-
-    if output:
-        output.write_bytes(raw_data)
-        console.print(f"[green]Wrote {len(raw_data)} bytes to {output}[/green]")
-    else:
-        # Print to stdout (decode as UTF-8 for display)
-        try:
-            print(raw_data.decode("utf-8"))
-        except UnicodeDecodeError as err:
-            console.print("[red]Error: Raw data is not valid UTF-8. Use --output to save to file.[/red]")
-            raise typer.Exit(1) from err
 
 
 @app.command()
@@ -978,7 +979,7 @@ def web(
 
     _ensure_db_exists(db)
 
-    database = Database(str(db))
+    database = Database(str(db), unenriched_only=_unenriched_only)
     db_stats = database.get_stats()
 
     if db_stats["session_count"] == 0:

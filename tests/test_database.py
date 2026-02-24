@@ -1,6 +1,7 @@
 """Tests for the database module."""
 
 import json
+import sqlite3
 import tempfile
 from pathlib import Path
 
@@ -443,144 +444,6 @@ class TestSortingBehavior:
 
         # Verify last_message_at is included
         assert "last_message_at" in sessions[0]
-
-
-class TestRawJsonStorage:
-    """Tests for raw JSON storage and rebuild functionality."""
-
-    def test_raw_json_stored_compressed(self, temp_db):
-        """Test that raw JSON is stored in compressed form when store_raw=True."""
-        raw_json = b'{"sessionId": "raw-test", "requests": [{"message": {"text": "Hello"}, "response": [{"kind": "text", "value": "Hi"}]}]}'
-        session = ChatSession(
-            session_id="raw-test",
-            workspace_name="test-workspace",
-            workspace_path="/test/path",
-            messages=[ChatMessage(role="user", content="Hello")],
-            source_file="/test/session.json",
-            raw_json=raw_json,
-        )
-        temp_db.add_session(session, store_raw=True)
-
-        # Retrieve raw JSON
-        retrieved_raw = temp_db.get_raw_json("raw-test")
-        assert retrieved_raw is not None
-        assert retrieved_raw == raw_json
-
-    def test_raw_json_not_stored_by_default(self, temp_db):
-        """Test that raw JSON is NOT stored by default (store_raw=False)."""
-        raw_json = b'{"sessionId": "no-store-test", "requests": []}'
-        session = ChatSession(
-            session_id="no-store-test",
-            workspace_name="test-workspace",
-            workspace_path="/test/path",
-            messages=[ChatMessage(role="user", content="Hello")],
-            source_file="/test/session.json",
-            raw_json=raw_json,
-        )
-        temp_db.add_session(session)  # store_raw defaults to False
-
-        # Raw JSON should not be retrievable from DB (only from file, which doesn't exist)
-        retrieved_raw = temp_db.get_raw_json("no-store-test", prefer_file=False)
-        assert retrieved_raw is None
-
-    def test_raw_session_count(self, temp_db, sample_session):
-        """Test getting raw session count."""
-        assert temp_db.get_raw_session_count() == 0
-        temp_db.add_session(sample_session)
-        assert temp_db.get_raw_session_count() == 1
-
-    def test_rebuild_derived_tables(self, temp_db):
-        """Test rebuilding derived tables from raw JSON."""
-        # Create a session with raw JSON that has the VS Code format
-        raw_json = (
-            b'{"sessionId": "rebuild-test", "createdAt": "2025-01-15", '
-            b'"requests": [{"message": {"text": "What is Python?"}, '
-            b'"response": [{"kind": "text", "value": "Python is a programming language."}]}]}'
-        )
-        session = ChatSession(
-            session_id="rebuild-test",
-            workspace_name="rebuild-workspace",
-            workspace_path="/rebuild/path",
-            messages=[
-                ChatMessage(role="user", content="What is Python?"),
-                ChatMessage(role="assistant", content="Python is a programming language."),
-            ],
-            source_file="/rebuild/session.json",
-            raw_json=raw_json,
-        )
-        temp_db.add_session(session, store_raw=True)
-
-        # Verify session exists
-        assert temp_db.get_stats()["session_count"] == 1
-        assert temp_db.get_stats()["message_count"] == 2
-
-        # Rebuild derived tables
-        result = temp_db.rebuild_derived_tables()
-        assert result["total"] == 1
-        assert result["processed"] == 1
-        assert result["errors"] == 0
-
-        # Verify session still exists after rebuild
-        stats = temp_db.get_stats()
-        assert stats["session_count"] == 1
-        # Message count depends on parsing - the raw JSON has requests format
-
-    def test_rebuild_preserves_raw_sessions(self, temp_db, sample_session):
-        """Test that rebuild does not affect raw_sessions table."""
-        temp_db.add_session(sample_session)
-
-        initial_raw_count = temp_db.get_raw_session_count()
-        assert initial_raw_count == 1
-
-        # Rebuild
-        temp_db.rebuild_derived_tables()
-
-        # Raw sessions should still be there
-        assert temp_db.get_raw_session_count() == initial_raw_count
-
-    def test_update_session_updates_raw_json(self, temp_db):
-        """Test that update_session also updates raw_sessions when store_raw=True."""
-        raw_json_v1 = b'{"sessionId": "update-raw-test", "requests": [{"message": {"text": "V1"}, "response": []}]}'
-        session_v1 = ChatSession(
-            session_id="update-raw-test",
-            workspace_name="test",
-            workspace_path="/test",
-            messages=[ChatMessage(role="user", content="V1")],
-            raw_json=raw_json_v1,
-        )
-        temp_db.add_session(session_v1, store_raw=True)
-
-        # Verify V1 is stored
-        retrieved_v1 = temp_db.get_raw_json("update-raw-test")
-        assert retrieved_v1 == raw_json_v1
-
-        # Update with V2
-        raw_json_v2 = b'{"sessionId": "update-raw-test", "requests": [{"message": {"text": "V2"}, "response": []}]}'
-        session_v2 = ChatSession(
-            session_id="update-raw-test",
-            workspace_name="test",
-            workspace_path="/test",
-            messages=[ChatMessage(role="user", content="V2")],
-            raw_json=raw_json_v2,
-        )
-        temp_db.update_session(session_v2, store_raw=True)
-
-        # Verify V2 is now stored
-        retrieved_v2 = temp_db.get_raw_json("update-raw-test")
-        assert retrieved_v2 == raw_json_v2
-
-    def test_session_without_raw_json(self, temp_db, sample_session):
-        """Test that sessions without raw_json still work."""
-        # sample_session doesn't have raw_json set
-        assert sample_session.raw_json is None
-
-        result = temp_db.add_session(sample_session)
-        assert result is True
-
-        # Session should still be added and queryable
-        retrieved = temp_db.get_session(sample_session.session_id)
-        assert retrieved is not None
-        assert len(retrieved.messages) == len(sample_session.messages)
 
 
 class TestParseSearchQuery:
@@ -1502,3 +1365,301 @@ class TestRelevanceWithRecency:
         # Newest should be first when sorting by date
         session_ids = [r["session_id"] for r in results[:2]]
         assert session_ids[0] == "newest", "Newest session should be first with date sorting"
+
+
+# ---------------------------------------------------------------------------
+# Built-in schema SQL (mirrors Copilot CLI's own tables)
+# ---------------------------------------------------------------------------
+BUILTIN_SCHEMA = """
+CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);
+INSERT INTO schema_version (version) VALUES (1);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,
+    cwd TEXT,
+    repository TEXT,
+    branch TEXT,
+    summary TEXT,
+    created_at TEXT,
+    updated_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS turns (
+    session_id TEXT NOT NULL,
+    turn_index INTEGER NOT NULL,
+    user_message TEXT,
+    assistant_response TEXT,
+    timestamp TEXT,
+    PRIMARY KEY (session_id, turn_index)
+);
+"""
+
+
+def _create_builtin_only_db(path: str) -> None:
+    """Create a DB with only built-in tables (no cst_* tables)."""
+    conn = sqlite3.connect(path)
+    conn.executescript(BUILTIN_SCHEMA)
+    conn.close()
+
+
+def _insert_builtin_session(
+    path: str,
+    session_id: str,
+    *,
+    summary: str = "Test session",
+    repository: str = "owner/repo",
+    cwd: str = "/home/user",
+    branch: str = "main",
+    created_at: str = "2025-01-15T10:00:00Z",
+    updated_at: str = "2025-01-15T10:30:00Z",
+) -> None:
+    """Insert a session row into the built-in sessions table."""
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "INSERT INTO sessions (id, cwd, repository, branch, summary, created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+        (session_id, cwd, repository, branch, summary, created_at, updated_at),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _insert_builtin_turn(
+    path: str,
+    session_id: str,
+    turn_index: int,
+    user_message: str,
+    assistant_response: str,
+) -> None:
+    """Insert a turn row into the built-in turns table."""
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "INSERT INTO turns (session_id, turn_index, user_message, assistant_response) VALUES (?,?,?,?)",
+        (session_id, turn_index, user_message, assistant_response),
+    )
+    conn.commit()
+    conn.close()
+
+
+class TestTwoTierRendering:
+    """Tests for the two-tier (built-in + cst_*) rendering architecture."""
+
+    # -- fixtures ----------------------------------------------------------
+
+    @pytest.fixture
+    def builtin_only_db(self, tmp_path):
+        """DB with only built-in tables (no cst_* enrichment)."""
+        db_path = str(tmp_path / "builtin_only.db")
+        _create_builtin_only_db(db_path)
+        return db_path
+
+    @pytest.fixture
+    def full_db(self, tmp_path):
+        """DB with both built-in tables AND cst_* tables (via Database constructor)."""
+        db_path = str(tmp_path / "full.db")
+        _create_builtin_only_db(db_path)
+        # Database() constructor creates cst_* tables automatically
+        db = Database(db_path)
+        return db
+
+    # -- 1. has_cst_tables = True ------------------------------------------
+
+    def test_has_cst_tables_true(self, full_db):
+        """cst_* tables are created by the Database constructor."""
+        assert full_db.has_cst_tables() is True
+
+    # -- 2. has_cst_tables = False -----------------------------------------
+
+    def test_has_cst_tables_false(self, builtin_only_db):
+        """A raw built-in-only DB reports no cst_* tables via unenriched_only mode."""
+        db = Database(builtin_only_db, unenriched_only=True)
+        assert db.has_cst_tables() is False
+
+    # -- 3. list_sessions unenriched ---------------------------------------
+
+    def test_list_sessions_unenriched(self, full_db):
+        """A session in built-in only (no cst_sessions row) is listed with is_enriched=False."""
+        _insert_builtin_session(str(full_db.db_path), "sess-builtin-1")
+        _insert_builtin_turn(str(full_db.db_path), "sess-builtin-1", 0, "hello", "hi there")
+
+        sessions = full_db.list_sessions()
+        matched = [s for s in sessions if s["session_id"] == "sess-builtin-1"]
+        assert len(matched) == 1
+        assert matched[0]["is_enriched"] is False
+        assert matched[0]["source"] == "builtin"
+
+    # -- 4. list_sessions enriched -----------------------------------------
+
+    def test_list_sessions_enriched(self, full_db):
+        """A session present in cst_sessions is listed with is_enriched=True."""
+        _insert_builtin_session(str(full_db.db_path), "sess-enriched-1")
+        full_db.add_session(
+            ChatSession(
+                session_id="sess-enriched-1",
+                workspace_name="proj",
+                workspace_path="/tmp/proj",
+                messages=[ChatMessage(role="user", content="hi")],
+                created_at="2025-01-15T10:00:00Z",
+            )
+        )
+
+        sessions = full_db.list_sessions()
+        matched = [s for s in sessions if s["session_id"] == "sess-enriched-1"]
+        assert len(matched) == 1
+        assert matched[0]["is_enriched"] is True
+        assert matched[0]["source"] == "cst"
+
+    # -- 5. get_session unenriched -----------------------------------------
+
+    def test_get_session_unenriched(self, full_db):
+        """get_session falls back to built-in tables when no cst_sessions row exists."""
+        _insert_builtin_session(
+            str(full_db.db_path),
+            "sess-unenriched",
+            summary="Unenriched session",
+            repository="owner/repo",
+        )
+        _insert_builtin_turn(str(full_db.db_path), "sess-unenriched", 0, "Q1", "A1")
+        _insert_builtin_turn(str(full_db.db_path), "sess-unenriched", 1, "Q2", "A2")
+
+        session = full_db.get_session("sess-unenriched")
+        assert session is not None
+        assert session.session_id == "sess-unenriched"
+        assert session.type == "cli"
+        # Built-in turns become messages (user+assistant pairs)
+        assert len(session.messages) == 4
+        assert session.messages[0].role == "user"
+        assert session.messages[0].content == "Q1"
+
+    # -- 6. get_session enriched -------------------------------------------
+
+    def test_get_session_enriched(self, full_db):
+        """get_session returns enriched cst_* data when available."""
+        _insert_builtin_session(str(full_db.db_path), "sess-rich")
+        full_db.add_session(
+            ChatSession(
+                session_id="sess-rich",
+                workspace_name="proj",
+                workspace_path="/tmp/proj",
+                messages=[
+                    ChatMessage(role="user", content="enriched question"),
+                    ChatMessage(role="assistant", content="enriched answer"),
+                ],
+                created_at="2025-01-15T10:00:00Z",
+                vscode_edition="stable",
+            )
+        )
+
+        session = full_db.get_session("sess-rich")
+        assert session is not None
+        assert session.session_id == "sess-rich"
+        assert len(session.messages) == 2
+        assert session.messages[0].content == "enriched question"
+
+    # -- 7. discover_sessions_needing_enrichment ---------------------------
+
+    def test_discover_sessions_needing_enrichment(self, full_db):
+        """Sessions in built-in but not in cst_sessions are discovered as needing enrichment."""
+        # Session A: in built-in only → needs enrichment
+        _insert_builtin_session(str(full_db.db_path), "sess-a", summary="A")
+        _insert_builtin_turn(str(full_db.db_path), "sess-a", 0, "q", "a")
+
+        # Session B: in both built-in and cst_sessions → already enriched
+        _insert_builtin_session(str(full_db.db_path), "sess-b", summary="B")
+        _insert_builtin_turn(str(full_db.db_path), "sess-b", 0, "q", "a")
+        full_db.add_session(
+            ChatSession(
+                session_id="sess-b",
+                workspace_name="proj",
+                workspace_path="/tmp/proj",
+                messages=[ChatMessage(role="user", content="q")],
+                created_at="2025-01-15T10:00:00Z",
+            )
+        )
+
+        needing = full_db.discover_sessions_needing_enrichment()
+        ids = [r["session_id"] for r in needing]
+        assert "sess-a" in ids
+        assert "sess-b" not in ids
+
+    # -- 8. delete_cst_session ---------------------------------------------
+
+    def test_delete_cst_session(self, full_db):
+        """Deleting a cst_session removes it; get_session still falls back to built-in."""
+        _insert_builtin_session(str(full_db.db_path), "sess-del")
+        full_db.add_session(
+            ChatSession(
+                session_id="sess-del",
+                workspace_name="proj",
+                workspace_path="/tmp/proj",
+                messages=[ChatMessage(role="user", content="hi")],
+                created_at="2025-01-15T10:00:00Z",
+            )
+        )
+
+        # Enriched row exists
+        assert full_db.delete_cst_session("sess-del") is True
+        # Second delete returns False (already gone)
+        assert full_db.delete_cst_session("sess-del") is False
+        # list_sessions should still find it via built-in (unenriched)
+        sessions = full_db.list_sessions()
+        matched = [s for s in sessions if s["session_id"] == "sess-del"]
+        assert len(matched) == 1
+        assert matched[0]["is_enriched"] is False
+
+    # -- 9. builtin read methods -------------------------------------------
+
+    def test_builtin_read_methods(self, full_db):
+        """list_builtin_sessions, get_builtin_session, get_builtin_turns, count_builtin_turns."""
+        _insert_builtin_session(
+            str(full_db.db_path),
+            "sess-read",
+            summary="Read test",
+            repository="org/repo",
+            cwd="/tmp/proj",
+        )
+        _insert_builtin_turn(str(full_db.db_path), "sess-read", 0, "Q0", "A0")
+        _insert_builtin_turn(str(full_db.db_path), "sess-read", 1, "Q1", "A1")
+
+        # list_builtin_sessions
+        listed = full_db.list_builtin_sessions()
+        ids = [r["id"] for r in listed]
+        assert "sess-read" in ids
+
+        # get_builtin_session
+        s = full_db.get_builtin_session("sess-read")
+        assert s is not None
+        assert s["summary"] == "Read test"
+        assert s["repository"] == "org/repo"
+        assert s["cwd"] == "/tmp/proj"
+
+        # get_builtin_turns
+        turns = full_db.get_builtin_turns("sess-read")
+        assert len(turns) == 2
+        assert turns[0]["user_message"] == "Q0"
+        assert turns[1]["user_message"] == "Q1"
+
+        # count_builtin_turns
+        assert full_db.count_builtin_turns("sess-read") == 2
+
+    # -- 10. unenriched_only mode ------------------------------------------
+
+    def test_unenriched_only_mode(self, tmp_path):
+        """unenriched_only=True makes has_cst_tables return False even when tables exist."""
+        db_path = str(tmp_path / "unenriched_mode.db")
+        _create_builtin_only_db(db_path)
+
+        # Normal mode — cst_* tables ARE created by constructor
+        db_normal = Database(db_path)
+        assert db_normal.has_cst_tables() is True
+
+        # unenriched_only mode — same DB, but reports no cst_* tables
+        db_unonly = Database(db_path, unenriched_only=True)
+        assert db_unonly.has_cst_tables() is False
+
+        # list_sessions still returns built-in sessions
+        _insert_builtin_session(db_path, "sess-un", summary="Unenriched only")
+        _insert_builtin_turn(db_path, "sess-un", 0, "q", "a")
+        sessions = db_unonly.list_sessions()
+        matched = [s for s in sessions if s["session_id"] == "sess-un"]
+        assert len(matched) == 1
+        assert matched[0]["is_enriched"] is False

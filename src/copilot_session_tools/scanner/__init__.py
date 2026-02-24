@@ -5,6 +5,8 @@ Data structures are informed by:
 - microsoft/vscode-copilot-chat (https://github.com/microsoft/vscode-copilot-chat)
 """
 
+PARSER_VERSION = 1
+
 from .cli import _parse_cli_jsonl_file, _parse_workspace_yaml
 from .content import (
     _extract_edit_group_text,
@@ -43,6 +45,7 @@ from .vscode import (
 )
 
 __all__ = [
+    "PARSER_VERSION",
     "ChatMessage",
     "ChatSession",
     "CommandRun",

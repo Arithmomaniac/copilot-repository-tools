@@ -5,9 +5,10 @@ from datetime import datetime
 from urllib.parse import unquote
 
 import markdown
-from flask import Flask, jsonify, make_response, redirect, render_template, request, session, url_for
+from flask import Flask, flash, jsonify, make_response, redirect, render_template, request, session, url_for
 
 from copilot_session_tools import Database, generate_session_filename, get_vscode_storage_paths, scan_chat_sessions
+from copilot_session_tools.scanner.cli import _parse_cli_jsonl_file
 
 # Create a reusable markdown converter with extensions
 _md_converter = markdown.Markdown(
@@ -371,6 +372,7 @@ def create_app(
         workspaces = db.get_workspaces()
         repositories = db.get_repositories()
         stats = db.get_stats()
+        cst_tables_exist = db.has_cst_tables()
 
         return render_template(
             "index.html",
@@ -386,6 +388,7 @@ def create_app(
             selected_editions=selected_editions,
             refresh_result=refresh_result,
             sort_by=sort_by,
+            has_cst_tables=cst_tables_exist,
             # Pagination context
             page=page,
             per_page=per_page,
@@ -406,6 +409,25 @@ def create_app(
                 error="Session not found",
                 message=f"No session found with ID: {session_id}",
             ), 404
+
+        # Determine if this session has enriched (cst_*) data
+        is_enriched = False
+        if db.has_cst_tables():
+            with db._get_connection() as conn:
+                row = conn.execute("SELECT 1 FROM cst_sessions WHERE session_id = ?", (session_id,)).fetchone()
+                is_enriched = row is not None
+
+        # For unenriched sessions, build simple turns list for the template
+        turns = None
+        new_turns = None
+        if not is_enriched:
+            turns = db.get_builtin_turns(session_id)
+        else:
+            # Check for new turns added since last enrichment
+            enriched_turn_count = sum(1 for m in session.messages if m.role == "user")
+            all_builtin_turns = db.get_builtin_turns(session_id)
+            if len(all_builtin_turns) > enriched_turn_count:
+                new_turns = all_builtin_turns[enriched_turn_count:]
 
         # Pre-process messages to match tool invocations and command runs with content blocks
         # This creates a mapping that the template can use directly
@@ -456,6 +478,9 @@ def create_app(
             message_count=len(session.messages),
             first_user_prompt=first_user_prompt,
             message_metadata=message_metadata,
+            is_enriched=is_enriched,
+            turns=turns,
+            new_turns=new_turns,
         )
 
     @app.route("/refresh", methods=["POST"])
@@ -516,6 +541,31 @@ def create_app(
         }
 
         return redirect(url_for("index"))
+
+    @app.route("/enrich/<session_id>", methods=["POST"])
+    def enrich_session(session_id: str):
+        """Enrich a single CLI session by parsing its events.jsonl file."""
+        import re
+        from pathlib import Path
+
+        # Validate session_id is a UUID to prevent path traversal
+        if not re.match(r"^[0-9a-fA-F-]+$", session_id):
+            flash("Invalid session ID", "error")
+            return redirect(url_for("index"))
+
+        events_file = Path.home() / ".copilot" / "session-state" / session_id / "events.jsonl"
+        if not events_file.exists():
+            flash(f"events.jsonl not found for session {session_id}", "error")
+            return redirect(url_for("session_view", session_id=session_id))
+
+        parsed = _parse_cli_jsonl_file(events_file)
+        if parsed is None:
+            flash(f"Failed to parse events.jsonl for session {session_id}", "error")
+            return redirect(url_for("session_view", session_id=session_id))
+
+        db = Database(app.config["DB_PATH"])
+        db.enrich_session(parsed)
+        return redirect(url_for("session_view", session_id=session_id))
 
     @app.route("/api/markdown/<session_id>", methods=["GET"])
     def get_markdown(session_id: str):

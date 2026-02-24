@@ -239,6 +239,7 @@ def session_to_html(session: ChatSession) -> str:
         first_user_prompt=first_user_prompt,
         message_metadata=message_metadata,
         static=True,
+        is_enriched=True,
     )
 
 

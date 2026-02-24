@@ -5,6 +5,8 @@ from pathlib import Path
 
 import orjson
 
+from copilot_session_tools.scanner import PARSER_VERSION
+
 from .content import (
     _extract_edit_group_text,
     _extract_inline_reference_name,
@@ -413,7 +415,7 @@ def _parse_chat_session_file(file_path: Path, workspace_name: str | None, worksp
     # Detect repository URL from workspace path
     repository_url = detect_repository_url(workspace_path)
 
-    return ChatSession(
+    session = ChatSession(
         session_id=str(session_id),
         workspace_name=workspace_name,
         workspace_path=workspace_path,
@@ -427,9 +429,10 @@ def _parse_chat_session_file(file_path: Path, workspace_name: str | None, worksp
         responder_username=data.get("responderUsername"),
         source_file_mtime=source_file_mtime,
         source_file_size=source_file_size,
-        raw_json=raw_json_bytes,
         repository_url=repository_url,
     )
+    session.parser_version = PARSER_VERSION
+    return session
 
 
 def _parse_vscdb_file(file_path: Path, workspace_name: str | None, workspace_path: str | None, edition: str) -> list[ChatSession]:
@@ -449,20 +452,16 @@ def _parse_vscdb_file(file_path: Path, workspace_name: str | None, workspace_pat
         for _key, value in rows:
             if value:
                 try:
-                    # Preserve raw JSON bytes for storage
-                    raw_json_bytes = value if isinstance(value, bytes) else value.encode("utf-8")
                     data = orjson.loads(value)
                     # Try to parse as session data
                     if isinstance(data, dict):
-                        session = _extract_session_from_dict(data, workspace_name, workspace_path, edition, str(file_path), raw_json=raw_json_bytes)
+                        session = _extract_session_from_dict(data, workspace_name, workspace_path, edition, str(file_path))
                         if session:
                             sessions.append(session)
                     elif isinstance(data, list):
                         for item in data:
                             if isinstance(item, dict):
-                                # For list items, serialize each item back to bytes
-                                item_json = orjson.dumps(item)
-                                session = _extract_session_from_dict(item, workspace_name, workspace_path, edition, str(file_path), raw_json=item_json)
+                                session = _extract_session_from_dict(item, workspace_name, workspace_path, edition, str(file_path))
                                 if session:
                                     sessions.append(session)
                 except (orjson.JSONDecodeError, TypeError):
@@ -476,9 +475,7 @@ def _parse_vscdb_file(file_path: Path, workspace_name: str | None, workspace_pat
     return sessions
 
 
-def _extract_session_from_dict(
-    data: dict, workspace_name: str | None, workspace_path: str | None, edition: str, source_file: str | None, raw_json: bytes | None = None
-) -> ChatSession | None:
+def _extract_session_from_dict(data: dict, workspace_name: str | None, workspace_path: str | None, edition: str, source_file: str | None) -> ChatSession | None:
     """Extract a chat session from a dictionary structure.
 
     Supports the VS Code Copilot Chat format with requests, tool invocations, etc.
@@ -569,7 +566,7 @@ def _extract_session_from_dict(
     # Detect repository URL from workspace path
     repository_url = detect_repository_url(workspace_path)
 
-    return ChatSession(
+    session = ChatSession(
         session_id=str(session_id),
         workspace_name=workspace_name,
         workspace_path=workspace_path,
@@ -583,9 +580,10 @@ def _extract_session_from_dict(
         responder_username=data.get("responderUsername"),
         source_file_mtime=source_file_mtime,
         source_file_size=source_file_size,
-        raw_json=raw_json,
         repository_url=repository_url,
     )
+    session.parser_version = PARSER_VERSION
+    return session
 
 
 def _apply_jsonl_operations(base: dict, operations: list[dict]) -> dict:
@@ -689,5 +687,4 @@ def _parse_vscode_jsonl_file(file_path: Path, workspace_name: str | None, worksp
         workspace_path,
         edition,
         source_file=str(file_path),
-        raw_json=raw_bytes,
     )

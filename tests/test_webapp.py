@@ -1045,6 +1045,105 @@ class TestHtmlOutputMessageStructure:
         assert "stable" in html
 
 
+class TestNewTurnsAfterEnrichment:
+    """Tests for rendering new turns that arrived after enrichment."""
+
+    @pytest.fixture
+    def stale_enrichment_db(self):
+        """Create a DB with enriched session + newer built-in turns."""
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+
+        db = Database(db_path)
+
+        # Add enriched session with 1 user message (= 1 turn worth of enrichment)
+        session = ChatSession(
+            session_id="stale-enriched-session",
+            workspace_name="test-workspace",
+            workspace_path="/home/user/test",
+            messages=[
+                ChatMessage(role="user", content="First question"),
+                ChatMessage(role="assistant", content="First answer"),
+            ],
+            created_at="2025-01-15T10:00:00Z",
+            vscode_edition="cli",
+            type="cli",
+        )
+        db.add_session(session)
+
+        # Now add built-in sessions/turns tables with MORE turns than enriched
+        import sqlite3
+
+        conn = sqlite3.connect(db_path)
+        conn.execute("CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, cwd TEXT, repository TEXT, branch TEXT, summary TEXT, created_at TEXT, updated_at TEXT)")
+        conn.execute(
+            "INSERT OR REPLACE INTO sessions (id, cwd, summary, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+            ("stale-enriched-session", "/home/user/test", "Test session", "2025-01-15T10:00:00Z", "2025-01-15T11:00:00Z"),
+        )
+        conn.execute("CREATE TABLE IF NOT EXISTS turns (session_id TEXT, turn_index INTEGER, user_message TEXT, assistant_response TEXT)")
+        # Turn 0 = the enriched one
+        conn.execute(
+            "INSERT INTO turns (session_id, turn_index, user_message, assistant_response) VALUES (?, ?, ?, ?)",
+            ("stale-enriched-session", 0, "First question", "First answer"),
+        )
+        # Turn 1 = new, not yet enriched
+        conn.execute(
+            "INSERT INTO turns (session_id, turn_index, user_message, assistant_response) VALUES (?, ?, ?, ?)",
+            ("stale-enriched-session", 1, "Second question after enrichment", "Second answer after enrichment"),
+        )
+        conn.commit()
+        conn.close()
+
+        yield db_path
+        Path(db_path).unlink(missing_ok=True)
+
+    @pytest.fixture
+    def stale_client(self, stale_enrichment_db):
+        app = create_app(stale_enrichment_db, title="Test Archive", storage_paths=[], include_cli=False)
+        app.config["TESTING"] = True
+        return app.test_client()
+
+    def test_new_turns_shown_after_enriched(self, stale_client):
+        """New turns since enrichment appear below enriched messages."""
+        response = stale_client.get("/session/stale-enriched-session")
+        html = response.data.decode("utf-8")
+
+        # Enriched messages should be present
+        assert "First question" in html
+        assert "First answer" in html
+
+        # New unenriched turn should also appear
+        assert "Second question after enrichment" in html
+        assert "Second answer after enrichment" in html
+
+    def test_new_turns_banner_shown(self, stale_client):
+        """A divider banner should indicate new turns since enrichment."""
+        response = stale_client.get("/session/stale-enriched-session")
+        html = response.data.decode("utf-8")
+
+        assert "new turn" in html
+        assert "since last enrichment" in html
+
+    def test_new_turns_have_scan_now_button(self, stale_client):
+        """The new turns banner should include a Scan Now button."""
+        response = stale_client.get("/session/stale-enriched-session")
+        html = response.data.decode("utf-8")
+
+        assert "Scan Now" in html
+
+    def test_new_turns_message_numbering_continues(self, stale_client):
+        """New turn message numbers should continue from enriched messages."""
+        response = stale_client.get("/session/stale-enriched-session")
+        html = response.data.decode("utf-8")
+
+        # Enriched messages: #1 (user), #2 (assistant)
+        assert 'id="msg-1"' in html
+        assert 'id="msg-2"' in html
+        # New turns: #3 (user), #4 (assistant)
+        assert 'id="msg-3"' in html
+        assert 'id="msg-4"' in html
+
+
 class TestWebappPagination:
     """Tests for pagination in the web interface."""
 
