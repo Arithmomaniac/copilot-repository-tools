@@ -2,332 +2,250 @@
 
 [![CI](https://github.com/Arithmomaniac/copilot-session-tools/actions/workflows/ci.yml/badge.svg)](https://github.com/Arithmomaniac/copilot-session-tools/actions/workflows/ci.yml) [![PyPI](https://img.shields.io/pypi/v/copilot-session-tools)](https://pypi.org/project/copilot-session-tools/) [![Python](https://img.shields.io/pypi/pyversions/copilot-session-tools)](https://pypi.org/project/copilot-session-tools/) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Extend the GitHub Copilot CLI's built-in session store with searchable, enriched chat history — plus VS Code session support and a web viewer similar to [simonw/claude-code-transcripts](https://github.com/simonw/claude-code-transcripts).
+Search, browse, and enrich your GitHub Copilot chat history — across **Copilot CLI**, **VS Code**, and **VS Code Insiders**.
 
-This project was informed by and borrows patterns from several excellent open-source projects:
+Works out of the box with the Copilot CLI's built-in session store (Chronicle). Sessions are browsable immediately; run `scan` to enrich them with full detail (tool calls, file changes, diffs, thinking blocks) and import VS Code desktop sessions.
 
-| Project | What We Borrowed |
-|---------|------------------|
-| [simonw/claude-code-transcripts](https://github.com/simonw/claude-code-transcripts) | HTML transcript generation, pagination approach, CLI structure |
-| [Arbuzov/copilot-chat-history](https://github.com/Arbuzov/copilot-chat-history) | VS Code Copilot chat session data format, workspace organization |
-| [jazzyalex/agent-sessions](https://github.com/jazzyalex/agent-sessions) | Multi-agent session concept, SQLite indexing patterns |
-| [tad-hq/universal-session-viewer](https://github.com/tad-hq/universal-session-viewer) | FTS5 full-text search design, session metadata schema |
+![Session list](docs/screenshot-list.png)
 
-## How It Works
+## Prerequisites
 
-The default database is **`~/.copilot/session-store.db`** — the Copilot CLI's own built-in session store. This tool extends it by adding `cst_*` tables for enriched data, without modifying the CLI's built-in tables.
-
-**Two-tier architecture:**
-
-1. **Built-in data (immediate):** CLI sessions are visible immediately from the Copilot CLI's session store — basic session metadata, turns, and messages.
-2. **Enriched data (after `scan`):** Running `scan` parses the raw session files and adds full detail to the `cst_*` tables — tool invocations, file changes, thinking blocks, command runs, and more.
-
-**VS Code sessions** are only available after scanning (they are not part of the Copilot CLI's built-in session store).
-
-## Features
-
-- **Extend** the Copilot CLI's built-in session store with enriched metadata
-- **Scan** VS Code workspace storage to find Copilot chat sessions (format based on [Arbuzov/copilot-chat-history](https://github.com/Arbuzov/copilot-chat-history))
-- **Support** for both VS Code Stable and Insiders editions
-- **GitHub Copilot CLI** chat history support (JSONL format from `~/.copilot/session-state`)
-- **Store** enriched data in `cst_*` tables with FTS5 full-text search (inspired by [tad-hq/universal-session-viewer](https://github.com/tad-hq/universal-session-viewer))
-- **Browse** your archive with a web interface (similar to [simonw/claude-code-transcripts](https://github.com/simonw/claude-code-transcripts))
-- **Export/Import** sessions as JSON, Markdown, or self-contained HTML for backup or migration
-- **Tool invocations & file changes** tracking from chat sessions
-
-## Project Structure
-
-This is a Python package with optional extras for CLI and web interfaces:
-
-- **Base package**: Core utilities (database, scanner, markdown exporter)
-- **[cli] extra**: Command-line interface built with Typer
-- **[web] extra**: Flask-based web interface for browsing chat sessions
-- **[all] extra**: Both CLI and web interfaces
-
-## Installation
+**Copilot CLI v0.0.412+** is required. This version introduced cross-session memory ("Chronicle"), which creates the `~/.copilot/session-store.db` database that this tool extends. Update with:
 
 ```bash
-# Install with CLI
-pip install copilot-session-tools[cli]
+copilot --update
+```
 
-# Install with web interface
-pip install copilot-session-tools[web]
+## Quick Start
 
-# Install everything (CLI + web)
+### 1. Install
+
+```bash
 pip install copilot-session-tools[all]
 ```
 
-> **Tip:** Also works with `pipx install` or `uvx --with` if you prefer isolated tool environments.
+> Also works with `pipx install` or `uv tool install` for isolated environments.
 
-### From source (development)
+### 2. Browse your chats immediately
+
+No scan needed — the web viewer reads directly from the Copilot CLI's session store:
 
 ```bash
-git clone https://github.com/Arithmomaniac/copilot-session-tools.git
-cd copilot-session-tools
-
-# Install uv if you haven't already
-pip install uv
-
-# Install with all dependencies
-uv sync --all-extras
+copilot-session-tools web
+# Open http://127.0.0.1:5000/
 ```
 
-## Usage
+All your CLI sessions appear immediately with basic data (titles, user messages, assistant responses):
 
-### Default Database
+![Unenriched session with Scan Now button](docs/screenshot-unenriched.png)
 
-The tool uses `~/.copilot/session-store.db` by default — the Copilot CLI's built-in database. The Copilot CLI must be installed and used at least once before this tool can work. Override with `--db`:
+### 3. Enrich for full detail
 
-```bash
-copilot-session-tools --db custom.db scan
-```
-
-### Global Flags
+Click **Scan Now** on any session, or run a bulk scan to enrich everything at once:
 
 ```bash
-# Disable cst_* table reads; show only built-in session store data
-copilot-session-tools --unenriched-only search "auth"
-```
-
-### 1. Scan and Enrich Sessions
-
-Scan VS Code workspace storage and enrich CLI sessions with full detail (tool invocations, file changes, thinking blocks, etc.):
-
-```bash
-# Scan both VS Code (Stable and Insiders) and enrich CLI sessions
+# Enrich all CLI sessions + import VS Code desktop sessions
 copilot-session-tools scan
 
-# Scan only VS Code Stable
-copilot-session-tools scan --edition stable
-
-# Scan only VS Code Insiders
-copilot-session-tools scan --edition insider
-
-# Scan custom storage paths
-copilot-session-tools scan --storage-path /path/to/workspaceStorage
-
-# Verbose output
-copilot-session-tools scan --verbose
-
-# Force re-import of all sessions
-copilot-session-tools scan --full
+# Or enrich a single session by ID
+copilot-session-tools enrich <session-id>
 ```
 
-**Incremental Updates**: By default, the `scan` command only adds new sessions and updates changed ones based on file modification time. Use `--full` to re-import all sessions.
+Enriched sessions gain tool invocations, file diffs, command output, thinking blocks, and more:
 
-**CLI Sessions**: CLI sessions are already visible from the built-in store without scanning. Running `scan` enriches them with parsed detail (tool invocations, file changes, etc.).
+![Enriched session with tool invocations and file changes](docs/screenshot-session.png)
 
-**VS Code Sessions**: Only available after scanning — they are not part of the Copilot CLI's built-in session store.
-
-### 2. Start the Web Server
-
-Browse your chat archive in a web interface:
+### 4. Search across all sessions
 
 ```bash
-# Start the web server (uses ~/.copilot/session-store.db by default)
-copilot-session-tools web
-
-# Custom options
-copilot-session-tools web --db my_chats.db --port 8080 --title "My Copilot Chats"
+copilot-session-tools search "authentication" --full
 ```
 
-Then open `http://127.0.0.1:5000/` in your browser.
+![Search with highlighting](docs/screenshot-search.png)
 
-### 3. Search Chats
+### 5. Use the AI agent skill
 
-Search through your chat history from the command line:
+If you use an AI coding agent (Copilot CLI, Claude Code, Cursor, etc.), install the **search-copilot-chats** skill for natural-language chat search:
 
 ```bash
-# Basic search
-copilot-session-tools search "authentication"
+npx skills-installer install @Arithmomaniac/copilot-session-tools/search-copilot-chats
+```
 
-# Limit results
-copilot-session-tools search "React hooks" --limit 50
+Then ask your agent: *"search my chats for how I fixed the auth bug"*
 
-# Filter by role
-copilot-session-tools search "error" --role assistant
+Under the hood, the skill calls `copilot-session-tools search` and `export-markdown`.
 
-# Search only tool invocations
+## How It Works
+
+This tool extends `~/.copilot/session-store.db` — the Copilot CLI's own database — by adding `cst_*`-prefixed enrichment tables. The built-in tables are **never modified**.
+
+**Two-tier rendering:**
+
+| Tier | Data Source | What You See | When |
+|------|-----------|-------------|------|
+| **Unenriched** | Built-in `sessions` + `turns` tables | Session title, user messages, assistant text | Immediately, no scan needed |
+| **Enriched** | `cst_*` tables | Tool invocations, file diffs, command output, thinking blocks, content blocks | After running `scan` or `enrich` |
+
+If new turns arrive after enrichment (e.g., you continued a conversation), the web viewer appends them below the enriched messages with a "new since last scan" divider.
+
+**VS Code sessions** (Stable and Insiders) are imported during `scan` from workspace storage. They're always enriched on import since there's no built-in tier for VS Code.
+
+## Searching
+
+```bash
+# Basic search (FTS5 full-text search)
+copilot-session-tools search "React hooks" --full
+
+# Filter by role, workspace, edition, date
+copilot-session-tools search "role:user workspace:my-project error" --full
+copilot-session-tools search "edition:cli start_date:2026-01-01 deploy" --full
+
+# Search only tool invocations or file changes
 copilot-session-tools search "git" --tools-only
-
-# Show full content (not truncated)
-copilot-session-tools search "complex query" --full
-```
-
-**Advanced Search Syntax:**
-
-The search supports powerful query syntax:
-
-- **Multiple words:** `python function` matches messages containing both words (AND logic)
-- **Exact phrases:** `"python function"` matches the exact phrase
-- **Field filters:** Filter by specific fields directly in the query:
-  - `role:user` - Filter to user messages only
-  - `role:assistant` - Filter to assistant messages only
-  - `workspace:my-project` - Filter to a specific workspace
-  - `title:session-name` - Filter by session title
-
-```bash
-# Search for "function" only in user messages
-copilot-session-tools search "role:user function"
-
-# Search in a specific workspace
-copilot-session-tools search "workspace:my-project python"
-
-# Combine filters
-copilot-session-tools search "workspace:react role:assistant hooks"
+copilot-session-tools search "Dockerfile" --files-only
 
 # Sort by date instead of relevance
-copilot-session-tools search "python" --sort date
+copilot-session-tools search "python" --sort date --limit 50
 ```
 
-### 4. View Statistics
+**Search tips:** FTS5 uses AND logic — every keyword must appear in the same message. Start with 1–2 keywords, then narrow. Wrap hyphenated terms in quotes: `'"copilot-session-tools"'`.
+
+## Scanning & Enrichment
 
 ```bash
-copilot-session-tools stats
+# Scan everything (VS Code Stable + Insiders + enrich CLI sessions)
+copilot-session-tools scan
+
+# Scan only one VS Code edition
+copilot-session-tools scan --edition stable
+copilot-session-tools scan --edition insider
+
+# Force full re-import
+copilot-session-tools scan --full
+
+# Enrich a single CLI session
+copilot-session-tools enrich <session-id>
 ```
 
-### 5. Export/Import
+The web viewer's **Scan Now** button on unenriched sessions triggers single-session enrichment without a full scan.
+
+Scanning is **incremental** by default — only new and changed sessions are processed.
+
+## Exporting
 
 ```bash
-# Export all sessions to JSON
-copilot-session-tools export --output chats.json
-
-# Export to stdout
-copilot-session-tools export
-
-# Export as Markdown files
-copilot-session-tools export-markdown --output-dir ./markdown-archive
+# Export as Markdown
+copilot-session-tools export-markdown --output-dir ./archive --include-diffs
 
 # Export a single session
-copilot-session-tools export-markdown --session-id abc123 --output-dir ./session
+copilot-session-tools export-markdown --session-id <id> --output-dir .
 
-# Include file diffs in markdown
-copilot-session-tools export-markdown --include-diffs
-
-# Export as self-contained HTML (same rendering as web viewer, no server needed)
+# Export as self-contained HTML (dark mode, collapsible sections, no server needed)
 copilot-session-tools export-html --output-dir ./html-archive
 
-# Export a single session as HTML
-copilot-session-tools export-html --session-id abc123 --output-dir ./session
+# Export all sessions as JSON
+copilot-session-tools export --output chats.json
 
 # Import from JSON
 copilot-session-tools import-json chats.json
 ```
 
-## Chat Storage Locations
+## Web Viewer
 
-### VS Code
+```bash
+copilot-session-tools web                    # defaults to port 5000
+copilot-session-tools web --port 8080        # custom port
+copilot-session-tools web --db custom.db     # custom database
+```
 
-VS Code stores Copilot chat history in workspace-specific storage:
+Features:
+- **Full-text search** with keyword highlighting
+- **Edition badges** (CLI, VS Code Stable, VS Code Insiders) with counts
+- **Repository and workspace filtering**
+- **Enrichment status** — see which sessions have full detail vs. basic turns
+- **Copy Markdown** toolbar — select message range, include/exclude diffs, tool inputs, thinking
+- **Download** markdown or copy session URL
+- **Dark mode** via CSS `prefers-color-scheme`
+- **Incremental refresh** without restarting
 
-| OS | Path |
-|----|------|
-| Windows | `%APPDATA%\Code\User\workspaceStorage\{hash}\` |
-| macOS | `~/Library/Application Support/Code/User/workspaceStorage/{hash}/` |
-| Linux | `~/.config/Code/User/workspaceStorage/{hash}/` |
+## Session Sources
 
-For VS Code Insiders, replace `Code` with `Code - Insiders`.
+| Source | Format | Location |
+|--------|--------|----------|
+| **Copilot CLI** | JSONL events | `~/.copilot/session-state/` |
+| **VS Code Stable** | JSON / JSONL | `%APPDATA%/Code/User/workspaceStorage/*/` |
+| **VS Code Insiders** | JSON / JSONL | `%APPDATA%/Code - Insiders/User/workspaceStorage/*/` |
 
-### GitHub Copilot CLI
+On macOS/Linux, replace `%APPDATA%` with `~/Library/Application Support` or `~/.config` respectively.
 
-The GitHub Copilot CLI stores chat history in JSONL format:
+## Agent Skills
 
-| OS | Path |
-|----|------|
-| All | `~/.copilot/session-state/` (current format, v0.0.342+) |
-| All | `~/.copilot/history-session-state/` (legacy format) |
+This repository includes [Agent Skills](https://claude-plugins.dev) for AI coding agents:
 
-The scanner automatically detects and imports both VS Code and CLI sessions by default.
+| Skill | Description |
+|-------|-------------|
+| **search-copilot-chats** | Search, browse, and export Copilot chat sessions. Triggers on "search my chats", "find in chat history", session GUIDs, or web viewer URLs. Calls `copilot-session-tools search` and `export-markdown` under the hood. |
+| **scanner-refresh** | Research recent changes in Copilot CLI/VS Code repos and update the scanner for new event types. |
+
+```bash
+# Install for your agent (Claude Code, Cursor, VS Code, Codex, etc.)
+npx skills-installer install @Arithmomaniac/copilot-session-tools/search-copilot-chats
+npx skills-installer install @Arithmomaniac/copilot-session-tools/search-copilot-chats --client cursor
+```
+
+Skills are also available automatically when working in this repository.
 
 ## Database Schema
 
-The tool extends the Copilot CLI's built-in session store (`~/.copilot/session-store.db`) with `cst_*` enrichment tables. The built-in tables are **never modified** by this tool.
+The tool writes to `cst_*` enrichment tables alongside the CLI's built-in tables:
 
-**Built-in tables** (managed by Copilot CLI):
-- `sessions`, `turns`, `checkpoints`, `session_files`, `session_refs`, `search_index` — basic session data, immediately available
+| Table | Contents |
+|-------|----------|
+| `cst_sessions` | Enriched session metadata (workspace, edition, parser version, source format) |
+| `cst_messages` | Parsed messages with content blocks |
+| `cst_messages_fts` | FTS5 full-text search index |
+| `cst_tool_invocations` | Tool calls (name, input, result, status) |
+| `cst_file_changes` | File edits with diffs |
+| `cst_command_runs` | Shell commands and output |
 
-**Enrichment tables** (managed by this tool, prefixed `cst_`):
-- `cst_raw_sessions` — Compressed raw JSON from session files (source of truth for enrichment)
-- `cst_sessions`, `cst_messages` — Enriched session and message data with parsed detail
-- `cst_messages_fts` — FTS5 full-text search index
-- `cst_tool_invocations`, `cst_file_changes`, `cst_command_runs` — Extracted structured data
-
-### Recovery
-
-If the `cst_*` tables get corrupted, you can safely delete them and re-scan:
+**Recovery:** If `cst_*` tables get corrupted, delete them and re-scan. Built-in data is unaffected:
 
 ```bash
-# Delete all cst_* tables (built-in data is unaffected)
-sqlite3 ~/.copilot/session-store.db "SELECT 'DROP TABLE ' || name || ';' FROM sqlite_master WHERE name LIKE 'cst_%';" | sqlite3 ~/.copilot/session-store.db
-
-# Re-scan to rebuild enrichment data
+sqlite3 ~/.copilot/session-store.db \
+  "SELECT 'DROP TABLE ' || name || ';' FROM sqlite_master WHERE name LIKE 'cst_%';" \
+  | sqlite3 ~/.copilot/session-store.db
 copilot-session-tools scan --full
 ```
 
-The built-in session data from the Copilot CLI is never modified and remains intact.
+## Installation Options
 
-## Web Viewer Features
-
-The web interface includes:
-
-- **Session list** with workspace names and message counts, sorted by most recent message
-- **Workspace filtering** to focus on specific projects
-- **Full-text search** with highlighting
-- **Dark mode support** via CSS `prefers-color-scheme`
-- **Responsive design** for mobile and desktop
-- **Syntax highlighting** for code blocks
-- **Incremental refresh** to update without restarting
+```bash
+pip install copilot-session-tools[cli]     # CLI only
+pip install copilot-session-tools[web]     # Web viewer only
+pip install copilot-session-tools[all]     # Both
+pip install copilot-session-tools[vector]  # Optional: hybrid FTS5 + vector search (sqlite-vec + sentence-transformers)
+```
 
 ## Development
 
 ```bash
-# Clone the repository
 git clone https://github.com/Arithmomaniac/copilot-session-tools.git
 cd copilot-session-tools
-
-# Install uv
-pip install uv
-
-# Sync the workspace (installs all packages in development mode)
-uv sync
-
-# Run tests
-uv run pytest
-
-# Run tests with coverage
-uv run pytest --cov
-
-# Run the CLI
-uv run copilot-session-tools --help
+uv sync --all-extras
+uv run pytest tests/ --ignore=tests/test_webapp_e2e.py -v
+uv run ruff check . && uv run ruff format . && uv run ty check
 ```
 
-## Agent Skills
+## Acknowledgments
 
-This repository includes [Agent Skills](https://claude-plugins.dev) for AI coding agents (Claude Code, Cursor, VS Code, Codex, and more):
+This project was informed by several excellent open-source projects:
 
-| Skill | Description |
-|-------|-------------|
-| **search-copilot-chats** | Search, browse, and export archived Copilot chat sessions using this tool's CLI |
-| **scanner-refresh** | Research recent changes in Copilot repos and update the scanner for new event types |
-
-### Install a skill
-
-```bash
-# Install the search skill (Claude Code is the default client)
-npx skills-installer install @Arithmomaniac/copilot-session-tools/search-copilot-chats
-
-# For other clients
-npx skills-installer install @Arithmomaniac/copilot-session-tools/search-copilot-chats --client cursor
-```
-
-Skills are automatically available when working in this repository (project-level `.claude/skills/`).
-
-## Related Projects
-
-- [simonw/claude-code-transcripts](https://github.com/simonw/claude-code-transcripts) - Inspiration for the web viewer
-- [Arbuzov/copilot-chat-history](https://github.com/Arbuzov/copilot-chat-history) - VS Code extension for viewing chat history
-- [microsoft/vscode-copilot-chat](https://github.com/microsoft/vscode-copilot-chat) - Official VS Code Copilot Chat extension
+| Project | Inspiration |
+|---------|-------------|
+| [simonw/claude-code-transcripts](https://github.com/simonw/claude-code-transcripts) | HTML transcript generation, web viewer design |
+| [Arbuzov/copilot-chat-history](https://github.com/Arbuzov/copilot-chat-history) | VS Code session data format |
+| [tad-hq/universal-session-viewer](https://github.com/tad-hq/universal-session-viewer) | FTS5 search design |
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+MIT License — see [LICENSE](LICENSE) for details.

@@ -39,7 +39,7 @@ See [claude-plugins.dev](https://claude-plugins.dev) for browsing available skil
 
 ## Prerequisites
 
-The `copilot-session-tools` CLI must be installed and available on PATH. The database is stored at `~/.copilot-session-tools/copilot_chats.db` by default.
+The `copilot-session-tools` CLI must be installed and available on PATH. It uses the Copilot CLI's built-in session store at `~/.copilot/session-store.db` (requires Copilot CLI v0.0.412+).
 
 ### Step 0: Ensure CLI is installed
 
@@ -74,7 +74,7 @@ The `[all]` extra includes both the CLI and web viewer dependencies.
 For direct SQL queries, use `sqlite3` on the database file rather than writing Python:
 
 ```powershell
-sqlite3 "$HOME/.copilot-session-tools/copilot_chats.db" "SELECT session_id, workspace_name, created_at FROM sessions ORDER BY created_at DESC LIMIT 10"
+sqlite3 "$HOME/.copilot/session-store.db" "SELECT cs.session_id, cs.workspace_name, cs.created_at FROM cst_sessions cs ORDER BY cs.created_at DESC LIMIT 10"
 ```
 
 ## Instructions
@@ -142,7 +142,7 @@ This scans:
 For a full reimport (slow, use only if data seems stale):
 
 ```powershell
-copilot-session-tools scan --full --store-raw --verbose
+copilot-session-tools scan --full --verbose
 ```
 
 ### Step 2: Search for content
@@ -242,21 +242,19 @@ Alternatively, if the web viewer is running, download markdown via its API:
 http://127.0.0.1:5000/api/markdown/<session-guid>?download=true&include_diffs=true&include_tool_inputs=true&include_thinking=true
 ```
 
-#### Get raw JSON
+#### Get session statistics
 
 ```powershell
-copilot-session-tools raw-json <session-guid>
+copilot-session-tools stats
 ```
-
-Falls back to compressed DB copy if source file is gone.
 
 #### Launch web viewer (for visual browsing)
 
 ```powershell
-copilot-chat-web --db copilot_chats.db
+copilot-session-tools web
 ```
 
-Additional flags: `--host` (default `127.0.0.1`), `--port` (default `5000`), `--title`, `--debug`.
+Additional flags: `--host` (default `127.0.0.1`), `--port` (default `5000`), `--title`, `--debug`, `--db` (default `~/.copilot/session-store.db`).
 
 Then browse: `http://127.0.0.1:5000/session/<session-guid>`
 
@@ -296,38 +294,45 @@ When the CLI search doesn't support your query shape, use SQLite directly:
 
 ```powershell
 # Find sessions by workspace name
-sqlite3 "$HOME/.copilot-session-tools/copilot_chats.db" `
-  "SELECT session_id, workspace_name, created_at FROM sessions WHERE workspace_name LIKE '%zts%' ORDER BY created_at DESC LIMIT 20"
+sqlite3 "$HOME/.copilot/session-store.db" `
+  "SELECT session_id, workspace_name, created_at FROM cst_sessions WHERE workspace_name LIKE '%zts%' ORDER BY created_at DESC LIMIT 20"
 
 # Count messages per session (find long conversations)
-sqlite3 "$HOME/.copilot-session-tools/copilot_chats.db" `
-  "SELECT s.session_id, s.workspace_name, COUNT(m.id) as msg_count FROM sessions s JOIN messages m ON s.session_id = m.session_id GROUP BY s.session_id ORDER BY msg_count DESC LIMIT 20"
+sqlite3 "$HOME/.copilot/session-store.db" `
+  "SELECT s.session_id, s.workspace_name, COUNT(m.id) as msg_count FROM cst_sessions s JOIN cst_messages m ON s.session_id = m.session_id GROUP BY s.session_id ORDER BY msg_count DESC LIMIT 20"
 
 # Find sessions with tool invocations of a specific tool
-sqlite3 "$HOME/.copilot-session-tools/copilot_chats.db" `
-  "SELECT DISTINCT s.session_id, s.workspace_name, s.created_at FROM sessions s JOIN messages m ON s.session_id = m.session_id JOIN tool_invocations ti ON m.id = ti.message_id WHERE ti.name LIKE '%build%' ORDER BY s.created_at DESC LIMIT 20"
+sqlite3 "$HOME/.copilot/session-store.db" `
+  "SELECT DISTINCT s.session_id, s.workspace_name, s.created_at FROM cst_sessions s JOIN cst_messages m ON s.session_id = m.session_id JOIN cst_tool_invocations ti ON m.id = ti.message_id WHERE ti.name LIKE '%build%' ORDER BY s.created_at DESC LIMIT 20"
 
 # Find file changes by path pattern
-sqlite3 "$HOME/.copilot-session-tools/copilot_chats.db" `
-  "SELECT DISTINCT s.session_id, s.workspace_name, fc.path FROM sessions s JOIN messages m ON s.session_id = m.session_id JOIN file_changes fc ON m.id = fc.message_id WHERE fc.path LIKE '%Dockerfile%' ORDER BY s.created_at DESC LIMIT 20"
+sqlite3 "$HOME/.copilot/session-store.db" `
+  "SELECT DISTINCT s.session_id, s.workspace_name, fc.path FROM cst_sessions s JOIN cst_messages m ON s.session_id = m.session_id JOIN cst_file_changes fc ON m.id = fc.message_id WHERE fc.path LIKE '%Dockerfile%' ORDER BY s.created_at DESC LIMIT 20"
 
 # Find command runs
-sqlite3 "$HOME/.copilot-session-tools/copilot_chats.db" `
-  "SELECT s.session_id, cr.command, cr.status FROM sessions s JOIN messages m ON s.session_id = m.session_id JOIN command_runs cr ON m.id = cr.message_id WHERE cr.command LIKE '%az pipelines%' ORDER BY cr.timestamp DESC LIMIT 20"
+sqlite3 "$HOME/.copilot/session-store.db" `
+  "SELECT s.session_id, cr.command, cr.status FROM cst_sessions s JOIN cst_messages m ON s.session_id = m.session_id JOIN cst_command_runs cr ON m.id = cr.message_id WHERE cr.command LIKE '%az pipelines%' ORDER BY cr.timestamp DESC LIMIT 20"
 ```
 
 ## Database schema (quick reference)
 
+The tool extends `~/.copilot/session-store.db` with `cst_*` enrichment tables. Built-in tables are never modified.
+
+**Built-in tables** (managed by Copilot CLI, read-only):
 | Table | Key columns | Notes |
 |-------|-------------|-------|
-| `sessions` | session_id, workspace_name, created_at, repository_url, type, vscode_edition | type: 'vscode' or 'cli' |
-| `messages` | session_id, message_index, role, content, timestamp | role: 'user' or 'assistant' |
-| `messages_fts` | content | FTS5 virtual table, synced via triggers |
-| `tool_invocations` | message_id, name, input, result, status | Tool calls within messages |
-| `file_changes` | message_id, path, diff, content | File edits made by assistant |
-| `command_runs` | message_id, command, result, status, output | Shell commands executed |
-| `content_blocks` | message_id, block_index, kind, content | Structured content blocks |
-| `raw_sessions` | session_id, raw_json_compressed | Compressed source JSON (if `--store-raw` used) |
+| `sessions` | id, cwd, repository, branch, summary, created_at | CLI sessions only |
+| `turns` | session_id, turn_index, user_message, assistant_response | Basic conversation data |
+
+**Enrichment tables** (managed by this tool, prefixed `cst_`):
+| Table | Key columns | Notes |
+|-------|-------------|-------|
+| `cst_sessions` | session_id, workspace_name, vscode_edition, custom_title, parser_version, source_format | All enriched sessions |
+| `cst_messages` | session_id, message_index, role, content, timestamp | Parsed messages with content blocks |
+| `cst_messages_fts` | content | FTS5 virtual table, synced via triggers |
+| `cst_tool_invocations` | message_id, name, input, result, status | Tool calls within messages |
+| `cst_file_changes` | message_id, path, diff, content | File edits made by assistant |
+| `cst_command_runs` | message_id, command, result, status, output | Shell commands executed |
 
 ## Common search patterns
 
@@ -369,9 +374,8 @@ When a user wants to find a prior solution:
 
 - **Hyphenated terms crash FTS5**: Queries like `copilot-session-tools` fail because `-` is an FTS5 NOT operator. Always quote hyphenated terms: `'"copilot-session-tools"'`.
 - **Rich console crashes on pipe**: The CLI uses Rich for console output, which can crash on Unicode box-drawing characters when piped. Workaround: don't pipe output; read it directly.
-- **Large DB size**: The database is ~610 MB. Queries are fast thanks to FTS5 indexes, but `export` (full JSON dump) can be slow.
 - **Missing sessions**: If a session doesn't appear after scanning, check that the source file exists and wasn't cleaned up by VS Code. Use `--full` scan to force reimport.
-- **`--store-raw` needed for some commands**: `rebuild` and `raw-json` require that sessions were scanned with `--store-raw`.
+- **Requires Copilot CLI v0.0.412+**: The session store database (`~/.copilot/session-store.db`) is created by the Copilot CLI's Chronicle feature, introduced in v0.0.412.
 
 ## Related skills
 
