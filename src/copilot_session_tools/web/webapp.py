@@ -419,8 +419,15 @@ def create_app(
 
         # For unenriched sessions, build simple turns list for the template
         turns = None
+        new_turns = None
         if not is_enriched:
             turns = db.get_builtin_turns(session_id)
+        else:
+            # Check for new turns added since last enrichment
+            enriched_turn_count = sum(1 for m in session.messages if m.role == "user")
+            all_builtin_turns = db.get_builtin_turns(session_id)
+            if len(all_builtin_turns) > enriched_turn_count:
+                new_turns = all_builtin_turns[enriched_turn_count:]
 
         # Pre-process messages to match tool invocations and command runs with content blocks
         # This creates a mapping that the template can use directly
@@ -473,6 +480,7 @@ def create_app(
             message_metadata=message_metadata,
             is_enriched=is_enriched,
             turns=turns,
+            new_turns=new_turns,
         )
 
     @app.route("/refresh", methods=["POST"])

@@ -1485,6 +1485,41 @@ footer a {
             </div>
             {% endfor %}
         </div>
+        {%- if new_turns %}
+        <div class="unenriched-banner" style="margin-top: 24px;">
+            📥 {{ new_turns | length }} new turn{{ 's' if new_turns | length != 1 else '' }} since last enrichment (showing basic data).
+            {% if not static %}
+            <form method="POST" action="/enrich/{{ session.session_id }}" style="display:inline">
+                <button type="submit" class="scan-now-btn">Scan Now</button>
+            </form>
+            {% endif %}
+        </div>
+        <div class="messages">
+            {% set ns2 = namespace(msg_num=message_count) %}
+            {% for turn in new_turns %}
+                {% if turn.user_message %}
+                {% set ns2.msg_num = ns2.msg_num + 1 %}
+                <div class="message user basic-turn" id="msg-{{ ns2.msg_num }}">
+                    <div class="message-header">
+                        <div class="message-role">user</div>
+                        <a href="#msg-{{ ns2.msg_num }}" class="message-anchor" title="Link to this message">#{{ ns2.msg_num }}</a>
+                    </div>
+                    {{ turn.user_message | markdown | safe }}
+                </div>
+                {% endif %}
+                {% if turn.assistant_response %}
+                {% set ns2.msg_num = ns2.msg_num + 1 %}
+                <div class="message assistant basic-turn" id="msg-{{ ns2.msg_num }}">
+                    <div class="message-header">
+                        <div class="message-role">assistant</div>
+                        <a href="#msg-{{ ns2.msg_num }}" class="message-anchor" title="Link to this message">#{{ ns2.msg_num }}</a>
+                    </div>
+                    {{ turn.assistant_response | markdown | safe }}
+                </div>
+                {% endif %}
+            {% endfor %}
+        </div>
+        {%- endif %}
         {% else %}
         {# Unenriched path: show basic turns data #}
         {% if not static %}
