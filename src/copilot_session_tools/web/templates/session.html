@@ -95,6 +95,7 @@ header h1 {
     text-decoration: underline;
 }
 
+{% if not static %}
 .flash-message {
     padding: 10px 16px;
     margin-bottom: 12px;
@@ -116,6 +117,7 @@ header h1 {
     color: #a0c8f8;
     border: 1px solid #203a5a;
 }
+{% endif %}
 
 .session-meta {
     color: var(--text-secondary);
