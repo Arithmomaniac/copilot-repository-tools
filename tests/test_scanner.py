@@ -1321,29 +1321,42 @@ class TestCLINewEventHandlers:
                     blocks.append(cb)
         return blocks
 
+    def _find_subagent_blocks(self, session):
+        """Return all subagent content blocks."""
+        blocks = []
+        for msg in session.messages:
+            for cb in msg.content_blocks:
+                if cb.kind == "subagent":
+                    blocks.append(cb)
+        return blocks
+
     # --- subagent.started ---
 
     def test_subagent_started(self, tmp_path):
+        """subagent.started with no matching end emits a subagent block on flush."""
         session = self._parse(
             tmp_path,
             {"type": "subagent.started", "data": {"agentDisplayName": "code-review", "agentName": "cr"}},
         )
-        blocks = self._find_status_blocks(session, "subagent")
+        blocks = self._find_subagent_blocks(session)
         assert len(blocks) == 1
-        assert blocks[0].content == "🤖 Subagent started: code-review"
+        assert blocks[0].description == "code-review"
+        assert "code-review" in blocks[0].content
 
     def test_subagent_started_fallback_to_agent_name(self, tmp_path):
+        """subagent.started uses agentName when agentDisplayName is absent."""
         session = self._parse(
             tmp_path,
             {"type": "subagent.started", "data": {"agentName": "fallback-agent"}},
         )
-        blocks = self._find_status_blocks(session, "subagent")
+        blocks = self._find_subagent_blocks(session)
         assert len(blocks) == 1
-        assert blocks[0].content == "🤖 Subagent started: fallback-agent"
+        assert "fallback-agent" in blocks[0].content
 
     # --- subagent.completed ---
 
     def test_subagent_completed(self, tmp_path):
+        """subagent.completed with no matching started emits a fallback status block."""
         session = self._parse(
             tmp_path,
             {"type": "subagent.completed", "data": {"agentDisplayName": "explorer", "agentName": "ex"}},
@@ -1355,6 +1368,7 @@ class TestCLINewEventHandlers:
     # --- subagent.failed ---
 
     def test_subagent_failed(self, tmp_path):
+        """subagent.failed with no matching started emits a fallback status block."""
         session = self._parse(
             tmp_path,
             {"type": "subagent.failed", "data": {"agentDisplayName": "builder", "error": "timeout"}},
@@ -1382,6 +1396,51 @@ class TestCLINewEventHandlers:
         assert len(blocks) == 1
         assert blocks[0].content == f"❌ Subagent failed: builder — {'x' * 200}…"
         assert len(long_error) > 200  # sanity check
+
+    # --- subagent grouping ---
+
+    def test_subagent_groups_content(self, tmp_path):
+        """Events between subagent.started and subagent.completed are nested in a subagent block."""
+        session = self._parse(
+            tmp_path,
+            {"type": "subagent.started", "data": {"agentDisplayName": "code-review"}},
+            {"type": "assistant.message", "timestamp": "1000", "data": {"content": "Reviewing code..."}},
+            {"type": "subagent.completed", "data": {"agentDisplayName": "code-review"}},
+        )
+        blocks = self._find_subagent_blocks(session)
+        assert len(blocks) == 1
+        assert "code-review" in blocks[0].content
+        assert blocks[0].content.startswith("✅")
+        # Nested content contains the assistant text
+        nested_text = [b for b in blocks[0].nested_blocks if b.kind == "text"]
+        assert any("Reviewing code..." in b.content for b in nested_text)
+
+    def test_subagent_failed_groups_content(self, tmp_path):
+        """Events between subagent.started and subagent.failed are nested in the subagent block."""
+        session = self._parse(
+            tmp_path,
+            {"type": "subagent.started", "data": {"agentDisplayName": "builder"}},
+            {"type": "assistant.message", "timestamp": "1000", "data": {"content": "Building..."}},
+            {"type": "subagent.failed", "data": {"agentDisplayName": "builder", "error": "build error"}},
+        )
+        blocks = self._find_subagent_blocks(session)
+        assert len(blocks) == 1
+        assert blocks[0].content == "❌ Subagent failed: builder — build error"
+        nested_text = [b for b in blocks[0].nested_blocks if b.kind == "text"]
+        assert any("Building..." in b.content for b in nested_text)
+
+    def test_subagent_no_end_event_flushed_as_subagent_block(self, tmp_path):
+        """An unfinished subagent (no end event) is emitted as a subagent block on flush."""
+        session = self._parse(
+            tmp_path,
+            {"type": "subagent.started", "data": {"agentDisplayName": "explorer"}},
+            {"type": "assistant.message", "timestamp": "1000", "data": {"content": "Exploring..."}},
+        )
+        blocks = self._find_subagent_blocks(session)
+        assert len(blocks) == 1
+        assert "explorer" in blocks[0].content
+        nested_text = [b for b in blocks[0].nested_blocks if b.kind == "text"]
+        assert any("Exploring..." in b.content for b in nested_text)
 
     # --- session.handoff ---
 

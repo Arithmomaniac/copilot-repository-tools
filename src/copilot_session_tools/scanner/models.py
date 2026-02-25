@@ -58,9 +58,10 @@ class ContentBlock:
     This allows differentiation between thinking/reasoning and regular output.
     """
 
-    kind: str  # 'text', 'thinking', 'tool', 'promptFile', etc.
+    kind: str  # 'text', 'thinking', 'tool', 'promptFile', 'subagent', etc.
     content: str
     description: str | None = None  # Optional description (e.g., generatedTitle for thinking blocks)
+    nested_blocks: list["ContentBlock"] = field(default_factory=list)  # Nested blocks (e.g., subagent content)
 
 
 @dataclass

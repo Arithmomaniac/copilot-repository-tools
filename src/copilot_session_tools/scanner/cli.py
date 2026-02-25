@@ -71,9 +71,29 @@ class _CliSessionBuilder:
         self.current_assistant_command_runs: list[CommandRun] = []
         self.current_assistant_timestamp: str | None = None
         self.pending_tool_requests: dict[str, dict] = {}
+        # Stack of (display_name, blocks) for active nested subagents
+        self._subagent_stack: list[tuple[str, list[ContentBlock]]] = []
+
+    def _append_block(self, block: ContentBlock) -> None:
+        """Append a content block to the current active context (subagent or main)."""
+        if self._subagent_stack:
+            self._subagent_stack[-1][1].append(block)
+        else:
+            self.current_assistant_content_blocks.append(block)
 
     def flush_assistant_message(self) -> None:
         """Flush accumulated assistant content blocks into a single message."""
+        # Flush any incomplete subagent stacks first
+        while self._subagent_stack:
+            display_name, nested = self._subagent_stack.pop()
+            block = ContentBlock(
+                kind="subagent",
+                content=f"🤖 Subagent: {display_name}",
+                description=display_name,
+                nested_blocks=nested,
+            )
+            self.current_assistant_content_blocks.append(block)
+
         has_content = self.current_assistant_content_blocks or self.current_assistant_tool_invocations or self.current_assistant_command_runs
         if not has_content:
             return
@@ -176,7 +196,7 @@ class _CliSessionBuilder:
         if tool_name == "report_intent":
             intent_text = arguments.get("intent", arguments.get("description", ""))
             if intent_text:
-                self.current_assistant_content_blocks.append(
+                self._append_block(
                     ContentBlock(
                         kind="intent",
                         content=intent_text,
@@ -187,7 +207,7 @@ class _CliSessionBuilder:
         if tool_name == "skill":
             skill_name = arguments.get("name", arguments.get("skill", ""))
             if skill_name:
-                self.current_assistant_content_blocks.append(
+                self._append_block(
                     ContentBlock(
                         kind="skill",
                         content=skill_name,
@@ -218,7 +238,7 @@ class _CliSessionBuilder:
                             content += f"\n   ✅ **Answer:** {answer}"
                     else:
                         content += "\n   ⏭️ *Skipped*"
-                self.current_assistant_content_blocks.append(
+                self._append_block(
                     ContentBlock(
                         kind="ask_user",
                         content=content,
@@ -242,26 +262,30 @@ class _CliSessionBuilder:
             cmd_display = cmd_run.title or cmd_run.command
             if len(cmd_display) > 60:
                 cmd_display = cmd_display[:57] + "..."
-            self.current_assistant_content_blocks.append(
+            self._append_block(
                 ContentBlock(
                     kind="toolInvocation",
                     content=f"$ {cmd_run.command}" if cmd_run.command else cmd_display,
                     description=cmd_run.title,
                 )
             )
-            self.current_assistant_command_runs.append(cmd_run)
+            # Only add to message-level list when not inside a subagent
+            if not self._subagent_stack:
+                self.current_assistant_command_runs.append(cmd_run)
 
         elif tool_inv:
             # Add tool invocation inline as a content block
             display_text = tool_inv.invocation_message or tool_inv.name
-            self.current_assistant_content_blocks.append(
+            self._append_block(
                 ContentBlock(
                     kind="toolInvocation",
                     content=display_text,
                     description=tool_inv.name,
                 )
             )
-            self.current_assistant_tool_invocations.append(tool_inv)
+            # Only add to message-level list when not inside a subagent
+            if not self._subagent_stack:
+                self.current_assistant_tool_invocations.append(tool_inv)
 
 
 def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
@@ -441,7 +465,7 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
 
                 # Add any text content first
                 if content and content.strip():
-                    builder.current_assistant_content_blocks.append(
+                    builder._append_block(
                         ContentBlock(
                             kind="text",
                             content=content.strip(),
@@ -472,7 +496,7 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
             elif event_type == "abort":
                 # Session or turn was aborted - add as status block
                 abort_reason = event_data.get("reason", "unknown")
-                builder.current_assistant_content_blocks.append(
+                builder._append_block(
                     ContentBlock(
                         kind="status",
                         content=f"Aborted: {abort_reason}",
@@ -484,7 +508,7 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                 # Session encountered an error - add as status block
                 error_type = event_data.get("errorType", "unknown")
                 error_message = event_data.get("message", "")
-                builder.current_assistant_content_blocks.append(
+                builder._append_block(
                     ContentBlock(
                         kind="status",
                         content=f"Error: {error_message}" if error_message else f"Error: {error_type}",
@@ -495,7 +519,7 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
             elif event_type == "session.model_change":
                 # Model was changed during session
                 new_model = event_data.get("newModel", "unknown")
-                builder.current_assistant_content_blocks.append(
+                builder._append_block(
                     ContentBlock(
                         kind="status",
                         content=f"Switched to {new_model}",
@@ -507,7 +531,7 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                 # Reasoning content - similar to VS Code thinking blocks
                 reasoning_content = event_data.get("content", "")
                 if reasoning_content and reasoning_content.strip():
-                    builder.current_assistant_content_blocks.append(
+                    builder._append_block(
                         ContentBlock(
                             kind="thinking",  # Use existing kind for consistency
                             content=reasoning_content.strip(),
@@ -526,7 +550,7 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                         if line.strip().startswith("description:"):
                             skill_desc = line.split("description:", 1)[1].strip()
                             break
-                builder.current_assistant_content_blocks.append(
+                builder._append_block(
                     ContentBlock(
                         kind="skill",
                         content=f"Loaded skill: {skill_name}",
@@ -546,7 +570,7 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                         overview = overview[:197] + "..."
                 if not overview:
                     overview = f"Session compacted to checkpoint {checkpoint_num}"
-                builder.current_assistant_content_blocks.append(
+                builder._append_block(
                     ContentBlock(
                         kind="status",
                         content=overview,
@@ -557,11 +581,22 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
             # --- Subagent lifecycle events ---
             elif event_type == "subagent.started":
                 display_name = event_data.get("agentDisplayName") or event_data.get("agentName", "unknown")
-                builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=f"🤖 Subagent started: {display_name}", description="subagent"))
+                builder._subagent_stack.append((display_name, []))
 
             elif event_type == "subagent.completed":
                 display_name = event_data.get("agentDisplayName") or event_data.get("agentName", "unknown")
-                builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=f"✅ Subagent completed: {display_name}", description="subagent"))
+                if builder._subagent_stack:
+                    _, nested = builder._subagent_stack.pop()
+                    builder._append_block(
+                        ContentBlock(
+                            kind="subagent",
+                            content=f"✅ Subagent: {display_name}",
+                            description=display_name,
+                            nested_blocks=nested,
+                        )
+                    )
+                else:
+                    builder._append_block(ContentBlock(kind="status", content=f"✅ Subagent completed: {display_name}", description="subagent"))
 
             elif event_type == "subagent.failed":
                 display_name = event_data.get("agentDisplayName") or event_data.get("agentName", "unknown")
@@ -569,7 +604,18 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                 if len(error) > 200:
                     error = error[:200] + "…"
                 error_suffix = f" — {error}" if error else ""
-                builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=f"❌ Subagent failed: {display_name}{error_suffix}", description="subagent"))
+                if builder._subagent_stack:
+                    _, nested = builder._subagent_stack.pop()
+                    builder._append_block(
+                        ContentBlock(
+                            kind="subagent",
+                            content=f"❌ Subagent failed: {display_name}{error_suffix}",
+                            description=display_name,
+                            nested_blocks=nested,
+                        )
+                    )
+                else:
+                    builder._append_block(ContentBlock(kind="status", content=f"❌ Subagent failed: {display_name}{error_suffix}", description="subagent"))
 
             # --- Session lifecycle events ---
             elif event_type == "session.handoff":
@@ -582,27 +628,27 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                     repo_info = f" ({owner}/{name} @ {branch})" if branch else f" ({owner}/{name})"
                 else:
                     repo_info = ""
-                builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=f"🔄 Session handoff from {source_type}{repo_info}", description="handoff"))
+                builder._append_block(ContentBlock(kind="status", content=f"🔄 Session handoff from {source_type}{repo_info}", description="handoff"))
 
             elif event_type == "session.warning":
                 message = (event_data.get("message") or "").strip()
                 if message:
-                    builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=f"⚠️ {message}", description="warning"))
+                    builder._append_block(ContentBlock(kind="status", content=f"⚠️ {message}", description="warning"))
 
             elif event_type == "session.mode_changed":
                 prev_mode = event_data.get("previousMode") or "unknown"
                 new_mode = event_data.get("newMode") or "unknown"
-                builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=f"Mode changed: {prev_mode} → {new_mode}", description="mode-change"))
+                builder._append_block(ContentBlock(kind="status", content=f"Mode changed: {prev_mode} → {new_mode}", description="mode-change"))
 
             elif event_type == "session.context_changed":
                 cwd = event_data.get("cwd") or ""
                 branch = event_data.get("branch") or ""
                 branch_info = f" ({branch})" if branch else ""
-                builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=f"Context changed: {cwd}{branch_info}", description="context-change"))
+                builder._append_block(ContentBlock(kind="status", content=f"Context changed: {cwd}{branch_info}", description="context-change"))
 
             elif event_type == "session.plan_changed":
                 operation = event_data.get("operation") or "changed"
-                builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=f"Plan {operation}", description="plan-change"))
+                builder._append_block(ContentBlock(kind="status", content=f"Plan {operation}", description="plan-change"))
 
             # Skip internal/metadata events (already parsed in metadata extraction or no user content)
             elif event_type in (
