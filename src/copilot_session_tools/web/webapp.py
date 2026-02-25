@@ -7,7 +7,8 @@ from urllib.parse import unquote
 import markdown
 from flask import Flask, flash, jsonify, make_response, redirect, render_template, request, session, url_for
 
-from copilot_session_tools import Database, generate_session_filename, get_vscode_storage_paths, scan_chat_sessions
+from copilot_session_tools import Database, generate_session_filename, get_vscode_storage_paths
+from copilot_session_tools.refresh import run_refresh
 from copilot_session_tools.scanner.cli import _parse_cli_jsonl_file
 
 # Create a reusable markdown converter with extensions
@@ -502,42 +503,14 @@ def create_app(
 
         include_cli = app.config.get("INCLUDE_CLI", True)
 
-        added = 0
-        updated = 0
-        skipped = 0
-
-        for chat_session in scan_chat_sessions(storage_paths, include_cli=include_cli):
-            if full_refresh:
-                # In full mode, update all sessions
-                # Try to add first - if it fails (returns False), session exists and we update
-                if db.add_session(chat_session):
-                    added += 1
-                else:
-                    db.update_session(chat_session)
-                    updated += 1
-            else:
-                # Incremental mode: use needs_update() to determine if session should be updated
-                needs_update = db.needs_update(
-                    chat_session.session_id,
-                    chat_session.source_file_mtime,
-                    chat_session.source_file_size,
-                )
-                if needs_update:
-                    # Try to add first - if it fails (returns False), session exists and we update
-                    if db.add_session(chat_session):
-                        added += 1
-                    else:
-                        db.update_session(chat_session)
-                        updated += 1
-                else:
-                    skipped += 1
+        result = run_refresh(db, storage_paths, full=full_refresh, include_cli=include_cli)
 
         # Store refresh result in Flask session for display after redirect
         session["refresh_result"] = {
-            "added": added,
-            "updated": updated,
-            "skipped": skipped,
-            "mode": "full" if full_refresh else "incremental",
+            "added": result["added"],
+            "updated": result["updated"],
+            "skipped": result["skipped"],
+            "mode": result["mode"],
         }
 
         return redirect(url_for("index"))

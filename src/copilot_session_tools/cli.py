@@ -5,7 +5,6 @@ and exporting VS Code GitHub Copilot chat history.
 """
 
 import sys
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated
@@ -23,14 +22,11 @@ from copilot_session_tools import (
     generate_session_filename,
     generate_session_html_filename,
     get_vscode_storage_paths,
-    scan_chat_sessions,
 )
+from copilot_session_tools.refresh import run_refresh
 from copilot_session_tools.scanner import (
     PARSER_VERSION,
-    SessionFileInfo,
     _parse_cli_jsonl_file,
-    parse_session_file,
-    scan_session_files,
 )
 
 # On Windows, reconfigure stdout/stderr to UTF-8 when piped to prevent
@@ -78,9 +74,6 @@ console = Console()
 
 # Module-level state set by the app callback
 _unenriched_only: bool = False
-
-# Number of threads for parallel file parsing
-PARSE_WORKERS = 4
 
 
 def version_callback(value: bool):
@@ -206,79 +199,10 @@ def scan(
         for path, ed in paths:
             console.print(f"  Checking: {path} ({ed})")
 
-    added = 0
-    updated = 0
-    skipped = 0
-
-    if full:
-        # Full mode: parse and update all sessions
-        for session in scan_chat_sessions(paths):
-            existing = database.get_session(session.session_id)
-            if existing:
-                database.update_session(session)
-                updated += 1
-                if verbose:
-                    workspace = session.workspace_name or "Unknown workspace"
-                    console.print(f"  Updated: {workspace} ({len(session.messages)} messages)")
-            else:
-                database.add_session(session)
-                added += 1
-                if verbose:
-                    workspace = session.workspace_name or "Unknown workspace"
-                    console.print(f"  Added: {workspace} ({len(session.messages)} messages)")
-    else:
-        # Incremental mode: load all file metadata upfront for fast comparison
-        stored_metadata = database.get_all_file_metadata()
-
-        # Collect files that need updating
-        files_to_update: list[SessionFileInfo] = []
-        for file_info in scan_session_files(paths):
-            source_file = str(file_info.file_path)
-            stored = stored_metadata.get(source_file)
-
-            needs_update = stored is None or stored[0] is None or stored[1] is None or stored[0] != file_info.mtime or stored[1] != file_info.size
-
-            if needs_update:
-                files_to_update.append(file_info)
-            else:
-                skipped += 1
-                if verbose:
-                    workspace = file_info.workspace_name or "Unknown workspace"
-                    console.print(f"  Skipped (unchanged): {workspace}")
-
-        # Parse files in parallel (I/O + CPU bound)
-        if files_to_update:
-            with ThreadPoolExecutor(max_workers=PARSE_WORKERS) as executor:
-                parse_results = list(executor.map(parse_session_file, files_to_update))
-
-            # Separate new sessions from updates
-            sessions_to_add: list[ChatSession] = []
-            sessions_to_update: list[ChatSession] = []
-
-            for sessions in parse_results:
-                for session in sessions:
-                    existing = database.get_session(session.session_id)
-                    if existing:
-                        sessions_to_update.append(session)
-                    else:
-                        sessions_to_add.append(session)
-
-            # Batch insert new sessions (single transaction)
-            if sessions_to_add:
-                batch_added, _batch_skipped = database.add_sessions_batch(sessions_to_add)
-                added += batch_added
-                if verbose:
-                    for session in sessions_to_add:
-                        workspace = session.workspace_name or "Unknown workspace"
-                        console.print(f"  Added: {workspace} ({len(session.messages)} messages)")
-
-            # Update existing sessions (must be individual due to delete+insert)
-            for session in sessions_to_update:
-                database.update_session(session)
-                updated += 1
-                if verbose:
-                    workspace = session.workspace_name or "Unknown workspace"
-                    console.print(f"  Updated: {workspace} ({len(session.messages)} messages)")
+    result = run_refresh(database, paths, full=full)
+    added = result["added"]
+    updated = result["updated"]
+    skipped = result["skipped"]
 
     console.print("\n[green]VS Code import complete:[/green]")
     console.print(f"  Added: {added} sessions")

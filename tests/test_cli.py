@@ -21,9 +21,14 @@ def runner():
 def mock_no_vscode_paths():
     """Mock storage paths to return empty for faster tests.
 
-    We patch at the CLI module level since that's where scan_chat_sessions is imported.
+    We patch at the refresh module level since that's where scan_chat_sessions
+    and scan_session_files are now called from.
     """
-    with patch("copilot_session_tools.cli.get_vscode_storage_paths", return_value=[]), patch("copilot_session_tools.cli.scan_chat_sessions", return_value=iter([])):
+    with (
+        patch("copilot_session_tools.cli.get_vscode_storage_paths", return_value=[]),
+        patch("copilot_session_tools.refresh.scan_chat_sessions", return_value=iter([])),
+        patch("copilot_session_tools.refresh.scan_session_files", return_value=iter([])),
+    ):
         yield
 
 
