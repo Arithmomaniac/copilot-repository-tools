@@ -23,10 +23,7 @@ from copilot_session_tools import (
     generate_session_html_filename,
     get_vscode_storage_paths,
 )
-from copilot_session_tools.refresh import enrich_single_session, run_refresh
-from copilot_session_tools.scanner import (
-    PARSER_VERSION,
-)
+from copilot_session_tools.refresh import enrich_single_session, run_enrichment, run_refresh
 
 # On Windows, reconfigure stdout/stderr to UTF-8 when piped to prevent
 # Rich from falling back to cp1252 which can't handle Unicode output
@@ -208,8 +205,16 @@ def scan(
         elif isinstance(item, _SFI):
             workspace = item.workspace_name or "Unknown workspace"
             console.print(f"  Skipped (unchanged): {workspace}")
+        elif event == "enriched":
+            console.print(f"  Enriched: {item}")
+        elif event == "reparsed":
+            console.print(f"  Reparsed: {item}")
+        elif event == "enrich_failed":
+            console.print(f"  [yellow]{item}[/yellow]")
 
-    result = run_refresh(database, paths, full=full, on_progress=_verbose_progress if verbose else None)
+    progress_cb = _verbose_progress if verbose else None
+
+    result = run_refresh(database, paths, full=full, on_progress=progress_cb)
     added = result.added
     updated = result.updated
     skipped = result.skipped
@@ -219,60 +224,17 @@ def scan(
     console.print(f"  Updated: {updated} sessions")
     console.print(f"  Skipped (unchanged): {skipped} sessions")
 
-    # --- CLI session enrichment from built-in sessions table ---
+    # --- CLI session enrichment from Chronicle's built-in session store ---
     console.print("\n[cyan]Enriching CLI sessions...[/cyan]")
-    enriched = 0
-    enrich_failed = 0
+    enrich_result = run_enrichment(database, on_progress=progress_cb)
 
-    # Discover sessions needing enrichment (new or stale)
-    try:
-        needing_enrichment = database.discover_sessions_needing_enrichment()
-    except Exception:
-        needing_enrichment = []  # Built-in sessions table may not exist
-    for entry in needing_enrichment:
-        sid = entry["session_id"]
-        error = enrich_single_session(database, sid, validate=False)
-        if error is None:
-            enriched += 1
-            if verbose:
-                console.print(f"  Enriched: {sid}")
-        else:
-            enrich_failed += 1
-            if verbose:
-                console.print(f"  [yellow]{error}[/yellow]")
-
-    # Reparse sessions with outdated parser version
-    reparsed = 0
-    reparse_failed = 0
-    try:
-        needing_reparse = database.get_sessions_needing_reparse(PARSER_VERSION)
-    except Exception:
-        needing_reparse = []
-    for entry in needing_reparse:
-        sid = entry["session_id"]
-        error = enrich_single_session(database, sid, validate=False)
-        if error is None:
-            reparsed += 1
-            if verbose:
-                console.print(f"  Reparsed: {sid}")
-        else:
-            reparse_failed += 1
-            if verbose:
-                console.print(f"  [yellow]{error}[/yellow]")
-
-    console.print(f"  Enriched: {enriched} sessions")
-    if reparsed:
-        console.print(f"  Reparsed: {reparsed} sessions (parser version upgrade)")
-    if enrich_failed or reparse_failed:
-        console.print(f"  Skipped (no events file or parse error): {enrich_failed + reparse_failed} sessions")
-
-    # --- Cleanup orphaned cst_sessions ---
-    try:
-        orphaned = database.cleanup_orphaned_cst_sessions()
-    except Exception:
-        orphaned = []
-    if orphaned:
-        console.print(f"\n[yellow]Cleaned up {len(orphaned)} orphaned session(s)[/yellow]")
+    console.print(f"  Enriched: {enrich_result.enriched} sessions")
+    if enrich_result.reparsed:
+        console.print(f"  Reparsed: {enrich_result.reparsed} sessions (parser version upgrade)")
+    if enrich_result.failed:
+        console.print(f"  Skipped (no events file or parse error): {enrich_result.failed} sessions")
+    if enrich_result.orphaned:
+        console.print(f"\n[yellow]Cleaned up {enrich_result.orphaned} orphaned session(s)[/yellow]")
 
     stats = database.get_stats()
     console.print("\n[cyan]Database now contains:[/cyan]")

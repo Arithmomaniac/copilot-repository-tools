@@ -8,7 +8,7 @@ import markdown
 from flask import Flask, flash, jsonify, make_response, redirect, render_template, request, session, url_for
 
 from copilot_session_tools import Database, generate_session_filename, get_vscode_storage_paths
-from copilot_session_tools.refresh import enrich_single_session, run_refresh
+from copilot_session_tools.refresh import enrich_single_session, run_enrichment, run_refresh
 
 # Create a reusable markdown converter with extensions
 _md_converter = markdown.Markdown(
@@ -238,7 +238,6 @@ def create_app(
     db_path: str,
     title: str = "Copilot Chat Archive",
     storage_paths: list | None = None,
-    include_cli: bool = True,
 ) -> Flask:
     """Create and configure the Flask application.
 
@@ -247,7 +246,6 @@ def create_app(
         title: Title for the archive.
         storage_paths: Optional list of (path, edition) tuples for scanning.
                        If None, uses default VS Code storage paths.
-        include_cli: Whether to include CLI sessions when scanning (default: True).
 
     Returns:
         Configured Flask application.
@@ -279,7 +277,6 @@ def create_app(
     app.config["DB_PATH"] = db_path
     app.config["ARCHIVE_TITLE"] = title
     app.config["STORAGE_PATHS"] = storage_paths  # None means use default VS Code paths
-    app.config["INCLUDE_CLI"] = include_cli
 
     def _create_snippet(content: str, max_length: int = 150) -> str:
         """Create a snippet from content, normalizing whitespace."""
@@ -500,9 +497,8 @@ def create_app(
         if storage_paths is None:
             storage_paths = get_vscode_storage_paths()
 
-        include_cli = app.config.get("INCLUDE_CLI", True)
-
-        result = run_refresh(db, storage_paths, full=full_refresh, include_cli=include_cli)
+        result = run_refresh(db, storage_paths, full=full_refresh)
+        enrich_result = run_enrichment(db)
 
         # Store refresh result in Flask session for display after redirect
         session["refresh_result"] = {
@@ -510,6 +506,8 @@ def create_app(
             "updated": result.updated,
             "skipped": result.skipped,
             "mode": result.mode,
+            "enriched": enrich_result.enriched,
+            "reparsed": enrich_result.reparsed,
         }
 
         return redirect(url_for("index"))

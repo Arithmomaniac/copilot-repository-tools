@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from copilot_session_tools import Database, scan_chat_sessions
-from copilot_session_tools.scanner import SessionFileInfo, parse_session_file, scan_session_files
+from copilot_session_tools.scanner import PARSER_VERSION, SessionFileInfo, parse_session_file, scan_session_files
 from copilot_session_tools.scanner.cli import _parse_cli_jsonl_file
 
 # Regex for validating session IDs (hex + hyphens, i.e. UUIDs)
@@ -27,8 +27,9 @@ SESSION_STATE_DIR = Path.home() / ".copilot" / "session-state"
 PARSE_WORKERS = 4
 
 #: Callback signature: ``(event, item)`` where *event* is one of
-#: ``"skipped"``, ``"added"``, ``"updated"`` and *item* is a
-#: :class:`SessionFileInfo` (for skipped) or :class:`ChatSession`.
+#: ``"skipped"``, ``"added"``, ``"updated"``, ``"enriched"``, ``"reparsed"``,
+#: ``"enrich_failed"`` and *item* is a :class:`SessionFileInfo`,
+#: :class:`ChatSession`, or session-ID string.
 ProgressCallback = Callable[[str, Any], None]
 
 
@@ -49,14 +50,26 @@ class RefreshResult:
     mode: RefreshMode
 
 
+@dataclass
+class EnrichResult:
+    """Counts returned by an enrichment operation."""
+
+    enriched: int
+    reparsed: int
+    failed: int
+    orphaned: int
+
+
 def run_refresh(
     database: Database,
     storage_paths: list[tuple[str, str]] | None,
     full: bool = False,
-    include_cli: bool = True,
     on_progress: ProgressCallback | None = None,
 ) -> RefreshResult:
-    """Scan for Copilot chat sessions and import them into *database*.
+    """Scan for VS Code Copilot chat sessions and import them into *database*.
+
+    CLI sessions are **not** handled here — they flow through Chronicle's
+    built-in session store and are enriched via :func:`run_enrichment`.
 
     Args:
         database: Open :class:`~copilot_session_tools.Database` to write into.
@@ -66,13 +79,7 @@ def run_refresh(
             of whether its source file has changed.  When ``False`` (the
             default) only files whose ``mtime`` or ``size`` differ from the
             stored metadata are re-imported.
-        include_cli: Whether to also scan Copilot CLI session directories
-            (default ``True``).
         on_progress: Optional callback invoked for every add/update/skip event.
-            Receives ``(event, item)`` where *event* is ``"added"``,
-            ``"updated"``, or ``"skipped"`` and *item* is the relevant
-            :class:`~copilot_session_tools.scanner.SessionFileInfo` or
-            :class:`~copilot_session_tools.scanner.models.ChatSession`.
 
     Returns:
         A :class:`RefreshResult` with ``added``, ``updated``,
@@ -84,7 +91,7 @@ def run_refresh(
 
     if full:
         # Full mode: parse every discovered session and upsert it.
-        for chat_session in scan_chat_sessions(storage_paths, include_cli=include_cli):
+        for chat_session in scan_chat_sessions(storage_paths, include_cli=False):
             if database.add_session(chat_session):
                 added += 1
                 if on_progress:
@@ -100,7 +107,7 @@ def run_refresh(
         stored_metadata = database.get_all_file_metadata()
 
         files_to_update: list[SessionFileInfo] = []
-        for file_info in scan_session_files(storage_paths, include_cli=include_cli):
+        for file_info in scan_session_files(storage_paths, include_cli=False):
             source_file = str(file_info.file_path)
             stored = stored_metadata.get(source_file)
 
@@ -143,6 +150,76 @@ def run_refresh(
                     on_progress("updated", chat_session)
 
     return RefreshResult(added=added, updated=updated, skipped=skipped, mode=RefreshMode.FULL if full else RefreshMode.INCREMENTAL)
+
+
+def run_enrichment(
+    database: Database,
+    on_progress: ProgressCallback | None = None,
+) -> EnrichResult:
+    """Enrich CLI sessions from Chronicle's built-in session store.
+
+    Discovers sessions that need enrichment (new or with more turns than
+    previously enriched) and sessions that need reparsing (outdated parser
+    version), parses their ``events.jsonl`` files, and writes enriched data
+    to the ``cst_*`` tables.  Also cleans up orphaned ``cst_sessions`` rows
+    whose built-in session has been deleted.
+
+    Args:
+        database: Open :class:`~copilot_session_tools.Database`.
+        on_progress: Optional callback invoked per enrichment event.
+            Event names: ``"enriched"``, ``"reparsed"``, ``"enrich_failed"``.
+
+    Returns:
+        An :class:`EnrichResult` with ``enriched``, ``reparsed``,
+        ``failed``, and ``orphaned`` counts.
+    """
+    enriched = 0
+    reparsed = 0
+    failed = 0
+
+    # Discover sessions needing enrichment (new or stale)
+    try:
+        needing_enrichment = database.discover_sessions_needing_enrichment()
+    except Exception:
+        needing_enrichment = []  # Built-in sessions table may not exist
+
+    for entry in needing_enrichment:
+        sid = entry["session_id"]
+        error = enrich_single_session(database, sid, validate=False)
+        if error is None:
+            enriched += 1
+            if on_progress:
+                on_progress("enriched", sid)
+        else:
+            failed += 1
+            if on_progress:
+                on_progress("enrich_failed", error)
+
+    # Reparse sessions with outdated parser version
+    try:
+        needing_reparse = database.get_sessions_needing_reparse(PARSER_VERSION)
+    except Exception:
+        needing_reparse = []
+
+    for entry in needing_reparse:
+        sid = entry["session_id"]
+        error = enrich_single_session(database, sid, validate=False)
+        if error is None:
+            reparsed += 1
+            if on_progress:
+                on_progress("reparsed", sid)
+        else:
+            failed += 1
+            if on_progress:
+                on_progress("enrich_failed", error)
+
+    # Cleanup orphaned cst_sessions
+    try:
+        orphaned_ids = database.cleanup_orphaned_cst_sessions()
+    except Exception:
+        orphaned_ids = []
+
+    return EnrichResult(enriched=enriched, reparsed=reparsed, failed=failed, orphaned=len(orphaned_ids))
 
 
 def enrich_single_session(
