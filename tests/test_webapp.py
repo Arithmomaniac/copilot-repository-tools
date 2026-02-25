@@ -48,7 +48,7 @@ def temp_db():
 @pytest.fixture
 def app(temp_db):
     """Create a Flask test app with empty storage paths for fast tests."""
-    app = create_app(temp_db, title="Test Archive", storage_paths=[], include_cli=False)
+    app = create_app(temp_db, title="Test Archive", storage_paths=[])
     app.config["TESTING"] = True
     return app
 
@@ -1099,7 +1099,7 @@ class TestNewTurnsAfterEnrichment:
 
     @pytest.fixture
     def stale_client(self, stale_enrichment_db):
-        app = create_app(stale_enrichment_db, title="Test Archive", storage_paths=[], include_cli=False)
+        app = create_app(stale_enrichment_db, title="Test Archive", storage_paths=[])
         app.config["TESTING"] = True
         return app.test_client()
 
@@ -1252,7 +1252,7 @@ class TestMarkdownApiIncludeThinking:
     @pytest.fixture
     def thinking_client(self, thinking_db):
         """Create a Flask test client with the thinking session database."""
-        app = create_app(thinking_db, storage_paths=[], include_cli=False)
+        app = create_app(thinking_db, storage_paths=[])
         app.config["TESTING"] = True
         return app.test_client()
 

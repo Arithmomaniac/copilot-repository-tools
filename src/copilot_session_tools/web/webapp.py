@@ -7,8 +7,8 @@ from urllib.parse import unquote
 import markdown
 from flask import Flask, flash, jsonify, make_response, redirect, render_template, request, session, url_for
 
-from copilot_session_tools import Database, generate_session_filename, get_vscode_storage_paths, scan_chat_sessions
-from copilot_session_tools.scanner.cli import _parse_cli_jsonl_file
+from copilot_session_tools import Database, generate_session_filename, get_vscode_storage_paths
+from copilot_session_tools.refresh import enrich_single_session, run_enrichment, run_refresh
 
 # Create a reusable markdown converter with extensions
 _md_converter = markdown.Markdown(
@@ -238,7 +238,6 @@ def create_app(
     db_path: str,
     title: str = "Copilot Chat Archive",
     storage_paths: list | None = None,
-    include_cli: bool = True,
 ) -> Flask:
     """Create and configure the Flask application.
 
@@ -247,7 +246,6 @@ def create_app(
         title: Title for the archive.
         storage_paths: Optional list of (path, edition) tuples for scanning.
                        If None, uses default VS Code storage paths.
-        include_cli: Whether to include CLI sessions when scanning (default: True).
 
     Returns:
         Configured Flask application.
@@ -279,7 +277,6 @@ def create_app(
     app.config["DB_PATH"] = db_path
     app.config["ARCHIVE_TITLE"] = title
     app.config["STORAGE_PATHS"] = storage_paths  # None means use default VS Code paths
-    app.config["INCLUDE_CLI"] = include_cli
 
     def _create_snippet(content: str, max_length: int = 150) -> str:
         """Create a snippet from content, normalizing whitespace."""
@@ -500,44 +497,17 @@ def create_app(
         if storage_paths is None:
             storage_paths = get_vscode_storage_paths()
 
-        include_cli = app.config.get("INCLUDE_CLI", True)
-
-        added = 0
-        updated = 0
-        skipped = 0
-
-        for chat_session in scan_chat_sessions(storage_paths, include_cli=include_cli):
-            if full_refresh:
-                # In full mode, update all sessions
-                # Try to add first - if it fails (returns False), session exists and we update
-                if db.add_session(chat_session):
-                    added += 1
-                else:
-                    db.update_session(chat_session)
-                    updated += 1
-            else:
-                # Incremental mode: use needs_update() to determine if session should be updated
-                needs_update = db.needs_update(
-                    chat_session.session_id,
-                    chat_session.source_file_mtime,
-                    chat_session.source_file_size,
-                )
-                if needs_update:
-                    # Try to add first - if it fails (returns False), session exists and we update
-                    if db.add_session(chat_session):
-                        added += 1
-                    else:
-                        db.update_session(chat_session)
-                        updated += 1
-                else:
-                    skipped += 1
+        result = run_refresh(db, storage_paths, full=full_refresh)
+        enrich_result = run_enrichment(db)
 
         # Store refresh result in Flask session for display after redirect
         session["refresh_result"] = {
-            "added": added,
-            "updated": updated,
-            "skipped": skipped,
-            "mode": "full" if full_refresh else "incremental",
+            "added": result.added,
+            "updated": result.updated,
+            "skipped": result.skipped,
+            "mode": result.mode,
+            "enriched": enrich_result.enriched,
+            "reparsed": enrich_result.reparsed,
         }
 
         return redirect(url_for("index"))
@@ -545,26 +515,11 @@ def create_app(
     @app.route("/enrich/<session_id>", methods=["POST"])
     def enrich_session(session_id: str):
         """Enrich a single CLI session by parsing its events.jsonl file."""
-        import re
-        from pathlib import Path
-
-        # Validate session_id is a UUID to prevent path traversal
-        if not re.match(r"^[0-9a-fA-F-]+$", session_id):
-            flash("Invalid session ID", "error")
-            return redirect(url_for("index"))
-
-        events_file = Path.home() / ".copilot" / "session-state" / session_id / "events.jsonl"
-        if not events_file.exists():
-            flash(f"events.jsonl not found for session {session_id}", "error")
+        enrich_db = Database(app.config["DB_PATH"])
+        error = enrich_single_session(enrich_db, session_id)
+        if error:
+            flash(error, "error")
             return redirect(url_for("session_view", session_id=session_id))
-
-        parsed = _parse_cli_jsonl_file(events_file)
-        if parsed is None:
-            flash(f"Failed to parse events.jsonl for session {session_id}", "error")
-            return redirect(url_for("session_view", session_id=session_id))
-
-        db = Database(app.config["DB_PATH"])
-        db.enrich_session(parsed)
         return redirect(url_for("session_view", session_id=session_id))
 
     @app.route("/api/markdown/<session_id>", methods=["GET"])

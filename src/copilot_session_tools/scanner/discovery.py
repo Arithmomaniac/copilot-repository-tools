@@ -366,9 +366,15 @@ def parse_session_file(file_info: SessionFileInfo) -> list[ChatSession]:
         if session:
             sessions.append(session)
 
-    # Stamp source_format based on how the session was parsed
+    # Stamp source_format and scan-time metadata on every returned session.
+    # Using the scan-time mtime/size (from file_info) rather than the parse-time
+    # stat() inside the individual parsers ensures that the stored metadata
+    # matches what the next incremental scan will compare against, preventing
+    # files from being unnecessarily re-imported every run.
     source_format = "cli" if file_info.session_type == "cli" else file_info.file_type
     for s in sessions:
         s.source_format = source_format
+        s.source_file_mtime = file_info.mtime
+        s.source_file_size = file_info.size
 
     return sessions

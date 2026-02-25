@@ -5,7 +5,6 @@ and exporting VS Code GitHub Copilot chat history.
 """
 
 import sys
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated
@@ -23,15 +22,8 @@ from copilot_session_tools import (
     generate_session_filename,
     generate_session_html_filename,
     get_vscode_storage_paths,
-    scan_chat_sessions,
 )
-from copilot_session_tools.scanner import (
-    PARSER_VERSION,
-    SessionFileInfo,
-    _parse_cli_jsonl_file,
-    parse_session_file,
-    scan_session_files,
-)
+from copilot_session_tools.refresh import enrich_single_session, run_enrichment, run_refresh
 
 # On Windows, reconfigure stdout/stderr to UTF-8 when piped to prevent
 # Rich from falling back to cp1252 which can't handle Unicode output
@@ -78,9 +70,6 @@ console = Console()
 
 # Module-level state set by the app callback
 _unenriched_only: bool = False
-
-# Number of threads for parallel file parsing
-PARSE_WORKERS = 4
 
 
 def version_callback(value: bool):
@@ -206,154 +195,46 @@ def scan(
         for path, ed in paths:
             console.print(f"  Checking: {path} ({ed})")
 
-    added = 0
-    updated = 0
-    skipped = 0
+    def _verbose_progress(event: str, item: object) -> None:
+        from copilot_session_tools.scanner.models import ChatSession as _CS
+        from copilot_session_tools.scanner.models import SessionFileInfo as _SFI
 
-    if full:
-        # Full mode: parse and update all sessions
-        for session in scan_chat_sessions(paths):
-            existing = database.get_session(session.session_id)
-            if existing:
-                database.update_session(session)
-                updated += 1
-                if verbose:
-                    workspace = session.workspace_name or "Unknown workspace"
-                    console.print(f"  Updated: {workspace} ({len(session.messages)} messages)")
-            else:
-                database.add_session(session)
-                added += 1
-                if verbose:
-                    workspace = session.workspace_name or "Unknown workspace"
-                    console.print(f"  Added: {workspace} ({len(session.messages)} messages)")
-    else:
-        # Incremental mode: load all file metadata upfront for fast comparison
-        stored_metadata = database.get_all_file_metadata()
+        if isinstance(item, _CS):
+            workspace = item.workspace_name or "Unknown workspace"
+            console.print(f"  {event.capitalize()}: {workspace} ({len(item.messages)} messages)")
+        elif isinstance(item, _SFI):
+            workspace = item.workspace_name or "Unknown workspace"
+            console.print(f"  Skipped (unchanged): {workspace}")
+        elif event == "enriched":
+            console.print(f"  Enriched: {item}")
+        elif event == "reparsed":
+            console.print(f"  Reparsed: {item}")
+        elif event == "enrich_failed":
+            console.print(f"  [yellow]{item}[/yellow]")
 
-        # Collect files that need updating
-        files_to_update: list[SessionFileInfo] = []
-        for file_info in scan_session_files(paths):
-            source_file = str(file_info.file_path)
-            stored = stored_metadata.get(source_file)
+    progress_cb = _verbose_progress if verbose else None
 
-            needs_update = stored is None or stored[0] is None or stored[1] is None or stored[0] != file_info.mtime or stored[1] != file_info.size
-
-            if needs_update:
-                files_to_update.append(file_info)
-            else:
-                skipped += 1
-                if verbose:
-                    workspace = file_info.workspace_name or "Unknown workspace"
-                    console.print(f"  Skipped (unchanged): {workspace}")
-
-        # Parse files in parallel (I/O + CPU bound)
-        if files_to_update:
-            with ThreadPoolExecutor(max_workers=PARSE_WORKERS) as executor:
-                parse_results = list(executor.map(parse_session_file, files_to_update))
-
-            # Separate new sessions from updates
-            sessions_to_add: list[ChatSession] = []
-            sessions_to_update: list[ChatSession] = []
-
-            for sessions in parse_results:
-                for session in sessions:
-                    existing = database.get_session(session.session_id)
-                    if existing:
-                        sessions_to_update.append(session)
-                    else:
-                        sessions_to_add.append(session)
-
-            # Batch insert new sessions (single transaction)
-            if sessions_to_add:
-                batch_added, _batch_skipped = database.add_sessions_batch(sessions_to_add)
-                added += batch_added
-                if verbose:
-                    for session in sessions_to_add:
-                        workspace = session.workspace_name or "Unknown workspace"
-                        console.print(f"  Added: {workspace} ({len(session.messages)} messages)")
-
-            # Update existing sessions (must be individual due to delete+insert)
-            for session in sessions_to_update:
-                database.update_session(session)
-                updated += 1
-                if verbose:
-                    workspace = session.workspace_name or "Unknown workspace"
-                    console.print(f"  Updated: {workspace} ({len(session.messages)} messages)")
+    result = run_refresh(database, paths, full=full, on_progress=progress_cb)
+    added = result.added
+    updated = result.updated
+    skipped = result.skipped
 
     console.print("\n[green]VS Code import complete:[/green]")
     console.print(f"  Added: {added} sessions")
     console.print(f"  Updated: {updated} sessions")
     console.print(f"  Skipped (unchanged): {skipped} sessions")
 
-    # --- CLI session enrichment from built-in sessions table ---
+    # --- CLI session enrichment from Chronicle's built-in session store ---
     console.print("\n[cyan]Enriching CLI sessions...[/cyan]")
-    enriched = 0
-    enrich_failed = 0
-    session_state_dir = Path.home() / ".copilot" / "session-state"
+    enrich_result = run_enrichment(database, on_progress=progress_cb)
 
-    # Discover sessions needing enrichment (new or stale)
-    try:
-        needing_enrichment = database.discover_sessions_needing_enrichment()
-    except Exception:
-        needing_enrichment = []  # Built-in sessions table may not exist
-    for entry in needing_enrichment:
-        sid = entry["session_id"]
-        events_file = session_state_dir / sid / "events.jsonl"
-        if not events_file.exists():
-            enrich_failed += 1
-            if verbose:
-                console.print(f"  [yellow]No events.jsonl for {sid}[/yellow]")
-            continue
-        parsed = _parse_cli_jsonl_file(events_file)
-        if parsed:
-            database.enrich_session(parsed)
-            enriched += 1
-            if verbose:
-                console.print(f"  Enriched: {sid}")
-        else:
-            enrich_failed += 1
-            if verbose:
-                console.print(f"  [yellow]Failed to parse: {sid}[/yellow]")
-
-    # Reparse sessions with outdated parser version
-    reparsed = 0
-    reparse_failed = 0
-    try:
-        needing_reparse = database.get_sessions_needing_reparse(PARSER_VERSION)
-    except Exception:
-        needing_reparse = []
-    for entry in needing_reparse:
-        sid = entry["session_id"]
-        events_file = session_state_dir / sid / "events.jsonl"
-        if not events_file.exists():
-            reparse_failed += 1
-            if verbose:
-                console.print(f"  [yellow]No events.jsonl for reparse: {sid}[/yellow]")
-            continue
-        parsed = _parse_cli_jsonl_file(events_file)
-        if parsed:
-            database.enrich_session(parsed)
-            reparsed += 1
-            if verbose:
-                console.print(f"  Reparsed: {sid}")
-        else:
-            reparse_failed += 1
-            if verbose:
-                console.print(f"  [yellow]Failed to reparse: {sid}[/yellow]")
-
-    console.print(f"  Enriched: {enriched} sessions")
-    if reparsed:
-        console.print(f"  Reparsed: {reparsed} sessions (parser version upgrade)")
-    if enrich_failed or reparse_failed:
-        console.print(f"  Skipped (no events file or parse error): {enrich_failed + reparse_failed} sessions")
-
-    # --- Cleanup orphaned cst_sessions ---
-    try:
-        orphaned = database.cleanup_orphaned_cst_sessions()
-    except Exception:
-        orphaned = []
-    if orphaned:
-        console.print(f"\n[yellow]Cleaned up {len(orphaned)} orphaned session(s)[/yellow]")
+    console.print(f"  Enriched: {enrich_result.enriched} sessions")
+    if enrich_result.reparsed:
+        console.print(f"  Reparsed: {enrich_result.reparsed} sessions (parser version upgrade)")
+    if enrich_result.failed:
+        console.print(f"  Skipped (no events file or parse error): {enrich_result.failed} sessions")
+    if enrich_result.orphaned:
+        console.print(f"\n[yellow]Cleaned up {enrich_result.orphaned} orphaned session(s)[/yellow]")
 
     stats = database.get_stats()
     console.print("\n[cyan]Database now contains:[/cyan]")
@@ -375,27 +256,14 @@ def enrich(
     ] = _DEFAULT_DB,
 ):
     """Enrich a single CLI session from its events.jsonl file."""
-    import re
-
-    # Validate session_id to prevent path traversal
-    if not re.match(r"^[0-9a-fA-F-]+$", session_id):
-        console.print("[red]Error: Invalid session ID format[/red]")
-        raise typer.Exit(1)
-
     _ensure_db_exists(db)
     database = Database(db, unenriched_only=_unenriched_only)
 
-    events_file = Path.home() / ".copilot" / "session-state" / session_id / "events.jsonl"
-    if not events_file.exists():
-        console.print(f"[red]Error: events.jsonl not found at {events_file}[/red]")
+    error = enrich_single_session(database, session_id)
+    if error:
+        console.print(f"[red]Error: {error}[/red]")
         raise typer.Exit(1)
 
-    parsed = _parse_cli_jsonl_file(events_file)
-    if parsed is None:
-        console.print(f"[red]Error: Failed to parse events.jsonl for session {session_id}[/red]")
-        raise typer.Exit(1)
-
-    database.enrich_session(parsed)
     console.print(f"[green]Successfully enriched session {session_id}[/green]")
 
 
