@@ -7,12 +7,20 @@ both exercise the same code path.
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from enum import StrEnum
 
 from copilot_session_tools import Database, scan_chat_sessions
 from copilot_session_tools.scanner import SessionFileInfo, parse_session_file, scan_session_files
 
-# Number of threads for parallel file parsing (mirrors the CLI constant)
+# Number of threads for parallel file parsing
 PARSE_WORKERS = 4
+
+
+class RefreshMode(StrEnum):
+    """Scan mode used for a refresh operation."""
+
+    INCREMENTAL = "incremental"
+    FULL = "full"
 
 
 @dataclass
@@ -22,7 +30,7 @@ class RefreshResult:
     added: int
     updated: int
     skipped: int
-    mode: str  # "incremental" or "full"
+    mode: RefreshMode
 
 
 def run_refresh(
@@ -99,4 +107,4 @@ def run_refresh(
                 database.update_session(chat_session)
                 updated += 1
 
-    return RefreshResult(added=added, updated=updated, skipped=skipped, mode="full" if full else "incremental")
+    return RefreshResult(added=added, updated=updated, skipped=skipped, mode=RefreshMode.FULL if full else RefreshMode.INCREMENTAL)

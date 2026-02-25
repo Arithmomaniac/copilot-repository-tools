@@ -6,7 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from copilot_session_tools import ChatMessage, ChatSession, Database
-from copilot_session_tools.refresh import run_refresh
+from copilot_session_tools.refresh import RefreshMode, run_refresh
 from copilot_session_tools.scanner.models import SessionFileInfo
 
 
@@ -70,12 +70,12 @@ class TestRunRefreshReturnType:
     def test_incremental_mode_label(self, temp_db):
         with patch("copilot_session_tools.refresh.scan_session_files", return_value=iter([])):
             result = run_refresh(temp_db, storage_paths=[], full=False)
-        assert result.mode == "incremental"
+        assert result.mode is RefreshMode.INCREMENTAL
 
     def test_full_mode_label(self, temp_db):
         with patch("copilot_session_tools.refresh.scan_chat_sessions", return_value=iter([])):
             result = run_refresh(temp_db, storage_paths=[], full=True)
-        assert result.mode == "full"
+        assert result.mode is RefreshMode.FULL
 
 
 class TestRunRefreshIncrementalMode:
