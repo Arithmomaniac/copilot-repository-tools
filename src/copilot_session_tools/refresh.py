@@ -5,14 +5,23 @@ workflow so that the ``scan`` CLI command and the web ``/refresh`` endpoint
 both exercise the same code path.
 """
 
+import re
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import StrEnum
+from pathlib import Path
 from typing import Any
 
 from copilot_session_tools import Database, scan_chat_sessions
 from copilot_session_tools.scanner import SessionFileInfo, parse_session_file, scan_session_files
+from copilot_session_tools.scanner.cli import _parse_cli_jsonl_file
+
+# Regex for validating session IDs (hex + hyphens, i.e. UUIDs)
+_SESSION_ID_RE = re.compile(r"^[0-9a-fA-F-]+$")
+
+# Default location of CLI session-state directories
+SESSION_STATE_DIR = Path.home() / ".copilot" / "session-state"
 
 # Number of threads for parallel file parsing
 PARSE_WORKERS = 4
@@ -134,3 +143,35 @@ def run_refresh(
                     on_progress("updated", chat_session)
 
     return RefreshResult(added=added, updated=updated, skipped=skipped, mode=RefreshMode.FULL if full else RefreshMode.INCREMENTAL)
+
+
+def enrich_single_session(
+    database: Database,
+    session_id: str,
+    *,
+    validate: bool = True,
+) -> str | None:
+    """Parse a CLI session's ``events.jsonl`` and enrich it in *database*.
+
+    Args:
+        database: Open :class:`~copilot_session_tools.Database`.
+        session_id: The CLI session ID (UUID-like hex string).
+        validate: When ``True`` (default), reject *session_id* values that
+            don't match the expected hex-and-hyphens format.
+
+    Returns:
+        ``None`` on success, or an error message string on failure.
+    """
+    if validate and not _SESSION_ID_RE.match(session_id):
+        return f"Invalid session ID format: {session_id}"
+
+    events_file = SESSION_STATE_DIR / session_id / "events.jsonl"
+    if not events_file.exists():
+        return f"events.jsonl not found for session {session_id}"
+
+    parsed = _parse_cli_jsonl_file(events_file)
+    if parsed is None:
+        return f"Failed to parse events.jsonl for session {session_id}"
+
+    database.enrich_session(parsed)
+    return None

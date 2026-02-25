@@ -8,8 +8,7 @@ import markdown
 from flask import Flask, flash, jsonify, make_response, redirect, render_template, request, session, url_for
 
 from copilot_session_tools import Database, generate_session_filename, get_vscode_storage_paths
-from copilot_session_tools.refresh import run_refresh
-from copilot_session_tools.scanner.cli import _parse_cli_jsonl_file
+from copilot_session_tools.refresh import enrich_single_session, run_refresh
 
 # Create a reusable markdown converter with extensions
 _md_converter = markdown.Markdown(
@@ -518,26 +517,11 @@ def create_app(
     @app.route("/enrich/<session_id>", methods=["POST"])
     def enrich_session(session_id: str):
         """Enrich a single CLI session by parsing its events.jsonl file."""
-        import re
-        from pathlib import Path
-
-        # Validate session_id is a UUID to prevent path traversal
-        if not re.match(r"^[0-9a-fA-F-]+$", session_id):
-            flash("Invalid session ID", "error")
-            return redirect(url_for("index"))
-
-        events_file = Path.home() / ".copilot" / "session-state" / session_id / "events.jsonl"
-        if not events_file.exists():
-            flash(f"events.jsonl not found for session {session_id}", "error")
+        enrich_db = Database(app.config["DB_PATH"])
+        error = enrich_single_session(enrich_db, session_id)
+        if error:
+            flash(error, "error")
             return redirect(url_for("session_view", session_id=session_id))
-
-        parsed = _parse_cli_jsonl_file(events_file)
-        if parsed is None:
-            flash(f"Failed to parse events.jsonl for session {session_id}", "error")
-            return redirect(url_for("session_view", session_id=session_id))
-
-        db = Database(app.config["DB_PATH"])
-        db.enrich_session(parsed)
         return redirect(url_for("session_view", session_id=session_id))
 
     @app.route("/api/markdown/<session_id>", methods=["GET"])

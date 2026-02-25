@@ -23,10 +23,9 @@ from copilot_session_tools import (
     generate_session_html_filename,
     get_vscode_storage_paths,
 )
-from copilot_session_tools.refresh import run_refresh
+from copilot_session_tools.refresh import enrich_single_session, run_refresh
 from copilot_session_tools.scanner import (
     PARSER_VERSION,
-    _parse_cli_jsonl_file,
 )
 
 # On Windows, reconfigure stdout/stderr to UTF-8 when piped to prevent
@@ -224,7 +223,6 @@ def scan(
     console.print("\n[cyan]Enriching CLI sessions...[/cyan]")
     enriched = 0
     enrich_failed = 0
-    session_state_dir = Path.home() / ".copilot" / "session-state"
 
     # Discover sessions needing enrichment (new or stale)
     try:
@@ -233,22 +231,15 @@ def scan(
         needing_enrichment = []  # Built-in sessions table may not exist
     for entry in needing_enrichment:
         sid = entry["session_id"]
-        events_file = session_state_dir / sid / "events.jsonl"
-        if not events_file.exists():
-            enrich_failed += 1
-            if verbose:
-                console.print(f"  [yellow]No events.jsonl for {sid}[/yellow]")
-            continue
-        parsed = _parse_cli_jsonl_file(events_file)
-        if parsed:
-            database.enrich_session(parsed)
+        error = enrich_single_session(database, sid, validate=False)
+        if error is None:
             enriched += 1
             if verbose:
                 console.print(f"  Enriched: {sid}")
         else:
             enrich_failed += 1
             if verbose:
-                console.print(f"  [yellow]Failed to parse: {sid}[/yellow]")
+                console.print(f"  [yellow]{error}[/yellow]")
 
     # Reparse sessions with outdated parser version
     reparsed = 0
@@ -259,22 +250,15 @@ def scan(
         needing_reparse = []
     for entry in needing_reparse:
         sid = entry["session_id"]
-        events_file = session_state_dir / sid / "events.jsonl"
-        if not events_file.exists():
-            reparse_failed += 1
-            if verbose:
-                console.print(f"  [yellow]No events.jsonl for reparse: {sid}[/yellow]")
-            continue
-        parsed = _parse_cli_jsonl_file(events_file)
-        if parsed:
-            database.enrich_session(parsed)
+        error = enrich_single_session(database, sid, validate=False)
+        if error is None:
             reparsed += 1
             if verbose:
                 console.print(f"  Reparsed: {sid}")
         else:
             reparse_failed += 1
             if verbose:
-                console.print(f"  [yellow]Failed to reparse: {sid}[/yellow]")
+                console.print(f"  [yellow]{error}[/yellow]")
 
     console.print(f"  Enriched: {enriched} sessions")
     if reparsed:
@@ -310,27 +294,14 @@ def enrich(
     ] = _DEFAULT_DB,
 ):
     """Enrich a single CLI session from its events.jsonl file."""
-    import re
-
-    # Validate session_id to prevent path traversal
-    if not re.match(r"^[0-9a-fA-F-]+$", session_id):
-        console.print("[red]Error: Invalid session ID format[/red]")
-        raise typer.Exit(1)
-
     _ensure_db_exists(db)
     database = Database(db, unenriched_only=_unenriched_only)
 
-    events_file = Path.home() / ".copilot" / "session-state" / session_id / "events.jsonl"
-    if not events_file.exists():
-        console.print(f"[red]Error: events.jsonl not found at {events_file}[/red]")
+    error = enrich_single_session(database, session_id)
+    if error:
+        console.print(f"[red]Error: {error}[/red]")
         raise typer.Exit(1)
 
-    parsed = _parse_cli_jsonl_file(events_file)
-    if parsed is None:
-        console.print(f"[red]Error: Failed to parse events.jsonl for session {session_id}[/red]")
-        raise typer.Exit(1)
-
-    database.enrich_session(parsed)
     console.print(f"[green]Successfully enriched session {session_id}[/green]")
 
 
