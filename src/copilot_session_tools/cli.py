@@ -199,7 +199,18 @@ def scan(
         for path, ed in paths:
             console.print(f"  Checking: {path} ({ed})")
 
-    result = run_refresh(database, paths, full=full)
+    def _verbose_progress(event: str, item: object) -> None:
+        from copilot_session_tools.scanner.models import ChatSession as _CS
+        from copilot_session_tools.scanner.models import SessionFileInfo as _SFI
+
+        if isinstance(item, _CS):
+            workspace = item.workspace_name or "Unknown workspace"
+            console.print(f"  {event.capitalize()}: {workspace} ({len(item.messages)} messages)")
+        elif isinstance(item, _SFI):
+            workspace = item.workspace_name or "Unknown workspace"
+            console.print(f"  Skipped (unchanged): {workspace}")
+
+    result = run_refresh(database, paths, full=full, on_progress=_verbose_progress if verbose else None)
     added = result.added
     updated = result.updated
     skipped = result.skipped

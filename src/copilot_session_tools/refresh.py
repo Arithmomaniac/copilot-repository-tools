@@ -5,15 +5,22 @@ workflow so that the ``scan`` CLI command and the web ``/refresh`` endpoint
 both exercise the same code path.
 """
 
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Any
 
 from copilot_session_tools import Database, scan_chat_sessions
 from copilot_session_tools.scanner import SessionFileInfo, parse_session_file, scan_session_files
 
 # Number of threads for parallel file parsing
 PARSE_WORKERS = 4
+
+#: Callback signature: ``(event, item)`` where *event* is one of
+#: ``"skipped"``, ``"added"``, ``"updated"`` and *item* is a
+#: :class:`SessionFileInfo` (for skipped) or :class:`ChatSession`.
+ProgressCallback = Callable[[str, Any], None]
 
 
 class RefreshMode(StrEnum):
@@ -38,6 +45,7 @@ def run_refresh(
     storage_paths: list[tuple[str, str]] | None,
     full: bool = False,
     include_cli: bool = True,
+    on_progress: ProgressCallback | None = None,
 ) -> RefreshResult:
     """Scan for Copilot chat sessions and import them into *database*.
 
@@ -51,6 +59,11 @@ def run_refresh(
             stored metadata are re-imported.
         include_cli: Whether to also scan Copilot CLI session directories
             (default ``True``).
+        on_progress: Optional callback invoked for every add/update/skip event.
+            Receives ``(event, item)`` where *event* is ``"added"``,
+            ``"updated"``, or ``"skipped"`` and *item* is the relevant
+            :class:`~copilot_session_tools.scanner.SessionFileInfo` or
+            :class:`~copilot_session_tools.scanner.models.ChatSession`.
 
     Returns:
         A :class:`RefreshResult` with ``added``, ``updated``,
@@ -65,9 +78,13 @@ def run_refresh(
         for chat_session in scan_chat_sessions(storage_paths, include_cli=include_cli):
             if database.add_session(chat_session):
                 added += 1
+                if on_progress:
+                    on_progress("added", chat_session)
             else:
                 database.update_session(chat_session)
                 updated += 1
+                if on_progress:
+                    on_progress("updated", chat_session)
     else:
         # Incremental mode: load all stored file metadata upfront so we can
         # skip unchanged files without hitting the DB once per file.
@@ -83,7 +100,11 @@ def run_refresh(
             if needs_update:
                 files_to_update.append(file_info)
             else:
-                skipped += 1
+                # Count sessions in this file, not just the file itself
+                session_count = stored[2] if stored is not None and len(stored) > 2 else 1
+                skipped += session_count
+                if on_progress:
+                    on_progress("skipped", file_info)
 
         if files_to_update:
             with ThreadPoolExecutor(max_workers=PARSE_WORKERS) as executor:
@@ -102,9 +123,14 @@ def run_refresh(
             if sessions_to_add:
                 batch_added, _batch_skipped = database.add_sessions_batch(sessions_to_add)
                 added += batch_added
+                if on_progress:
+                    for chat_session in sessions_to_add:
+                        on_progress("added", chat_session)
 
             for chat_session in sessions_to_update:
                 database.update_session(chat_session)
                 updated += 1
+                if on_progress:
+                    on_progress("updated", chat_session)
 
     return RefreshResult(added=added, updated=updated, skipped=skipped, mode=RefreshMode.FULL if full else RefreshMode.INCREMENTAL)
