@@ -209,3 +209,62 @@ class TestGenerateSessionHtmlFilename:
 
         # Should be the same except for extension
         assert md_filename.replace(".md", ".html") == html_filename
+
+
+class TestSubagentBlockHtml:
+    """Tests for subagent block rendering in HTML."""
+
+    def _make_session_with_subagent(self, nested_blocks=None, content="✅ Subagent: code-review"):
+        return ChatSession(
+            session_id="subagent-html-session",
+            workspace_name="test",
+            workspace_path="/tmp/test",
+            messages=[
+                ChatMessage(role="user", content="Run the code reviewer"),
+                ChatMessage(
+                    role="assistant",
+                    content="",
+                    content_blocks=[
+                        ContentBlock(
+                            kind="subagent",
+                            content=content,
+                            description="code-review",
+                            nested_blocks=nested_blocks or [],
+                        )
+                    ],
+                ),
+            ],
+            vscode_edition="cli",
+        )
+
+    def test_subagent_block_renders_details_element(self):
+        """Subagent blocks render as a <details> element with class subagent-block."""
+        html = session_to_html(self._make_session_with_subagent())
+        assert 'class="subagent-block"' in html
+
+    def test_subagent_block_summary_contains_label(self):
+        """Subagent block <summary> contains the subagent label."""
+        html = session_to_html(self._make_session_with_subagent())
+        assert "subagent-label" in html
+        assert "✅ Subagent: code-review" in html
+
+    def test_subagent_block_contains_nested_text(self):
+        """Nested text content appears inside the subagent block."""
+        session = self._make_session_with_subagent(
+            nested_blocks=[ContentBlock(kind="text", content="Reviewing the code now.")]
+        )
+        html = session_to_html(session)
+        assert "Reviewing the code now." in html
+        assert "subagent-content" in html
+
+    def test_subagent_nested_thinking_renders_details(self):
+        """Nested thinking blocks inside a subagent render as collapsible <details>."""
+        session = self._make_session_with_subagent(
+            nested_blocks=[
+                ContentBlock(kind="thinking", content="My reasoning here"),
+                ContentBlock(kind="text", content="Done."),
+            ]
+        )
+        html = session_to_html(session)
+        assert "thinking-block" in html
+        assert "My reasoning here" in html

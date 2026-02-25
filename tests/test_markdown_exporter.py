@@ -315,6 +315,86 @@ class TestHadThinkingContent:
         assert _had_thinking_content(message) is True
 
 
+class TestSubagentBlockRendering:
+    """Tests for subagent block rendering in markdown."""
+
+    def _make_session_with_subagent(self, nested_blocks=None, content="✅ Subagent: code-review"):
+        return ChatSession(
+            session_id="subagent-session",
+            workspace_name="test",
+            workspace_path="/tmp/test",
+            messages=[
+                ChatMessage(role="user", content="Run the code reviewer"),
+                ChatMessage(
+                    role="assistant",
+                    content="",
+                    content_blocks=[
+                        ContentBlock(
+                            kind="subagent",
+                            content=content,
+                            description="code-review",
+                            nested_blocks=nested_blocks or [],
+                        )
+                    ],
+                ),
+            ],
+            vscode_edition="cli",
+        )
+
+    def test_subagent_renders_as_blockquote(self):
+        """Subagent blocks are rendered as a blockquote."""
+        session = self._make_session_with_subagent()
+        md = session_to_markdown(session)
+        assert "> **✅ Subagent: code-review**" in md
+
+    def test_subagent_nested_text_in_blockquote(self):
+        """Nested text blocks appear inside the blockquote."""
+        session = self._make_session_with_subagent(
+            nested_blocks=[ContentBlock(kind="text", content="Reviewing the code now.")]
+        )
+        md = session_to_markdown(session)
+        assert "> **✅ Subagent: code-review**" in md
+        assert "> Reviewing the code now." in md
+
+    def test_subagent_nested_tool_in_blockquote(self):
+        """Nested toolInvocation blocks appear as italics inside the blockquote."""
+        session = self._make_session_with_subagent(
+            nested_blocks=[ContentBlock(kind="toolInvocation", content="Reading file.py")]
+        )
+        md = session_to_markdown(session)
+        assert "> *Reading file.py*" in md
+
+    def test_subagent_failed_renders_error_header(self):
+        """Failed subagent uses the failure header."""
+        session = self._make_session_with_subagent(content="❌ Subagent failed: builder — timeout")
+        md = session_to_markdown(session)
+        assert "> **❌ Subagent failed: builder — timeout**" in md
+
+    def test_subagent_nested_thinking_included_when_requested(self):
+        """Nested thinking blocks inside a subagent are included when include_thinking=True."""
+        session = self._make_session_with_subagent(
+            nested_blocks=[
+                ContentBlock(kind="thinking", content="My reasoning"),
+                ContentBlock(kind="text", content="Done."),
+            ]
+        )
+        md = session_to_markdown(session, include_thinking=True)
+        assert "> **Thinking:**" in md
+        assert "My reasoning" in md
+
+    def test_subagent_nested_thinking_omitted_by_default(self):
+        """Nested thinking blocks are omitted from the blockquote by default."""
+        session = self._make_session_with_subagent(
+            nested_blocks=[
+                ContentBlock(kind="thinking", content="My reasoning"),
+                ContentBlock(kind="text", content="Done."),
+            ]
+        )
+        md = session_to_markdown(session)
+        assert "My reasoning" not in md
+        assert "> Done." in md
+
+
 class TestFormatToolSummary:
     """Tests for _format_tool_summary helper."""
 

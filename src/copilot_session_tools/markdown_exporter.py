@@ -12,7 +12,7 @@ from datetime import datetime
 from pathlib import Path
 from urllib.parse import unquote
 
-from .scanner import ChatMessage, ChatSession
+from .scanner import ChatMessage, ChatSession, ContentBlock
 
 # Threshold to distinguish between seconds and milliseconds timestamps.
 # Timestamps above this value (approximately year 2001 in milliseconds) are
@@ -136,6 +136,34 @@ def _has_inline_tool_blocks(message: ChatMessage) -> bool:
     return any(block.kind == "toolInvocation" for block in message.content_blocks)
 
 
+def _format_block_as_markdown(block: ContentBlock, include_thinking: bool = False) -> str | None:
+    """Format a single content block as a markdown string.
+
+    Returns None if the block should be skipped (e.g., thinking when not included).
+    """
+    if block.kind == "thinking":
+        if include_thinking:
+            return f"> **Thinking:**\n> {block.content.replace(chr(10), chr(10) + '> ')}"
+        return None  # Omit; caller adds notice
+    elif block.kind == "toolInvocation":
+        if block.description and block.content.startswith("$ "):
+            display = block.description
+        else:
+            display = block.content.strip()
+        return f"*{display}*" if display else None
+    elif block.kind == "subagent":
+        # Render as a blockquote with header and nested blocks
+        lines = [f"> **{block.content}**"]
+        for nested in block.nested_blocks:
+            nested_md = _format_block_as_markdown(nested, include_thinking=include_thinking)
+            if nested_md is not None:
+                for line in nested_md.split("\n"):
+                    lines.append(f"> {line}")
+        return "\n".join(lines)
+    else:
+        return block.content if block.content.strip() else None
+
+
 def _format_message_content(message: ChatMessage, include_thinking: bool = False) -> str:
     """Format message content, optionally including thinking blocks.
 
@@ -155,26 +183,10 @@ def _format_message_content(message: ChatMessage, include_thinking: bool = False
     if message.content_blocks:
         # Use structured content blocks
         for block in message.content_blocks:
-            if block.kind == "thinking":
-                if include_thinking:
-                    # Include the actual thinking content in a blockquote
-                    parts.append(f"> **Thinking:**\n> {block.content.replace(chr(10), chr(10) + '> ')}")
-                # If not including, we'll add a notice at the start
-                continue
-            elif block.kind == "toolInvocation":
-                # For command runs, description holds the human-readable title
-                # (content starts with "$ " and is the raw command)
-                # For regular tools, content is already the pretty invocation message
-                if block.description and block.content.startswith("$ "):
-                    display = block.description
-                else:
-                    display = block.content.strip()
-                if display:
-                    parts.append(f"*{display}*")
-            else:
-                # Only add non-empty text blocks
-                if block.content.strip():
-                    parts.append(block.content)
+            formatted = _format_block_as_markdown(block, include_thinking=include_thinking)
+            if formatted is not None:
+                parts.append(formatted)
+            # thinking blocks with include_thinking=False are handled via the notice below
     else:
         # Fall back to flat content
         if message.content.strip():

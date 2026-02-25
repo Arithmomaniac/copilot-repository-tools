@@ -527,6 +527,55 @@ header h1 {
     background-color: var(--bg-tertiary);
 }
 
+/* Subagent content blocks */
+.subagent-block {
+    margin: 12px 0;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    background-color: var(--bg-tertiary);
+    border-left: 3px solid #e67e22;
+}
+
+.subagent-block summary {
+    padding: 10px 14px;
+    cursor: pointer;
+    font-weight: 500;
+    font-size: 0.9em;
+    color: var(--text-secondary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    user-select: none;
+}
+
+.subagent-block summary:hover {
+    background-color: var(--border-color);
+}
+
+.subagent-label {
+    font-weight: 600;
+    color: #e67e22;
+}
+
+@media (prefers-color-scheme: dark) {
+    .subagent-label {
+        color: #f0a05a;
+    }
+}
+
+.subagent-content {
+    padding: 12px 14px;
+    border-top: 1px solid var(--border-color);
+    font-size: 0.9em;
+    background-color: rgba(230, 126, 34, 0.05);
+}
+
+@media (prefers-color-scheme: dark) {
+    .subagent-content {
+        background-color: rgba(230, 126, 34, 0.1);
+    }
+}
+
 /* Content blocks */
 .content-block {
     margin: 4px 0;
@@ -1328,6 +1377,45 @@ footer a {
                                 {{ block.content | markdown | safe }}
                             </div>
                             {% endif %}
+                            {% elif block.kind == 'subagent' %}
+                            <details class="subagent-block">
+                                <summary>
+                                    <span class="collapsible-icon" aria-hidden="true">▶</span>
+                                    <span class="subagent-label">{{ block.content }}</span>
+                                </summary>
+                                <div class="subagent-content">
+                                    {% for nested in block.nested_blocks %}
+                                        {% if nested.kind == 'thinking' %}
+                                        <details class="thinking-block">
+                                            <summary>
+                                                <span class="collapsible-icon" aria-hidden="true">▶</span>
+                                                <span class="thinking-label">Thinking</span>
+                                                {% if nested.description %}
+                                                <span class="thinking-description">— {{ nested.description }}</span>
+                                                {% endif %}
+                                            </summary>
+                                            <div class="thinking-content">
+                                                {{ nested.content | markdown | safe }}
+                                            </div>
+                                        </details>
+                                        {% elif nested.kind == 'toolInvocation' %}
+                                        <div class="content-block content-block-toolInvocation">
+                                            {{ nested.content | markdown | safe }}
+                                        </div>
+                                        {% elif nested.kind == 'status' %}
+                                        <span class="status-badge {{ nested.description or '' }}">{{ nested.content }}</span>
+                                        {% elif nested.kind == 'text' %}
+                                        <div class="content-block content-block-text result-block">
+                                            {{ nested.content | markdown | safe }}
+                                        </div>
+                                        {% else %}
+                                        <div class="content-block content-block-{{ nested.kind }}">
+                                            {{ nested.content | markdown | safe }}
+                                        </div>
+                                        {% endif %}
+                                    {% endfor %}
+                                </div>
+                            </details>
                             {% elif block.kind == 'text' %}
                             <div class="content-block content-block-text result-block">
                                 {{ block.content | markdown | safe }}
