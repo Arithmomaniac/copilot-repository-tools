@@ -754,6 +754,8 @@ footer a {
             Added {{ refresh_result.added }} sessions,
             updated {{ refresh_result.updated }} sessions,
             skipped {{ refresh_result.skipped }} unchanged sessions.
+            {% if refresh_result.enriched %}Enriched {{ refresh_result.enriched }} CLI sessions.{% endif %}
+            {% if refresh_result.reparsed %}Reparsed {{ refresh_result.reparsed }} sessions.{% endif %}
         </div>
         {% endif %}
 

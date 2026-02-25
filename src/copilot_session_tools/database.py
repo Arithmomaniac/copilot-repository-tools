@@ -869,16 +869,18 @@ class Database:
 
             return stored_mtime != file_mtime or stored_size != file_size
 
-    def get_all_file_metadata(self) -> dict[str, tuple[float, int]]:
+    def get_all_file_metadata(self) -> dict[str, tuple[float, int, int]]:
         """Get all stored file metadata in one query.
 
-        Returns a dict mapping source_file -> (mtime, size) for all sessions.
-        This is much faster than calling needs_update_by_file for each file.
+        Returns a dict mapping source_file -> (mtime, size, session_count)
+        for all sessions.  The *session_count* indicates how many sessions
+        were parsed from that file (relevant for vscdb files which contain
+        multiple sessions in a single file).
         """
         with self._get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT source_file, source_file_mtime, source_file_size FROM cst_sessions WHERE source_file IS NOT NULL")
-            return {row[0]: (row[1], row[2]) for row in cursor.fetchall()}
+            cursor.execute("SELECT source_file, source_file_mtime, source_file_size, COUNT(*) FROM cst_sessions WHERE source_file IS NOT NULL GROUP BY source_file")
+            return {row[0]: (row[1], row[2], row[3]) for row in cursor.fetchall()}
 
     def _reconstruct_message(self, cursor, message_id: int, msg_row) -> ChatMessage:
         """Reconstruct a ChatMessage from database rows by querying related tables."""
