@@ -8,6 +8,7 @@ import markdown
 from flask import Flask, flash, jsonify, make_response, redirect, render_template, request, session, url_for
 
 from copilot_session_tools import Database, generate_session_filename, get_vscode_storage_paths, scan_chat_sessions
+from copilot_session_tools.html_exporter import compute_agent_group_starts
 from copilot_session_tools.scanner.cli import _parse_cli_jsonl_file
 
 # Create a reusable markdown converter with extensions
@@ -478,6 +479,7 @@ def create_app(
             message_count=len(session.messages),
             first_user_prompt=first_user_prompt,
             message_metadata=message_metadata,
+            agent_group_starts=compute_agent_group_starts(session.messages),
             is_enriched=is_enriched,
             turns=turns,
             new_turns=new_turns,

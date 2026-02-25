@@ -268,6 +268,18 @@ def session_to_markdown(
 
     # Messages
     for i, message in enumerate(session.messages, 1):
+        # Detect agent group boundaries
+        prev_agent = session.messages[i - 2].agent_id if i > 1 else None
+        next_agent = session.messages[i].agent_id if i < len(session.messages) else None
+        is_new_agent = message.agent_id and prev_agent != message.agent_id
+        is_end_agent = message.agent_id and next_agent != message.agent_id
+
+        if is_new_agent:
+            agent_name = message.agent_display_name or "Agent"
+            prefix = "> " * message.agent_nesting_level
+            lines.append(f"{prefix}**🤖 {agent_name}**")
+            lines.append(f"{prefix.rstrip()}")
+
         msg_md = message_to_markdown(
             message,
             message_number=i,
@@ -275,7 +287,17 @@ def session_to_markdown(
             include_tool_inputs=include_tool_inputs,
             include_thinking=include_thinking,
         )
-        lines.append(msg_md)
+
+        if message.agent_nesting_level > 0:
+            # Add blockquote prefix to every line
+            prefix = "> " * message.agent_nesting_level
+            blockquoted = "\n".join(f"{prefix}{line}" if line.strip() else prefix.rstrip() for line in msg_md.split("\n"))
+            lines.append(blockquoted)
+        else:
+            lines.append(msg_md)
+
+        if is_end_agent:
+            lines.append("")  # Empty line after agent group
 
     return "\n".join(lines)
 

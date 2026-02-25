@@ -46,6 +46,7 @@ def _parse_tool_invocation_serialized(item: dict) -> ToolInvocation | None:
         invocation_msg = invocation_msg["value"]
     tool_data = item.get("toolSpecificData", {})
     result_details = item.get("resultDetails", {})
+    subagent_invocation_id = item.get("subAgentInvocationId")
 
     # Extract input from toolSpecificData based on tool kind
     input_data = None
@@ -112,6 +113,16 @@ def _parse_tool_invocation_serialized(item: dict) -> ToolInvocation | None:
             if text:
                 result_data = text
 
+    # Handle sub-agent tool invocations
+    if isinstance(tool_data, dict) and tool_data.get("kind") == "subagent":
+        agent_name = tool_data.get("agentName", "Agent")
+        description = tool_data.get("description", "")
+        subagent_result = tool_data.get("result")
+        if subagent_result and not result_data:
+            result_data = str(subagent_result)
+        if not (isinstance(invocation_msg, str) and invocation_msg.strip()):
+            invocation_msg = f"\U0001f916 Agent ({agent_name}): {description}"
+
     return ToolInvocation(
         name=str(tool_id) if tool_id else "unknown",
         input=input_data,
@@ -121,6 +132,7 @@ def _parse_tool_invocation_serialized(item: dict) -> ToolInvocation | None:
         end_time=None,
         source_type=source_type,
         invocation_message=invocation_msg if isinstance(invocation_msg, str) else None,
+        subagent_invocation_id=subagent_invocation_id,
     )
 
 
@@ -223,8 +235,21 @@ def _process_response_items(
                 tool_inv = _parse_tool_invocation_serialized(item)
                 if tool_inv:
                     tool_invocations.append(tool_inv)
-                # Also extract the invocation message as content
-                if item.get("invocationMessage"):
+
+                # Check for sub-agent tool invocations
+                tool_data = item.get("toolSpecificData", {})
+                tool_data_kind = tool_data.get("kind") if isinstance(tool_data, dict) else None
+                if tool_data_kind == "subagent":
+                    agent_name = tool_data.get("agentName", "Agent")
+                    description = tool_data.get("description", "")
+                    result_text = tool_data.get("result", "")
+                    msg_text = f"\U0001f916 {agent_name}: {description}"
+                    response_content.append(msg_text)
+                    raw_blocks.append(("subagent", msg_text, agent_name))
+                    if result_text:
+                        raw_blocks.append(("text", str(result_text), None))
+                # Also extract the invocation message as content (non-subagent)
+                elif item.get("invocationMessage"):
                     msg_text = item["invocationMessage"]
                     # invocationMessage can be a dict with 'value' field
                     if isinstance(msg_text, dict) and "value" in msg_text:

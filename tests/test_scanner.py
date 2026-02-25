@@ -1321,36 +1321,52 @@ class TestCLINewEventHandlers:
                     blocks.append(cb)
         return blocks
 
-    # --- subagent.started ---
+    # --- subagent.started (pushes to stack, tags messages with agent metadata) ---
 
-    def test_subagent_started(self, tmp_path):
+    def test_subagent_started_tags_messages(self, tmp_path):
+        """Messages inside a subagent bracket get agent metadata."""
         session = self._parse(
             tmp_path,
-            {"type": "subagent.started", "data": {"agentDisplayName": "code-review", "agentName": "cr"}},
+            {"type": "subagent.started", "data": {"agentDisplayName": "code-review", "agentName": "cr", "toolCallId": "tc1"}},
+            {"type": "assistant.message", "data": {"content": "Inside agent"}},
+            {"type": "subagent.completed", "data": {"toolCallId": "tc1"}},
         )
-        blocks = self._find_status_blocks(session, "subagent")
-        assert len(blocks) == 1
-        assert blocks[0].content == "🤖 Subagent started: code-review"
+        # The assistant message inside the bracket should be tagged
+        assistant_msgs = [m for m in session.messages if m.role == "assistant"]
+        assert len(assistant_msgs) == 1
+        assert assistant_msgs[0].agent_id == "tc1"
+        assert assistant_msgs[0].agent_display_name == "code-review"
+        assert assistant_msgs[0].agent_nesting_level == 1
 
     def test_subagent_started_fallback_to_agent_name(self, tmp_path):
+        """Falls back to agentName when agentDisplayName is absent."""
         session = self._parse(
             tmp_path,
-            {"type": "subagent.started", "data": {"agentName": "fallback-agent"}},
+            {"type": "subagent.started", "data": {"agentName": "fallback-agent", "toolCallId": "tc2"}},
+            {"type": "assistant.message", "data": {"content": "Agent work"}},
+            {"type": "subagent.completed", "data": {"toolCallId": "tc2"}},
         )
-        blocks = self._find_status_blocks(session, "subagent")
-        assert len(blocks) == 1
-        assert blocks[0].content == "🤖 Subagent started: fallback-agent"
+        assistant_msgs = [m for m in session.messages if m.role == "assistant"]
+        assert len(assistant_msgs) == 1
+        assert assistant_msgs[0].agent_display_name == "fallback-agent"
 
-    # --- subagent.completed ---
+    # --- subagent.completed (pops from stack, no status badge) ---
 
-    def test_subagent_completed(self, tmp_path):
+    def test_subagent_completed_untagged_after(self, tmp_path):
+        """Messages after subagent.completed are not tagged."""
         session = self._parse(
             tmp_path,
-            {"type": "subagent.completed", "data": {"agentDisplayName": "explorer", "agentName": "ex"}},
+            {"type": "subagent.started", "data": {"agentDisplayName": "explorer", "toolCallId": "tc3"}},
+            {"type": "assistant.message", "data": {"content": "Inside"}},
+            {"type": "subagent.completed", "data": {"toolCallId": "tc3"}},
+            {"type": "assistant.message", "data": {"content": "Outside"}},
         )
+        assistant_msgs = [m for m in session.messages if m.role == "assistant"]
+        # First message (inside bracket) is tagged
+        assert assistant_msgs[0].agent_nesting_level == 1
+        # No subagent status badges
         blocks = self._find_status_blocks(session, "subagent")
-        assert len(blocks) == 1
-        assert blocks[0].content == "✅ Subagent completed: explorer"
+        assert len(blocks) == 0
 
     # --- subagent.failed ---
 
@@ -1510,3 +1526,221 @@ class TestCLINewEventHandlers:
         for msg in session.messages:
             all_blocks.extend(msg.content_blocks)
         assert len(all_blocks) == 0
+
+
+class TestCLISubagentBrackets:
+    """Test that CLI subagent brackets correctly tag messages."""
+
+    @staticmethod
+    def _make_events_jsonl(*events):
+        """Create JSONL string with session.start + given events."""
+        import orjson
+
+        lines = [
+            orjson.dumps(
+                {
+                    "type": "session.start",
+                    "data": {
+                        "sessionId": "subagent-test",
+                        "startTime": "2026-01-01T00:00:00Z",
+                    },
+                }
+            ).decode()
+        ]
+        for evt in events:
+            lines.append(orjson.dumps(evt).decode())
+        return "\n".join(lines)
+
+    def _parse(self, tmp_path, *events):
+        """Write events to a temp file and parse them."""
+        from copilot_session_tools.scanner import _parse_cli_jsonl_file
+
+        f = tmp_path / "events.jsonl"
+        f.write_text(self._make_events_jsonl(*events), encoding="utf-8")
+        return _parse_cli_jsonl_file(f)
+
+    def test_messages_inside_bracket_get_agent_metadata(self, tmp_path):
+        """Messages between subagent.started and subagent.completed should have agent fields set."""
+        session = self._parse(
+            tmp_path,
+            {"type": "assistant.turn_start", "data": {}},
+            {
+                "type": "assistant.message",
+                "data": {
+                    "content": "Dispatching agent...",
+                    "toolRequests": [
+                        {"toolCallId": "tc1", "name": "task", "arguments": {"agent_type": "explore", "description": "Find auth"}},
+                    ],
+                },
+            },
+            {"type": "tool.execution_start", "data": {"toolCallId": "tc1", "toolName": "task", "arguments": {"agent_type": "explore"}}},
+            {"type": "subagent.started", "data": {"toolCallId": "tc1", "agentDisplayName": "Explore Agent", "agentName": "explore"}},
+            {"type": "assistant.message", "data": {"content": "Looking for auth patterns..."}},
+            {"type": "assistant.message", "data": {"content": "Found JWT auth in src/auth.py"}},
+            {"type": "subagent.completed", "data": {"toolCallId": "tc1", "agentDisplayName": "Explore Agent"}},
+            {"type": "tool.execution_complete", "data": {"toolCallId": "tc1", "success": True, "result": {"content": "Found JWT auth"}}},
+            {"type": "assistant.turn_end", "data": {}},
+        )
+        agent_messages = [m for m in session.messages if m.agent_nesting_level > 0]
+        assert len(agent_messages) >= 1, f"Expected agent-tagged messages, got {len(agent_messages)}"
+        for m in agent_messages:
+            assert m.agent_id == "tc1"
+            assert m.agent_display_name == "Explore Agent"
+            assert m.agent_nesting_level == 1
+
+    def test_messages_outside_bracket_have_no_agent_metadata(self, tmp_path):
+        """Messages before/after subagent brackets should have agent_nesting_level == 0."""
+        session = self._parse(
+            tmp_path,
+            {"type": "assistant.turn_start", "data": {}},
+            {"type": "assistant.message", "data": {"content": "Before agent"}},
+            {"type": "subagent.started", "data": {"toolCallId": "tc1", "agentDisplayName": "Agent"}},
+            {"type": "assistant.message", "data": {"content": "Inside agent"}},
+            {"type": "subagent.completed", "data": {"toolCallId": "tc1"}},
+            {"type": "assistant.message", "data": {"content": "After agent"}},
+            {"type": "assistant.turn_end", "data": {}},
+        )
+        non_agent = [m for m in session.messages if m.agent_nesting_level == 0]
+        agent = [m for m in session.messages if m.agent_nesting_level > 0]
+        assert len(non_agent) >= 1, "Should have non-agent messages"
+        assert len(agent) >= 1, "Should have agent messages"
+
+    def test_nested_agents_increment_nesting_level(self, tmp_path):
+        """Nested subagent brackets should increment nesting level."""
+        session = self._parse(
+            tmp_path,
+            {"type": "assistant.turn_start", "data": {}},
+            {"type": "subagent.started", "data": {"toolCallId": "tc1", "agentDisplayName": "Outer Agent"}},
+            {"type": "assistant.message", "data": {"content": "Outer message"}},
+            {"type": "subagent.started", "data": {"toolCallId": "tc2", "agentDisplayName": "Inner Agent"}},
+            {"type": "assistant.message", "data": {"content": "Inner message"}},
+            {"type": "subagent.completed", "data": {"toolCallId": "tc2"}},
+            {"type": "subagent.completed", "data": {"toolCallId": "tc1"}},
+            {"type": "assistant.turn_end", "data": {}},
+        )
+        agent_msgs = [m for m in session.messages if m.agent_nesting_level > 0]
+        levels = [m.agent_nesting_level for m in agent_msgs]
+        assert 1 in levels, "Should have level 1 (outer agent)"
+        assert 2 in levels, "Should have level 2 (inner agent)"
+
+    def test_subagent_failed_preserves_error_status(self, tmp_path):
+        """Failed subagent should still add error status block."""
+        session = self._parse(
+            tmp_path,
+            {"type": "assistant.turn_start", "data": {}},
+            {"type": "subagent.started", "data": {"toolCallId": "tc1", "agentDisplayName": "Builder"}},
+            {"type": "subagent.failed", "data": {"toolCallId": "tc1", "agentDisplayName": "Builder", "error": "timeout after 300s"}},
+            {"type": "assistant.turn_end", "data": {}},
+        )
+        all_blocks = []
+        for m in session.messages:
+            all_blocks.extend(m.content_blocks)
+        error_blocks = [b for b in all_blocks if b.kind == "status" and "failed" in b.content.lower()]
+        assert len(error_blocks) >= 1, f"Should have error status block, got blocks: {[b.content for b in all_blocks]}"
+
+    def test_parallel_agents_tracked_independently(self, tmp_path):
+        """Parallel subagents with different toolCallIds should be tracked independently."""
+        session = self._parse(
+            tmp_path,
+            {"type": "assistant.turn_start", "data": {}},
+            {"type": "subagent.started", "data": {"toolCallId": "tc1", "agentDisplayName": "Agent A"}},
+            {"type": "subagent.started", "data": {"toolCallId": "tc2", "agentDisplayName": "Agent B"}},
+            {"type": "assistant.message", "data": {"content": "Message during both agents active"}},
+            {"type": "subagent.completed", "data": {"toolCallId": "tc1"}},
+            {"type": "assistant.message", "data": {"content": "Message with only B active"}},
+            {"type": "subagent.completed", "data": {"toolCallId": "tc2"}},
+            {"type": "assistant.turn_end", "data": {}},
+        )
+        agent_msgs = [m for m in session.messages if m.agent_nesting_level > 0]
+        assert len(agent_msgs) >= 1, "Should have agent-tagged messages"
+
+    def test_outer_agent_level_restored_after_inner_completes(self, tmp_path):
+        """After inner agent completes, messages should revert to outer agent's level."""
+        session = self._parse(
+            tmp_path,
+            {"type": "subagent.started", "data": {"toolCallId": "tc1", "agentDisplayName": "Outer"}},
+            {"type": "assistant.message", "data": {"content": "Outer before inner"}},
+            {"type": "subagent.started", "data": {"toolCallId": "tc2", "agentDisplayName": "Inner"}},
+            {"type": "assistant.message", "data": {"content": "Inner msg"}},
+            {"type": "subagent.completed", "data": {"toolCallId": "tc2"}},
+            {"type": "assistant.message", "data": {"content": "Outer after inner"}},
+            {"type": "subagent.completed", "data": {"toolCallId": "tc1"}},
+        )
+        msgs = [m for m in session.messages if m.role == "assistant"]
+        # "Outer before inner" → level 1, "Inner msg" → level 2, "Outer after inner" → level 1
+        assert msgs[0].agent_nesting_level == 1
+        assert msgs[1].agent_nesting_level == 2
+        assert msgs[2].agent_nesting_level == 1
+
+
+class TestVSCodeSubagentParsing:
+    """Test VS Code sub-agent detection from toolSpecificData."""
+
+    def test_subagent_tool_invocation_detected(self):
+        """toolSpecificData.kind == 'subagent' should be detected."""
+        item = {
+            "kind": "toolInvocationSerialized",
+            "toolId": "RunSubagentTool",
+            "invocationMessage": "",
+            "toolSpecificData": {
+                "kind": "subagent",
+                "agentName": "search",
+                "description": "Find auth files",
+                "result": "Found 3 auth files",
+            },
+            "isComplete": True,
+            "toolCallId": "call_123",
+        }
+        inv = _parse_tool_invocation_serialized(item)
+        assert inv is not None
+        assert inv.result == "Found 3 auth files"
+        assert "Agent" in (inv.invocation_message or "")
+
+    def test_subagent_invocation_id_extracted(self):
+        """subAgentInvocationId should be read from child tool invocations."""
+        item = {
+            "kind": "toolInvocationSerialized",
+            "toolId": "vscode_readFile",
+            "invocationMessage": "Reading file.py",
+            "toolSpecificData": {},
+            "isComplete": True,
+            "toolCallId": "call_456",
+            "subAgentInvocationId": "call_123",
+        }
+        inv = _parse_tool_invocation_serialized(item)
+        assert inv is not None
+        assert inv.subagent_invocation_id == "call_123"
+
+    def test_subagent_with_no_result(self):
+        """Subagent with no result should still parse correctly."""
+        item = {
+            "kind": "toolInvocationSerialized",
+            "toolId": "RunSubagentTool",
+            "invocationMessage": "",
+            "toolSpecificData": {
+                "kind": "subagent",
+                "agentName": "explore",
+                "description": "Search for patterns",
+            },
+            "isComplete": False,
+            "toolCallId": "call_789",
+        }
+        inv = _parse_tool_invocation_serialized(item)
+        assert inv is not None
+        assert inv.status == "pending"
+        assert inv.result is None
+        assert "Agent" in (inv.invocation_message or "")
+
+    def test_non_subagent_has_no_subagent_invocation_id(self):
+        """Regular tool invocations should have subagent_invocation_id == None."""
+        item = {
+            "kind": "toolInvocationSerialized",
+            "toolId": "vscode_readFile",
+            "invocationMessage": "Reading file.py",
+            "toolSpecificData": {},
+            "isComplete": True,
+            "toolCallId": "call_regular",
+        }
+        inv = _parse_tool_invocation_serialized(item)
+        assert inv is not None
+        assert inv.subagent_invocation_id is None

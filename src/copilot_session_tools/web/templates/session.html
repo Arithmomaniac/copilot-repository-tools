@@ -527,6 +527,63 @@ header h1 {
     background-color: var(--bg-tertiary);
 }
 
+/* Agent sub-task blocks */
+.agent-block {
+    margin: 12px 0;
+    border-left: 3px solid var(--accent-color, #6366f1);
+    border-radius: 6px;
+    background: rgba(99, 102, 241, 0.05);
+}
+
+.agent-block > summary {
+    padding: 8px 12px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    list-style: none;
+}
+
+.agent-block > summary::-webkit-details-marker { display: none; }
+
+.agent-block > summary .collapsible-icon {
+    transition: transform 0.2s ease;
+    font-size: 0.7em;
+}
+
+.agent-block[open] > summary .collapsible-icon {
+    transform: rotate(90deg);
+}
+
+.agent-name {
+    font-size: 0.9em;
+}
+
+.agent-count {
+    font-size: 0.8em;
+    opacity: 0.6;
+}
+
+.agent-content {
+    padding: 0 12px 12px;
+}
+
+/* Nested agent blocks get lighter border */
+.agent-block .agent-block {
+    border-left-color: #818cf8;
+    background: rgba(99, 102, 241, 0.03);
+}
+
+@media (prefers-color-scheme: dark) {
+    .agent-block {
+        background: rgba(99, 102, 241, 0.08);
+    }
+    .agent-block .agent-block {
+        background: rgba(99, 102, 241, 0.05);
+    }
+}
+
 /* Content blocks */
 .content-block {
     margin: 4px 0;
@@ -1199,6 +1256,16 @@ footer a {
         <div class="messages">
             {% for message in session.messages %}
             {% set msg_meta = message_metadata.get(loop.index0, {}) %}
+            {% set agent_start_info = agent_group_starts.get(loop.index0) if agent_group_starts is defined else None %}
+            {% if agent_start_info %}
+            <details class="agent-block" {% if agent_start_info.nesting_level == 1 %}open{% endif %}>
+              <summary class="agent-summary">
+                <span class="collapsible-icon" aria-hidden="true">▶</span>
+                <span class="agent-name">🤖 {{ agent_start_info.agent_display_name }}</span>
+                <span class="agent-count">{{ agent_start_info.count }} message{{ 's' if agent_start_info.count != 1 }}</span>
+              </summary>
+              <div class="agent-content">
+            {% endif %}
             <div class="message {{ message.role }}" id="msg-{{ loop.index }}">
                 <div class="message-header">
                     <div class="message-role">{{ message.role }}</div>
@@ -1483,6 +1550,11 @@ footer a {
                 </details>
                 {% endif %}
             </div>
+            {% set is_agent_end = message.agent_id and (loop.last or session.messages[loop.index0 + 1].agent_id != message.agent_id) %}
+            {% if is_agent_end %}
+              </div>
+            </details>
+            {% endif %}
             {% endfor %}
         </div>
         {%- if new_turns %}

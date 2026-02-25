@@ -621,3 +621,96 @@ class TestCommandRunDescriptionInMarkdown:
         md = session_to_markdown(session)
         # Should use the pretty content, not the raw tool name
         assert "Searching for `pattern` in `path`" in md
+
+
+class TestAgentBlockquotes:
+    """Test agent message blockquote rendering in markdown."""
+
+    def test_agent_messages_are_blockquoted(self):
+        """Messages with agent_nesting_level > 0 should be blockquoted."""
+        messages = [
+            ChatMessage(role="assistant", content="Dispatching agent"),
+            ChatMessage(
+                role="assistant",
+                content="Found auth patterns",
+                agent_id="tc1",
+                agent_display_name="Explore Agent",
+                agent_nesting_level=1,
+            ),
+            ChatMessage(role="assistant", content="Based on findings..."),
+        ]
+        session = ChatSession(
+            session_id="test-123",
+            workspace_name="test",
+            workspace_path="/test",
+            messages=messages,
+        )
+        md = session_to_markdown(session)
+        assert "> " in md, "Agent messages should be blockquoted"
+        assert "Explore Agent" in md
+
+    def test_non_agent_messages_not_blockquoted(self):
+        """Top-level messages should not be blockquoted."""
+        messages = [
+            ChatMessage(role="user", content="Hello"),
+            ChatMessage(role="assistant", content="World"),
+        ]
+        session = ChatSession(
+            session_id="test-123",
+            workspace_name="test",
+            workspace_path="/test",
+            messages=messages,
+        )
+        md = session_to_markdown(session)
+        lines = md.split("\n")
+        # Content lines shouldn't start with > (except empty lines or header)
+        content_lines = [line for line in lines if line.strip() and not line.startswith("#") and not line.startswith("-") and not line.startswith("*")]
+        blockquoted = [line for line in content_lines if line.startswith(">")]
+        assert len(blockquoted) == 0, f"Non-agent messages shouldn't be blockquoted, got: {blockquoted}"
+
+    def test_nested_agent_double_blockquoted(self):
+        """Messages at agent_nesting_level 2 should have double blockquotes."""
+        messages = [
+            ChatMessage(
+                role="assistant",
+                content="Outer agent work",
+                agent_id="tc1",
+                agent_display_name="Outer Agent",
+                agent_nesting_level=1,
+            ),
+            ChatMessage(
+                role="assistant",
+                content="Inner agent work",
+                agent_id="tc2",
+                agent_display_name="Inner Agent",
+                agent_nesting_level=2,
+            ),
+        ]
+        session = ChatSession(
+            session_id="test-nested",
+            workspace_name="test",
+            workspace_path="/test",
+            messages=messages,
+        )
+        md = session_to_markdown(session)
+        assert "> > " in md, "Level 2 agent messages should have double blockquotes"
+
+    def test_agent_header_included(self):
+        """Agent group should include a header with the agent display name."""
+        messages = [
+            ChatMessage(
+                role="assistant",
+                content="Agent output",
+                agent_id="tc1",
+                agent_display_name="Code Review Agent",
+                agent_nesting_level=1,
+            ),
+        ]
+        session = ChatSession(
+            session_id="test-header",
+            workspace_name="test",
+            workspace_path="/test",
+            messages=messages,
+        )
+        md = session_to_markdown(session)
+        assert "Code Review Agent" in md

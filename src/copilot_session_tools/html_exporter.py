@@ -159,6 +159,80 @@ def _match_tool_for_block(block_content: str, tools: list, used_indices: set) ->
     return None, used_indices
 
 
+def _group_messages_for_template(messages: list) -> list[dict]:
+    """Group consecutive agent-tagged messages into agent groups for template rendering.
+
+    Returns a list of dicts, each either:
+    - {"type": "message", "message": msg, "index": i} for top-level messages
+    - {"type": "agent_group", "agent_id": str, "agent_display_name": str,
+       "nesting_level": int, "items": [...]} for grouped agent messages
+
+    Agent groups can contain nested agent groups (for agent-within-agent).
+    """
+    groups: list[dict] = []
+    i = 0
+    msg_index = 0  # 1-based message index for display
+
+    while i < len(messages):
+        msg = messages[i]
+        msg_index += 1
+
+        if msg.agent_nesting_level == 0 or not msg.agent_id:
+            groups.append({"type": "message", "message": msg, "index": msg_index})
+            i += 1
+        else:
+            # Start of an agent group - collect all consecutive messages with the same agent_id
+            agent_id = msg.agent_id
+            agent_display_name = msg.agent_display_name or "Agent"
+            nesting_level = msg.agent_nesting_level
+            agent_items = []
+
+            while i < len(messages) and messages[i].agent_id == agent_id:
+                agent_items.append({"type": "message", "message": messages[i], "index": msg_index})
+                i += 1
+                msg_index += 1
+
+            groups.append(
+                {
+                    "type": "agent_group",
+                    "agent_id": agent_id,
+                    "agent_display_name": agent_display_name,
+                    "nesting_level": nesting_level,
+                    "items": agent_items,
+                }
+            )
+
+    return groups
+
+
+def compute_agent_group_starts(messages: list) -> dict[int, dict]:
+    """Compute a dict mapping 0-based message index to agent group metadata.
+
+    Only contains entries for the first message of each consecutive agent group.
+    Used by the template to emit opening ``<details>`` tags with group metadata.
+    """
+    starts: dict[int, dict] = {}
+    i = 0
+    while i < len(messages):
+        msg = messages[i]
+        if msg.agent_nesting_level > 0 and msg.agent_id:
+            agent_id = msg.agent_id
+            count = 0
+            j = i
+            while j < len(messages) and messages[j].agent_id == agent_id:
+                count += 1
+                j += 1
+            starts[i] = {
+                "agent_display_name": msg.agent_display_name or "Agent",
+                "nesting_level": msg.agent_nesting_level,
+                "count": count,
+            }
+            i = j
+        else:
+            i += 1
+    return starts
+
+
 def _get_jinja_env() -> Environment:
     """Create a standalone Jinja2 environment pointing at the web templates."""
     templates_dir = Path(__file__).parent / "web" / "templates"
@@ -230,6 +304,7 @@ def session_to_html(session: ChatSession) -> str:
         Complete HTML document as a string.
     """
     first_user_prompt, message_metadata = _preprocess_messages(session)
+    agent_group_starts = compute_agent_group_starts(session.messages)
     env = _get_jinja_env()
     template = env.get_template("session.html")
     return template.render(
@@ -238,6 +313,7 @@ def session_to_html(session: ChatSession) -> str:
         message_count=len(session.messages),
         first_user_prompt=first_user_prompt,
         message_metadata=message_metadata,
+        agent_group_starts=agent_group_starts,
         static=True,
         is_enriched=True,
     )

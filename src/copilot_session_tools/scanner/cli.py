@@ -71,6 +71,7 @@ class _CliSessionBuilder:
         self.current_assistant_command_runs: list[CommandRun] = []
         self.current_assistant_timestamp: str | None = None
         self.pending_tool_requests: dict[str, dict] = {}
+        self.subagent_stack: list[dict] = []  # Stack of {toolCallId, agentDisplayName}
 
     def flush_assistant_message(self) -> None:
         """Flush accumulated assistant content blocks into a single message."""
@@ -85,6 +86,16 @@ class _CliSessionBuilder:
                 text_parts.append(block.content)
         flat_content = "\n\n".join(text_parts)
 
+        # Determine agent context from subagent stack
+        agent_id = None
+        agent_display_name = None
+        agent_nesting_level = 0
+        if self.subagent_stack:
+            top = self.subagent_stack[-1]
+            agent_id = top["toolCallId"]
+            agent_display_name = top["agentDisplayName"]
+            agent_nesting_level = len(self.subagent_stack)
+
         self.messages.append(
             ChatMessage(
                 role="assistant",
@@ -93,6 +104,9 @@ class _CliSessionBuilder:
                 tool_invocations=self.current_assistant_tool_invocations.copy(),
                 command_runs=self.current_assistant_command_runs.copy(),
                 content_blocks=self.current_assistant_content_blocks.copy(),
+                agent_id=agent_id,
+                agent_display_name=agent_display_name,
+                agent_nesting_level=agent_nesting_level,
             )
         )
 
@@ -557,19 +571,26 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
             # --- Subagent lifecycle events ---
             elif event_type == "subagent.started":
                 display_name = event_data.get("agentDisplayName") or event_data.get("agentName", "unknown")
-                builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=f"🤖 Subagent started: {display_name}", description="subagent"))
+                tool_call_id = event_data.get("toolCallId", "")
+                builder.flush_assistant_message()
+                builder.subagent_stack.append({"toolCallId": tool_call_id, "agentDisplayName": display_name})
 
             elif event_type == "subagent.completed":
-                display_name = event_data.get("agentDisplayName") or event_data.get("agentName", "unknown")
-                builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=f"✅ Subagent completed: {display_name}", description="subagent"))
+                tool_call_id = event_data.get("toolCallId", "")
+                builder.flush_assistant_message()
+                # Pop matching entry (may not be top if parallel agents complete out-of-order)
+                builder.subagent_stack[:] = [s for s in builder.subagent_stack if s["toolCallId"] != tool_call_id]
 
             elif event_type == "subagent.failed":
                 display_name = event_data.get("agentDisplayName") or event_data.get("agentName", "unknown")
+                tool_call_id = event_data.get("toolCallId", "")
                 error = event_data.get("error") or ""
                 if len(error) > 200:
                     error = error[:200] + "…"
                 error_suffix = f" — {error}" if error else ""
+                builder.flush_assistant_message()
                 builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=f"❌ Subagent failed: {display_name}{error_suffix}", description="subagent"))
+                builder.subagent_stack[:] = [s for s in builder.subagent_stack if s["toolCallId"] != tool_call_id]
 
             # --- Session lifecycle events ---
             elif event_type == "session.handoff":
