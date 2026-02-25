@@ -6,7 +6,7 @@ both exercise the same code path.
 """
 
 from concurrent.futures import ThreadPoolExecutor
-from typing import TypedDict
+from dataclasses import dataclass
 
 from copilot_session_tools import Database, scan_chat_sessions
 from copilot_session_tools.scanner import SessionFileInfo, parse_session_file, scan_session_files
@@ -15,8 +15,9 @@ from copilot_session_tools.scanner import SessionFileInfo, parse_session_file, s
 PARSE_WORKERS = 4
 
 
-class RefreshResult(TypedDict):
-    """Counts returned after a refresh operation."""
+@dataclass
+class RefreshResult:
+    """Counts returned by a refresh operation."""
 
     added: int
     updated: int
@@ -44,8 +45,8 @@ def run_refresh(
             (default ``True``).
 
     Returns:
-        A :class:`RefreshResult` dict with keys ``added``, ``updated``,
-        ``skipped``, and ``mode``.
+        A :class:`RefreshResult` with ``added``, ``updated``,
+        ``skipped``, and ``mode`` fields.
     """
     added = 0
     updated = 0

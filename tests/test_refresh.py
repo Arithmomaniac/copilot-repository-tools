@@ -17,6 +17,15 @@ def temp_db(tmp_path):
     return Database(db_path)
 
 
+def _platform_path(posix_path: str) -> str:
+    """Convert a POSIX path string to the OS-native representation.
+
+    Ensures source_file values in test fixtures match str(Path(...)) on every
+    platform (forward slashes on Linux/macOS, backslashes on Windows).
+    """
+    return str(Path(posix_path))
+
+
 @pytest.fixture
 def session_a():
     return ChatSession(
@@ -26,7 +35,7 @@ def session_a():
         messages=[ChatMessage(role="user", content="Hello")],
         created_at="2025-01-01T00:00:00Z",
         vscode_edition="stable",
-        source_file="/tmp/a.json",
+        source_file=_platform_path("/tmp/a.json"),
         source_file_mtime=1000.0,
         source_file_size=512,
     )
@@ -41,29 +50,32 @@ def session_b():
         messages=[ChatMessage(role="user", content="World")],
         created_at="2025-01-02T00:00:00Z",
         vscode_edition="stable",
-        source_file="/tmp/b.json",
+        source_file=_platform_path("/tmp/b.json"),
         source_file_mtime=2000.0,
         source_file_size=1024,
     )
 
 
 class TestRunRefreshReturnType:
-    """run_refresh() must always return a valid RefreshResult dict."""
+    """run_refresh() must always return a valid RefreshResult."""
 
-    def test_returns_dict_with_correct_keys(self, temp_db):
+    def test_returns_dataclass_with_correct_attrs(self, temp_db):
         with patch("copilot_session_tools.refresh.scan_session_files", return_value=iter([])):
             result = run_refresh(temp_db, storage_paths=[], full=False)
-        assert set(result.keys()) == {"added", "updated", "skipped", "mode"}
+        assert hasattr(result, "added")
+        assert hasattr(result, "updated")
+        assert hasattr(result, "skipped")
+        assert hasattr(result, "mode")
 
     def test_incremental_mode_label(self, temp_db):
         with patch("copilot_session_tools.refresh.scan_session_files", return_value=iter([])):
             result = run_refresh(temp_db, storage_paths=[], full=False)
-        assert result["mode"] == "incremental"
+        assert result.mode == "incremental"
 
     def test_full_mode_label(self, temp_db):
         with patch("copilot_session_tools.refresh.scan_chat_sessions", return_value=iter([])):
             result = run_refresh(temp_db, storage_paths=[], full=True)
-        assert result["mode"] == "full"
+        assert result.mode == "full"
 
 
 class TestRunRefreshIncrementalMode:
@@ -90,9 +102,9 @@ class TestRunRefreshIncrementalMode:
         ):
             result = run_refresh(temp_db, storage_paths=[], full=False)
 
-        assert result["added"] == 1
-        assert result["updated"] == 0
-        assert result["skipped"] == 0
+        assert result.added == 1
+        assert result.updated == 0
+        assert result.skipped == 0
 
     def test_unchanged_session_is_skipped(self, temp_db, session_a):
         """A session whose mtime/size matches stored metadata must be skipped."""
@@ -104,9 +116,9 @@ class TestRunRefreshIncrementalMode:
         ):
             result = run_refresh(temp_db, storage_paths=[], full=False)
 
-        assert result["skipped"] == 1
-        assert result["added"] == 0
-        assert result["updated"] == 0
+        assert result.skipped == 1
+        assert result.added == 0
+        assert result.updated == 0
 
     def test_changed_session_is_updated(self, temp_db, session_a):
         """A session whose mtime differs from stored metadata must be re-imported."""
@@ -130,8 +142,8 @@ class TestRunRefreshIncrementalMode:
         ):
             result = run_refresh(temp_db, storage_paths=[], full=False)
 
-        assert result["updated"] == 1
-        assert result["added"] == 0
+        assert result.updated == 1
+        assert result.added == 0
 
     def test_multiple_sessions_mixed(self, temp_db, session_a, session_b):
         """New + unchanged sessions in a single incremental run."""
@@ -150,9 +162,9 @@ class TestRunRefreshIncrementalMode:
         ):
             result = run_refresh(temp_db, storage_paths=[], full=False)
 
-        assert result["skipped"] == 1
-        assert result["added"] == 1
-        assert result["updated"] == 0
+        assert result.skipped == 1
+        assert result.added == 1
+        assert result.updated == 0
 
 
 class TestRunRefreshFullMode:
@@ -162,8 +174,8 @@ class TestRunRefreshFullMode:
         with patch("copilot_session_tools.refresh.scan_chat_sessions", return_value=iter([session_a])):
             result = run_refresh(temp_db, storage_paths=[], full=True)
 
-        assert result["added"] == 1
-        assert result["updated"] == 0
+        assert result.added == 1
+        assert result.updated == 0
 
     def test_existing_session_is_updated(self, temp_db, session_a):
         temp_db.add_session(session_a)
@@ -171,8 +183,8 @@ class TestRunRefreshFullMode:
         with patch("copilot_session_tools.refresh.scan_chat_sessions", return_value=iter([session_a])):
             result = run_refresh(temp_db, storage_paths=[], full=True)
 
-        assert result["updated"] == 1
-        assert result["added"] == 0
+        assert result.updated == 1
+        assert result.added == 0
 
     def test_multiple_sessions(self, temp_db, session_a, session_b):
         """Full mode with one new and one existing session."""
@@ -184,6 +196,6 @@ class TestRunRefreshFullMode:
         ):
             result = run_refresh(temp_db, storage_paths=[], full=True)
 
-        assert result["added"] == 1
-        assert result["updated"] == 1
-        assert result["skipped"] == 0
+        assert result.added == 1
+        assert result.updated == 1
+        assert result.skipped == 0

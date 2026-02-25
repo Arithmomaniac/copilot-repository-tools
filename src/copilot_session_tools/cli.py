@@ -200,9 +200,9 @@ def scan(
             console.print(f"  Checking: {path} ({ed})")
 
     result = run_refresh(database, paths, full=full)
-    added = result["added"]
-    updated = result["updated"]
-    skipped = result["skipped"]
+    added = result.added
+    updated = result.updated
+    skipped = result.skipped
 
     console.print("\n[green]VS Code import complete:[/green]")
     console.print(f"  Added: {added} sessions")

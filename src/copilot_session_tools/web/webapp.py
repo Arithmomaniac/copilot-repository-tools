@@ -507,10 +507,10 @@ def create_app(
 
         # Store refresh result in Flask session for display after redirect
         session["refresh_result"] = {
-            "added": result["added"],
-            "updated": result["updated"],
-            "skipped": result["skipped"],
-            "mode": result["mode"],
+            "added": result.added,
+            "updated": result.updated,
+            "skipped": result.skipped,
+            "mode": result.mode,
         }
 
         return redirect(url_for("index"))
