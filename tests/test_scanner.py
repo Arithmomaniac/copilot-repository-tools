@@ -1824,6 +1824,7 @@ class TestVSCodeSubagentParsing:
         assert "Found 3 auth files" in subagent_content
         # The subagent title should include the agent name and description
         subagent_title = subagent_blocks[0][2]
+        assert subagent_title is not None
         assert "search" in subagent_title
         assert "Find auth files" in subagent_title
         # The regular tool should still appear
