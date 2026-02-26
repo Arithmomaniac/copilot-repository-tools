@@ -624,20 +624,18 @@ class TestCommandRunDescriptionInMarkdown:
 
 
 class TestAgentBlockquotes:
-    """Test agent message blockquote rendering in markdown."""
+    """Test agent subagent content block rendering in markdown."""
 
-    def test_agent_messages_are_blockquoted(self):
-        """Messages with agent_nesting_level > 0 should be blockquoted."""
+    def test_subagent_block_rendered_as_details(self):
+        """ContentBlock(kind='subagent') should render as a collapsible details block."""
         messages = [
-            ChatMessage(role="assistant", content="Dispatching agent"),
             ChatMessage(
                 role="assistant",
-                content="Found auth patterns",
-                agent_id="tc1",
-                agent_display_name="Explore Agent",
-                agent_nesting_level=1,
+                content="",
+                content_blocks=[
+                    ContentBlock(kind="subagent", content="Found auth patterns in 3 files", description="Explore Agent"),
+                ],
             ),
-            ChatMessage(role="assistant", content="Based on findings..."),
         ]
         session = ChatSession(
             session_id="test-123",
@@ -646,8 +644,31 @@ class TestAgentBlockquotes:
             messages=messages,
         )
         md = session_to_markdown(session)
-        assert "> " in md, "Agent messages should be blockquoted"
+        assert "<details>" in md
         assert "Explore Agent" in md
+        assert "> Found auth patterns in 3 files" in md
+
+    def test_subagent_block_with_agent_number(self):
+        """Subagent block with agent number in description renders correctly."""
+        messages = [
+            ChatMessage(
+                role="assistant",
+                content="",
+                content_blocks=[
+                    ContentBlock(kind="subagent", content="Test results: all passed", description="Task Agent: Run tests"),
+                ],
+            ),
+        ]
+        session = ChatSession(
+            session_id="test-numbered",
+            workspace_name="test",
+            workspace_path="/test",
+            messages=messages,
+        )
+        md = session_to_markdown(session)
+        assert "<details>" in md
+        assert "Task Agent: Run tests" in md
+        assert "> Test results: all passed" in md
 
     def test_non_agent_messages_not_blockquoted(self):
         """Top-level messages should not be blockquoted."""
@@ -668,42 +689,15 @@ class TestAgentBlockquotes:
         blockquoted = [line for line in content_lines if line.startswith(">")]
         assert len(blockquoted) == 0, f"Non-agent messages shouldn't be blockquoted, got: {blockquoted}"
 
-    def test_nested_agent_double_blockquoted(self):
-        """Messages at agent_nesting_level 2 should have double blockquotes."""
+    def test_subagent_block_summary_includes_completed(self):
+        """The details summary should include the completed label."""
         messages = [
             ChatMessage(
                 role="assistant",
-                content="Outer agent work",
-                agent_id="tc1",
-                agent_display_name="Outer Agent",
-                agent_nesting_level=1,
-            ),
-            ChatMessage(
-                role="assistant",
-                content="Inner agent work",
-                agent_id="tc2",
-                agent_display_name="Inner Agent",
-                agent_nesting_level=2,
-            ),
-        ]
-        session = ChatSession(
-            session_id="test-nested",
-            workspace_name="test",
-            workspace_path="/test",
-            messages=messages,
-        )
-        md = session_to_markdown(session)
-        assert "> > " in md, "Level 2 agent messages should have double blockquotes"
-
-    def test_agent_header_included(self):
-        """Agent group should include a header with the agent display name."""
-        messages = [
-            ChatMessage(
-                role="assistant",
-                content="Agent output",
-                agent_id="tc1",
-                agent_display_name="Code Review Agent",
-                agent_nesting_level=1,
+                content="",
+                content_blocks=[
+                    ContentBlock(kind="subagent", content="Result text", description="Code Review Agent"),
+                ],
             ),
         ]
         session = ChatSession(
@@ -714,3 +708,4 @@ class TestAgentBlockquotes:
         )
         md = session_to_markdown(session)
         assert "Code Review Agent" in md
+        assert "completed" in md

@@ -22,6 +22,7 @@ from copilot_session_tools.scanner import (
     _merge_content_blocks,
     _parse_tool_invocation_serialized,
 )
+from copilot_session_tools.scanner.vscode import _process_response_items
 
 
 @pytest.fixture
@@ -1321,82 +1322,83 @@ class TestCLINewEventHandlers:
                     blocks.append(cb)
         return blocks
 
-    # --- subagent.started (pushes to stack, tags messages with agent metadata) ---
+    # --- subagent.started (no visible output — completed block replaces it) ---
 
-    def test_subagent_started_tags_messages(self, tmp_path):
-        """Messages inside a subagent bracket get agent metadata."""
+    def test_subagent_started_emits_no_pill(self, tmp_path):
+        """subagent.started creates no visible content block."""
         session = self._parse(
             tmp_path,
+            {"type": "assistant.message", "data": {"content": "Dispatching..."}},
             {"type": "subagent.started", "data": {"agentDisplayName": "code-review", "agentName": "cr", "toolCallId": "tc1"}},
-            {"type": "assistant.message", "data": {"content": "Inside agent"}},
-            {"type": "subagent.completed", "data": {"toolCallId": "tc1"}},
         )
-        # The assistant message inside the bracket should be tagged
-        assistant_msgs = [m for m in session.messages if m.role == "assistant"]
-        assert len(assistant_msgs) == 1
-        assert assistant_msgs[0].agent_id == "tc1"
-        assert assistant_msgs[0].agent_display_name == "code-review"
-        assert assistant_msgs[0].agent_nesting_level == 1
+        blocks = self._find_status_blocks(session, "subagent")
+        assert len(blocks) == 0
 
-    def test_subagent_started_fallback_to_agent_name(self, tmp_path):
-        """Falls back to agentName when agentDisplayName is absent."""
+    def test_subagent_started_no_agent_metadata_on_messages(self, tmp_path):
+        """Messages have no agent_id/agent_display_name set."""
         session = self._parse(
             tmp_path,
+            {"type": "assistant.message", "data": {"content": "Dispatching..."}},
             {"type": "subagent.started", "data": {"agentName": "fallback-agent", "toolCallId": "tc2"}},
-            {"type": "assistant.message", "data": {"content": "Agent work"}},
-            {"type": "subagent.completed", "data": {"toolCallId": "tc2"}},
         )
-        assistant_msgs = [m for m in session.messages if m.role == "assistant"]
-        assert len(assistant_msgs) == 1
-        assert assistant_msgs[0].agent_display_name == "fallback-agent"
+        for msg in session.messages:
+            assert msg.agent_id is None
+            assert msg.agent_display_name is None
+            assert msg.agent_nesting_level == 0
 
-    # --- subagent.completed (pops from stack, no status badge) ---
+    # --- subagent.completed (emits subagent content block) ---
 
-    def test_subagent_completed_untagged_after(self, tmp_path):
-        """Messages after subagent.completed are not tagged."""
+    def test_subagent_completed_creates_subagent_block(self, tmp_path):
+        """subagent.completed creates a ContentBlock(kind='subagent') with result text."""
         session = self._parse(
             tmp_path,
             {"type": "subagent.started", "data": {"agentDisplayName": "explorer", "toolCallId": "tc3"}},
-            {"type": "assistant.message", "data": {"content": "Inside"}},
-            {"type": "subagent.completed", "data": {"toolCallId": "tc3"}},
-            {"type": "assistant.message", "data": {"content": "Outside"}},
+            {"type": "subagent.completed", "data": {"toolCallId": "tc3", "agentDisplayName": "explorer"}},
+            {"type": "tool.execution_complete", "data": {"toolCallId": "tc3", "success": True, "result": {"content": "Found 3 files"}}},
         )
-        assistant_msgs = [m for m in session.messages if m.role == "assistant"]
-        # First message (inside bracket) is tagged
-        assert assistant_msgs[0].agent_nesting_level == 1
-        # No subagent status badges
-        blocks = self._find_status_blocks(session, "subagent")
-        assert len(blocks) == 0
+        subagent_blocks = []
+        for msg in session.messages:
+            for cb in msg.content_blocks:
+                if cb.kind == "subagent":
+                    subagent_blocks.append(cb)
+        assert len(subagent_blocks) == 1
+        assert "Found 3 files" in subagent_blocks[0].content
+        assert "explorer" in subagent_blocks[0].description
 
     # --- subagent.failed ---
 
     def test_subagent_failed(self, tmp_path):
         session = self._parse(
             tmp_path,
-            {"type": "subagent.failed", "data": {"agentDisplayName": "builder", "error": "timeout"}},
+            {"type": "assistant.message", "data": {"content": "Running..."}},
+            {"type": "subagent.failed", "data": {"agentDisplayName": "builder", "toolCallId": "tc1", "error": "timeout"}},
         )
-        blocks = self._find_status_blocks(session, "subagent")
+        blocks = self._find_status_blocks(session, "subagent-error")
         assert len(blocks) == 1
-        assert blocks[0].content == "❌ Subagent failed: builder — timeout"
+        assert "builder" in blocks[0].content
+        assert "failed" in blocks[0].content
 
     def test_subagent_failed_null_error(self, tmp_path):
         session = self._parse(
             tmp_path,
-            {"type": "subagent.failed", "data": {"agentDisplayName": "builder", "error": None}},
+            {"type": "assistant.message", "data": {"content": "Running..."}},
+            {"type": "subagent.failed", "data": {"agentDisplayName": "builder", "toolCallId": "tc2", "error": None}},
         )
-        blocks = self._find_status_blocks(session, "subagent")
+        blocks = self._find_status_blocks(session, "subagent-error")
         assert len(blocks) == 1
-        assert blocks[0].content == "❌ Subagent failed: builder"
+        assert "failed" in blocks[0].content
 
     def test_subagent_failed_truncates_long_error(self, tmp_path):
         long_error = "x" * 300
         session = self._parse(
             tmp_path,
-            {"type": "subagent.failed", "data": {"agentDisplayName": "builder", "error": long_error}},
+            {"type": "assistant.message", "data": {"content": "Running..."}},
+            {"type": "subagent.failed", "data": {"agentDisplayName": "builder", "toolCallId": "tc3", "error": long_error}},
         )
-        blocks = self._find_status_blocks(session, "subagent")
+        blocks = self._find_status_blocks(session, "subagent-error")
         assert len(blocks) == 1
-        assert blocks[0].content == f"❌ Subagent failed: builder — {'x' * 200}…"
+        assert "failed" in blocks[0].content
+        # Error detail is NOT in the pill — it's in the collapsible
         assert len(long_error) > 200  # sanity check
 
     # --- session.handoff ---
@@ -1529,7 +1531,7 @@ class TestCLINewEventHandlers:
 
 
 class TestCLISubagentBrackets:
-    """Test that CLI subagent brackets correctly tag messages."""
+    """Test that CLI subagent events emit status pills and subagent content blocks."""
 
     @staticmethod
     def _make_events_jsonl(*events):
@@ -1559,15 +1561,23 @@ class TestCLISubagentBrackets:
         f.write_text(self._make_events_jsonl(*events), encoding="utf-8")
         return _parse_cli_jsonl_file(f)
 
-    def test_messages_inside_bracket_get_agent_metadata(self, tmp_path):
-        """Messages between subagent.started and subagent.completed should have agent fields set."""
+    def _find_blocks(self, session, kind):
+        """Return all content blocks of a given kind."""
+        blocks = []
+        for msg in session.messages:
+            for cb in msg.content_blocks:
+                if cb.kind == kind:
+                    blocks.append(cb)
+        return blocks
+
+    def test_started_emits_no_pill(self, tmp_path):
+        """subagent.started emits no visible content block."""
         session = self._parse(
             tmp_path,
-            {"type": "assistant.turn_start", "data": {}},
             {
                 "type": "assistant.message",
                 "data": {
-                    "content": "Dispatching agent...",
+                    "content": "Dispatching...",
                     "toolRequests": [
                         {"toolCallId": "tc1", "name": "task", "arguments": {"agent_type": "explore", "description": "Find auth"}},
                     ],
@@ -1575,102 +1585,111 @@ class TestCLISubagentBrackets:
             },
             {"type": "tool.execution_start", "data": {"toolCallId": "tc1", "toolName": "task", "arguments": {"agent_type": "explore"}}},
             {"type": "subagent.started", "data": {"toolCallId": "tc1", "agentDisplayName": "Explore Agent", "agentName": "explore"}},
-            {"type": "assistant.message", "data": {"content": "Looking for auth patterns..."}},
-            {"type": "assistant.message", "data": {"content": "Found JWT auth in src/auth.py"}},
+        )
+        blocks = [b for b in self._find_blocks(session, "status") if b.description == "subagent"]
+        assert len(blocks) == 0
+
+    def test_completed_emits_subagent_block(self, tmp_path):
+        """subagent.completed emits a subagent ContentBlock with the result."""
+        session = self._parse(
+            tmp_path,
+            {
+                "type": "assistant.message",
+                "data": {
+                    "content": "Running agent...",
+                    "toolRequests": [
+                        {"toolCallId": "tc1", "name": "task", "arguments": {"agent_type": "explore", "description": "Find auth"}},
+                    ],
+                },
+            },
+            {"type": "tool.execution_start", "data": {"toolCallId": "tc1", "toolName": "task", "arguments": {"agent_type": "explore"}}},
+            {"type": "subagent.started", "data": {"toolCallId": "tc1", "agentDisplayName": "Explore Agent"}},
             {"type": "subagent.completed", "data": {"toolCallId": "tc1", "agentDisplayName": "Explore Agent"}},
-            {"type": "tool.execution_complete", "data": {"toolCallId": "tc1", "success": True, "result": {"content": "Found JWT auth"}}},
-            {"type": "assistant.turn_end", "data": {}},
+            {"type": "tool.execution_complete", "data": {"toolCallId": "tc1", "success": True, "result": {"content": "Found JWT auth in src/auth.py"}}},
         )
-        agent_messages = [m for m in session.messages if m.agent_nesting_level > 0]
-        assert len(agent_messages) >= 1, f"Expected agent-tagged messages, got {len(agent_messages)}"
-        for m in agent_messages:
-            assert m.agent_id == "tc1"
-            assert m.agent_display_name == "Explore Agent"
-            assert m.agent_nesting_level == 1
+        blocks = self._find_blocks(session, "subagent")
+        assert len(blocks) == 1
+        assert "Found JWT auth" in blocks[0].content
+        assert "Explore Agent" in blocks[0].description
 
-    def test_messages_outside_bracket_have_no_agent_metadata(self, tmp_path):
-        """Messages before/after subagent brackets should have agent_nesting_level == 0."""
+    def test_agent_numbering(self, tmp_path):
+        """Agent numbering (agent-0, agent-1) appears in labels based on task dispatch order."""
         session = self._parse(
             tmp_path,
-            {"type": "assistant.turn_start", "data": {}},
-            {"type": "assistant.message", "data": {"content": "Before agent"}},
-            {"type": "subagent.started", "data": {"toolCallId": "tc1", "agentDisplayName": "Agent"}},
-            {"type": "assistant.message", "data": {"content": "Inside agent"}},
-            {"type": "subagent.completed", "data": {"toolCallId": "tc1"}},
-            {"type": "assistant.message", "data": {"content": "After agent"}},
-            {"type": "assistant.turn_end", "data": {}},
+            {
+                "type": "assistant.message",
+                "data": {
+                    "content": "Dispatching two agents...",
+                    "toolRequests": [
+                        {"toolCallId": "tc1", "name": "task", "arguments": {"agent_type": "explore", "description": "Search code"}},
+                        {"toolCallId": "tc2", "name": "task", "arguments": {"agent_type": "task", "description": "Run tests"}},
+                    ],
+                },
+            },
+            {"type": "tool.execution_start", "data": {"toolCallId": "tc1", "toolName": "task", "arguments": {"agent_type": "explore"}}},
+            {"type": "tool.execution_start", "data": {"toolCallId": "tc2", "toolName": "task", "arguments": {"agent_type": "task"}}},
+            {"type": "subagent.started", "data": {"toolCallId": "tc1", "agentDisplayName": "Explore Agent"}},
+            {"type": "subagent.started", "data": {"toolCallId": "tc2", "agentDisplayName": "Task Agent"}},
+            {"type": "subagent.completed", "data": {"toolCallId": "tc1", "agentDisplayName": "Explore Agent"}},
+            {"type": "subagent.completed", "data": {"toolCallId": "tc2", "agentDisplayName": "Task Agent"}},
+            {"type": "tool.execution_complete", "data": {"toolCallId": "tc1", "success": True, "result": {"content": "result1"}}},
+            {"type": "tool.execution_complete", "data": {"toolCallId": "tc2", "success": True, "result": {"content": "result2"}}},
         )
-        non_agent = [m for m in session.messages if m.agent_nesting_level == 0]
-        agent = [m for m in session.messages if m.agent_nesting_level > 0]
-        assert len(non_agent) >= 1, "Should have non-agent messages"
-        assert len(agent) >= 1, "Should have agent messages"
+        # Completed pills exist
+        status_blocks = [b for b in self._find_blocks(session, "status") if b.description == "subagent"]
+        assert len(status_blocks) == 2
+        assert any("completed" in b.content for b in status_blocks)
+        # Subagent collapsible blocks at start position
+        subagent_blocks = self._find_blocks(session, "subagent")
+        assert len(subagent_blocks) == 2
+        descs = [b.description for b in subagent_blocks]
+        assert any("Explore Agent" in d for d in descs)
+        assert any("Task Agent" in d for d in descs)
 
-    def test_nested_agents_increment_nesting_level(self, tmp_path):
-        """Nested subagent brackets should increment nesting level."""
+    def test_parallel_agents_each_get_completed_block(self, tmp_path):
+        """Parallel agents each get their own completed subagent block."""
         session = self._parse(
             tmp_path,
-            {"type": "assistant.turn_start", "data": {}},
-            {"type": "subagent.started", "data": {"toolCallId": "tc1", "agentDisplayName": "Outer Agent"}},
-            {"type": "assistant.message", "data": {"content": "Outer message"}},
-            {"type": "subagent.started", "data": {"toolCallId": "tc2", "agentDisplayName": "Inner Agent"}},
-            {"type": "assistant.message", "data": {"content": "Inner message"}},
-            {"type": "subagent.completed", "data": {"toolCallId": "tc2"}},
-            {"type": "subagent.completed", "data": {"toolCallId": "tc1"}},
-            {"type": "assistant.turn_end", "data": {}},
-        )
-        agent_msgs = [m for m in session.messages if m.agent_nesting_level > 0]
-        levels = [m.agent_nesting_level for m in agent_msgs]
-        assert 1 in levels, "Should have level 1 (outer agent)"
-        assert 2 in levels, "Should have level 2 (inner agent)"
-
-    def test_subagent_failed_preserves_error_status(self, tmp_path):
-        """Failed subagent should still add error status block."""
-        session = self._parse(
-            tmp_path,
-            {"type": "assistant.turn_start", "data": {}},
-            {"type": "subagent.started", "data": {"toolCallId": "tc1", "agentDisplayName": "Builder"}},
-            {"type": "subagent.failed", "data": {"toolCallId": "tc1", "agentDisplayName": "Builder", "error": "timeout after 300s"}},
-            {"type": "assistant.turn_end", "data": {}},
-        )
-        all_blocks = []
-        for m in session.messages:
-            all_blocks.extend(m.content_blocks)
-        error_blocks = [b for b in all_blocks if b.kind == "status" and "failed" in b.content.lower()]
-        assert len(error_blocks) >= 1, f"Should have error status block, got blocks: {[b.content for b in all_blocks]}"
-
-    def test_parallel_agents_tracked_independently(self, tmp_path):
-        """Parallel subagents with different toolCallIds should be tracked independently."""
-        session = self._parse(
-            tmp_path,
-            {"type": "assistant.turn_start", "data": {}},
+            {
+                "type": "assistant.message",
+                "data": {
+                    "content": "Running in parallel...",
+                    "toolRequests": [
+                        {"toolCallId": "tc1", "name": "task", "arguments": {"agent_type": "explore", "description": "Agent A work"}},
+                        {"toolCallId": "tc2", "name": "task", "arguments": {"agent_type": "explore", "description": "Agent B work"}},
+                    ],
+                },
+            },
+            {"type": "tool.execution_start", "data": {"toolCallId": "tc1", "toolName": "task", "arguments": {}}},
+            {"type": "tool.execution_start", "data": {"toolCallId": "tc2", "toolName": "task", "arguments": {}}},
             {"type": "subagent.started", "data": {"toolCallId": "tc1", "agentDisplayName": "Agent A"}},
             {"type": "subagent.started", "data": {"toolCallId": "tc2", "agentDisplayName": "Agent B"}},
-            {"type": "assistant.message", "data": {"content": "Message during both agents active"}},
-            {"type": "subagent.completed", "data": {"toolCallId": "tc1"}},
-            {"type": "assistant.message", "data": {"content": "Message with only B active"}},
-            {"type": "subagent.completed", "data": {"toolCallId": "tc2"}},
-            {"type": "assistant.turn_end", "data": {}},
+            {"type": "subagent.completed", "data": {"toolCallId": "tc1", "agentDisplayName": "Agent A"}},
+            {"type": "subagent.completed", "data": {"toolCallId": "tc2", "agentDisplayName": "Agent B"}},
+            {"type": "tool.execution_complete", "data": {"toolCallId": "tc1", "success": True, "result": {"content": "Result A"}}},
+            {"type": "tool.execution_complete", "data": {"toolCallId": "tc2", "success": True, "result": {"content": "Result B"}}},
         )
-        agent_msgs = [m for m in session.messages if m.agent_nesting_level > 0]
-        assert len(agent_msgs) >= 1, "Should have agent-tagged messages"
+        subagent_blocks = self._find_blocks(session, "subagent")
+        assert len(subagent_blocks) == 2
+        contents = {b.content for b in subagent_blocks}
+        assert "Result A" in contents
+        assert "Result B" in contents
 
-    def test_outer_agent_level_restored_after_inner_completes(self, tmp_path):
-        """After inner agent completes, messages should revert to outer agent's level."""
+    def test_messages_between_brackets_are_normal(self, tmp_path):
+        """Messages between subagent.started and subagent.completed have no agent metadata."""
         session = self._parse(
             tmp_path,
-            {"type": "subagent.started", "data": {"toolCallId": "tc1", "agentDisplayName": "Outer"}},
-            {"type": "assistant.message", "data": {"content": "Outer before inner"}},
-            {"type": "subagent.started", "data": {"toolCallId": "tc2", "agentDisplayName": "Inner"}},
-            {"type": "assistant.message", "data": {"content": "Inner msg"}},
-            {"type": "subagent.completed", "data": {"toolCallId": "tc2"}},
-            {"type": "assistant.message", "data": {"content": "Outer after inner"}},
+            {"type": "assistant.message", "data": {"content": "Before agent"}},
+            {"type": "subagent.started", "data": {"toolCallId": "tc1", "agentDisplayName": "Agent"}},
+            {"type": "assistant.message", "data": {"content": "During agent"}},
             {"type": "subagent.completed", "data": {"toolCallId": "tc1"}},
+            {"type": "assistant.message", "data": {"content": "After agent"}},
         )
-        msgs = [m for m in session.messages if m.role == "assistant"]
-        # "Outer before inner" → level 1, "Inner msg" → level 2, "Outer after inner" → level 1
-        assert msgs[0].agent_nesting_level == 1
-        assert msgs[1].agent_nesting_level == 2
-        assert msgs[2].agent_nesting_level == 1
+        for msg in session.messages:
+            if msg.role == "assistant":
+                assert msg.agent_id is None, f"Message should not have agent_id: {msg.content}"
+                assert msg.agent_display_name is None, f"Message should not have agent_display_name: {msg.content}"
+                assert msg.agent_nesting_level == 0, f"Message should have nesting_level=0: {msg.content}"
 
 
 class TestVSCodeSubagentParsing:
@@ -1744,3 +1763,68 @@ class TestVSCodeSubagentParsing:
         inv = _parse_tool_invocation_serialized(item)
         assert inv is not None
         assert inv.subagent_invocation_id is None
+
+    def test_child_tools_grouped_under_parent_subagent(self):
+        """Child tool invocations with subAgentInvocationId are absorbed into the parent's subagent block."""
+        response_items = [
+            # Parent subagent tool
+            {
+                "kind": "toolInvocationSerialized",
+                "toolId": "RunSubagentTool",
+                "invocationMessage": "",
+                "toolSpecificData": {
+                    "kind": "subagent",
+                    "agentName": "search",
+                    "description": "Find auth files",
+                    "result": "Found 3 auth files in src/auth/",
+                },
+                "isComplete": True,
+                "toolCallId": "call_parent",
+            },
+            # Child tool 1
+            {
+                "kind": "toolInvocationSerialized",
+                "toolId": "vscode_readFile",
+                "invocationMessage": "Reading auth.py",
+                "toolSpecificData": {},
+                "isComplete": True,
+                "toolCallId": "call_child1",
+                "subAgentInvocationId": "call_parent",
+            },
+            # Child tool 2
+            {
+                "kind": "toolInvocationSerialized",
+                "toolId": "vscode_readFile",
+                "invocationMessage": "Reading middleware.py",
+                "toolSpecificData": {},
+                "isComplete": True,
+                "toolCallId": "call_child2",
+                "subAgentInvocationId": "call_parent",
+            },
+            # Regular tool (not part of subagent)
+            {
+                "kind": "toolInvocationSerialized",
+                "toolId": "vscode_readFile",
+                "invocationMessage": "Reading README.md",
+                "toolSpecificData": {},
+                "isComplete": True,
+                "toolCallId": "call_regular",
+            },
+        ]
+        _, raw_blocks, _, _, _ = _process_response_items(response_items)
+        # Should have: one subagent block (with children absorbed) + one regular toolInvocation
+        subagent_blocks = [b for b in raw_blocks if b[0] == "subagent"]
+        tool_blocks = [b for b in raw_blocks if b[0] == "toolInvocation"]
+        assert len(subagent_blocks) == 1, f"Expected 1 subagent block, got {len(subagent_blocks)}: {subagent_blocks}"
+        assert len(tool_blocks) == 1, f"Expected 1 regular tool block, got {len(tool_blocks)}: {tool_blocks}"
+        # The subagent block content should include child tool invocation messages and the result
+        subagent_content = subagent_blocks[0][1]
+        assert "auth.py" in subagent_content, f"Child tool should be in subagent content: {subagent_content[:200]}"
+        assert "middleware.py" in subagent_content
+        assert "Found 3 auth files" in subagent_content
+        # The subagent title should include the agent name and description
+        subagent_title = subagent_blocks[0][2]
+        assert "search" in subagent_title
+        assert "Find auth files" in subagent_title
+        # The regular tool should still appear
+        assert "README.md" in tool_blocks[0][1]

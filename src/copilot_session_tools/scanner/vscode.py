@@ -225,6 +225,20 @@ def _process_response_items(
                     cached_path, cached_content = file_content
                     file_contents_cache[cached_path] = cached_content
 
+    # Pre-scan: identify subagent parent toolCallIds and their children
+    subagent_parents: set[str] = set()  # toolCallIds that are parent subagent tools
+    subagent_children: dict[str, list[dict]] = {}  # parent_id -> list of child items
+    for item in response_items:
+        if isinstance(item, dict) and item.get("kind") == "toolInvocationSerialized":
+            tool_data = item.get("toolSpecificData", {})
+            if isinstance(tool_data, dict) and tool_data.get("kind") == "subagent":
+                tcid = item.get("toolCallId", "")
+                if tcid:
+                    subagent_parents.add(tcid)
+            said = item.get("subAgentInvocationId")
+            if said:
+                subagent_children.setdefault(said, []).append(item)
+
     # Process all response items
     for item in response_items:
         if isinstance(item, dict):
@@ -236,18 +250,30 @@ def _process_response_items(
                 if tool_inv:
                     tool_invocations.append(tool_inv)
 
-                # Check for sub-agent tool invocations
+                # Skip child tools of a subagent — they're absorbed into the parent's block
+                said = item.get("subAgentInvocationId")
+                if said and said in subagent_parents:
+                    continue
+
+                # Check for sub-agent tool invocations (parent)
                 tool_data = item.get("toolSpecificData", {})
                 tool_data_kind = tool_data.get("kind") if isinstance(tool_data, dict) else None
                 if tool_data_kind == "subagent":
                     agent_name = tool_data.get("agentName", "Agent")
                     description = tool_data.get("description", "")
                     result_text = tool_data.get("result", "")
-                    msg_text = f"\U0001f916 {agent_name}: {description}"
-                    response_content.append(msg_text)
-                    raw_blocks.append(("subagent", msg_text, agent_name))
+                    tcid = item.get("toolCallId", "")
+                    # Build content: child tool summaries + result
+                    parts: list[str] = []
+                    for child in subagent_children.get(tcid, []):
+                        child_inv = _parse_tool_invocation_serialized(child)
+                        if child_inv and child_inv.invocation_message:
+                            parts.append(f"*{child_inv.invocation_message}*")
                     if result_text:
-                        raw_blocks.append(("text", str(result_text), None))
+                        parts.append(str(result_text))
+                    content = "\n\n".join(parts) if parts else "(no output)"
+                    title = f"{agent_name}: {description}" if description else agent_name
+                    raw_blocks.append(("subagent", content, title))
                 # Also extract the invocation message as content (non-subagent)
                 elif item.get("invocationMessage"):
                     msg_text = item["invocationMessage"]

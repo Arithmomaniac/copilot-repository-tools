@@ -8,7 +8,6 @@ import markdown
 from flask import Flask, flash, jsonify, make_response, redirect, render_template, request, session, url_for
 
 from copilot_session_tools import Database, generate_session_filename, get_vscode_storage_paths
-from copilot_session_tools.html_exporter import compute_agent_group_starts
 from copilot_session_tools.refresh import enrich_single_session, run_enrichment, run_refresh
 
 # Create a reusable markdown converter with extensions
@@ -476,7 +475,6 @@ def create_app(
             message_count=len(session.messages),
             first_user_prompt=first_user_prompt,
             message_metadata=message_metadata,
-            agent_group_starts=compute_agent_group_starts(session.messages),
             is_enriched=is_enriched,
             turns=turns,
             new_turns=new_turns,
@@ -614,4 +612,8 @@ def run_server(
         debug: Enable debug mode.
     """
     app = create_app(db_path, title)
+    # Suppress Flask/Werkzeug startup banners — we print our own
+    import logging
+
+    logging.getLogger("werkzeug").setLevel(logging.WARNING if debug else logging.ERROR)
     app.run(host=host, port=port, debug=debug)
