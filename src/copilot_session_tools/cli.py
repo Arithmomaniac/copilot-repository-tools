@@ -113,7 +113,7 @@ def main(
         ),
     ] = False,
 ):
-    """Copilot Chat Archive - Create a searchable archive of VS Code GitHub Copilot chats."""
+    """Copilot Session Tools - Create a searchable archive of VS Code GitHub Copilot chats."""
     global _unenriched_only  # noqa: PLW0603
     _unenriched_only = unenriched_only
 
@@ -834,7 +834,7 @@ def web(
     db: Annotated[Path, typer.Option("--db", "-d", help="Path to SQLite database file.")] = _DEFAULT_DB,
     host: Annotated[str, typer.Option("--host", "-H", help="Host to bind to.")] = "127.0.0.1",
     port: Annotated[int, typer.Option("--port", "-p", help="Port to bind to.")] = 5000,
-    title: Annotated[str, typer.Option("--title", "-t", help="Title for the archive.")] = "Copilot Chat Archive",
+    title: Annotated[str, typer.Option("--title", "-t", help="Title for the archive.")] = "Copilot Session Tools",
     debug: Annotated[bool, typer.Option("--debug", help="Enable debug mode.")] = False,
 ):
     """Start the web viewer for browsing chat sessions."""

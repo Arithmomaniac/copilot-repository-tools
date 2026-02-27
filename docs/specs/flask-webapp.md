@@ -2,7 +2,7 @@
 
 ## Overview
 
-This document specifies the behavior of the Flask webapp that replaces static HTML generation for the Copilot Chat Archive. The webapp renders chat sessions dynamically from SQLite with server-side FTS5 search.
+This document specifies the behavior of the Flask webapp that replaces static HTML generation for the Copilot Session Tools. The webapp renders chat sessions dynamically from SQLite with server-side FTS5 search.
 
 ## Definitions
 
@@ -57,7 +57,7 @@ copilot-session-tools serve [OPTIONS]
 | `--db` | `-d` | `copilot_chats.db` | Path to SQLite database file |
 | `--host` | `-h` | `127.0.0.1` | Host to bind to |
 | `--port` | `-p` | `5000` | Port to bind to |
-| `--title` | `-t` | `Copilot Chat Archive` | Title for the archive |
+| `--title` | `-t` | `Copilot Session Tools` | Title for the archive |
 | `--debug` | | `False` | Enable Flask debug mode |
 
 ### Preconditions
