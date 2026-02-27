@@ -23,7 +23,7 @@ import pytest
 
 from copilot_session_tools.html_exporter import session_to_html
 from copilot_session_tools.markdown_exporter import session_to_markdown
-from copilot_session_tools.scanner import SessionFileInfo, parse_session_file
+from copilot_session_tools.scanner import ChatSession, SessionFileInfo, parse_session_file
 from copilot_session_tools.scanner.cli import _parse_cli_jsonl_file
 
 SNAPSHOTS_DIR = Path(__file__).parent / "snapshots"
@@ -41,10 +41,13 @@ _cli_fixture_exists = _cli_events.exists() if FIXTURES_DIR.exists() else False
 class TestCLISessionSnapshot:
     """Snapshot tests for CLI session parsing and export."""
 
+    session: ChatSession
+
     @pytest.fixture(autouse=True)
     def parse_session(self):
-        self.session = _parse_cli_jsonl_file(_cli_events)
-        assert self.session is not None, f"Failed to parse CLI fixture: {_cli_events}"
+        parsed = _parse_cli_jsonl_file(_cli_events)
+        assert parsed is not None, f"Failed to parse CLI fixture: {_cli_events}"
+        self.session = parsed
         self.session.source_file = "cli"
 
     def test_markdown_export(self, file_regression):
