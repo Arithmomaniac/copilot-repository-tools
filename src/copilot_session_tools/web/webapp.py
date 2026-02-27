@@ -612,4 +612,8 @@ def run_server(
         debug: Enable debug mode.
     """
     app = create_app(db_path, title)
+    # Suppress Flask/Werkzeug startup banners — we print our own
+    import logging
+
+    logging.getLogger("werkzeug").setLevel(logging.WARNING if debug else logging.ERROR)
     app.run(host=host, port=port, debug=debug)

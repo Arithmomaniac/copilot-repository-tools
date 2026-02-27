@@ -161,6 +161,12 @@ def _format_message_content(message: ChatMessage, include_thinking: bool = False
                     parts.append(f"> **Thinking:**\n> {block.content.replace(chr(10), chr(10) + '> ')}")
                 # If not including, we'll add a notice at the start
                 continue
+            elif block.kind == "subagent":
+                # Sub-agent result in a collapsible details block
+                agent_name = block.description or "Agent"
+                agent_content = block.content.replace(chr(10), chr(10) + "> ")
+                parts.append(f"<details>\n<summary>{agent_name} — completed</summary>\n\n> {agent_content}\n\n</details>")
+                continue
             elif block.kind == "toolInvocation":
                 # For command runs, description holds the human-readable title
                 # (content starts with "$ " and is the raw command)

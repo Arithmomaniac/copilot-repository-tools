@@ -9,6 +9,7 @@ The database is ~/.copilot/session-store.db which already has built-in tables
 schema_version) managed by Copilot CLI. We add our own cst_* tables alongside.
 """
 
+import contextlib
 import json
 import re
 import sqlite3
@@ -281,7 +282,7 @@ from .scanner import (
     ToolInvocation,
 )
 
-CST_SCHEMA_VERSION = 1
+CST_SCHEMA_VERSION = 2
 
 CST_SCHEMA = """
 CREATE TABLE IF NOT EXISTS cst_schema_version (
@@ -314,7 +315,10 @@ CREATE TABLE IF NOT EXISTS cst_messages (
     role TEXT NOT NULL,
     content TEXT,
     timestamp TEXT,
-    cached_markdown TEXT
+    cached_markdown TEXT,
+    agent_id TEXT,
+    agent_display_name TEXT,
+    agent_nesting_level INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_cst_messages_session ON cst_messages(session_id);
 
@@ -328,7 +332,8 @@ CREATE TABLE IF NOT EXISTS cst_tool_invocations (
     start_time INTEGER,
     end_time INTEGER,
     source_type TEXT,
-    invocation_message TEXT
+    invocation_message TEXT,
+    subagent_invocation_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_cst_tool_invocations_message ON cst_tool_invocations(message_id);
 
@@ -464,13 +469,32 @@ class Database:
             # Create FTS table and triggers
             conn.executescript(CST_FTS_SCHEMA)
 
-            # Insert initial schema version if not exists
+            # Insert or update schema version
             cursor.execute("SELECT COUNT(*) FROM cst_schema_version")
             if cursor.fetchone()[0] == 0:
                 cursor.execute(
                     "INSERT INTO cst_schema_version (version) VALUES (?)",
                     (CST_SCHEMA_VERSION,),
                 )
+            else:
+                # Migrate from older schema versions
+                cursor.execute("SELECT version FROM cst_schema_version LIMIT 1")
+                current_version = cursor.fetchone()[0]
+                if current_version < 2:
+                    # v2: add agent metadata columns to cst_messages and subagent_invocation_id to cst_tool_invocations
+                    for col_sql in [
+                        "ALTER TABLE cst_messages ADD COLUMN agent_id TEXT",
+                        "ALTER TABLE cst_messages ADD COLUMN agent_display_name TEXT",
+                        "ALTER TABLE cst_messages ADD COLUMN agent_nesting_level INTEGER DEFAULT 0",
+                        "ALTER TABLE cst_tool_invocations ADD COLUMN subagent_invocation_id TEXT",
+                    ]:
+                        with contextlib.suppress(Exception):
+                            cursor.execute(col_sql)
+                if current_version < CST_SCHEMA_VERSION:
+                    cursor.execute(
+                        "UPDATE cst_schema_version SET version = ?",
+                        (CST_SCHEMA_VERSION,),
+                    )
 
     def _check_builtin_schema_version(self):
         """Warn if the built-in session store schema has been updated beyond our known version."""
@@ -641,8 +665,9 @@ class Database:
             cursor.execute(
                 """
                 INSERT INTO cst_messages 
-                (session_id, message_index, role, content, timestamp, cached_markdown)
-                VALUES (?, ?, ?, ?, ?, ?)
+                (session_id, message_index, role, content, timestamp, cached_markdown,
+                 agent_id, agent_display_name, agent_nesting_level)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session.session_id,
@@ -651,6 +676,9 @@ class Database:
                     msg.content,
                     msg.timestamp,
                     cached_markdown,
+                    msg.agent_id,
+                    msg.agent_display_name,
+                    msg.agent_nesting_level,
                 ),
             )
             message_id = cursor.lastrowid
@@ -660,8 +688,9 @@ class Database:
                 cursor.execute(
                     """
                     INSERT INTO cst_tool_invocations
-                    (message_id, name, input, result, status, start_time, end_time, source_type, invocation_message)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (message_id, name, input, result, status, start_time, end_time,
+                     source_type, invocation_message, subagent_invocation_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         message_id,
@@ -673,6 +702,7 @@ class Database:
                         tool.end_time,
                         tool.source_type,
                         tool.invocation_message,
+                        tool.subagent_invocation_id,
                     ),
                 )
 
@@ -869,6 +899,7 @@ class Database:
                     end_time=t["end_time"],
                     source_type=t["source_type"] if "source_type" in t_keys else None,
                     invocation_message=t["invocation_message"] if "invocation_message" in t_keys else None,
+                    subagent_invocation_id=t["subagent_invocation_id"] if "subagent_invocation_id" in t_keys else None,
                 )
             )
 
@@ -922,6 +953,9 @@ class Database:
             command_runs=command_runs,
             content_blocks=content_blocks,
             cached_markdown=cached_md,
+            agent_id=msg_row["agent_id"] if "agent_id" in msg_row.keys() else None,  # noqa: SIM118
+            agent_display_name=msg_row["agent_display_name"] if "agent_display_name" in msg_row.keys() else None,  # noqa: SIM118
+            agent_nesting_level=msg_row["agent_nesting_level"] if "agent_nesting_level" in msg_row.keys() else 0,  # noqa: SIM118
         )
 
     def get_session(self, session_id: str) -> ChatSession | None:
@@ -999,7 +1033,8 @@ class Database:
             # Get messages with their IDs for fetching related data
             cursor.execute(
                 """
-                SELECT id, role, content, timestamp, cached_markdown 
+                SELECT id, role, content, timestamp, cached_markdown,
+                       agent_id, agent_display_name, agent_nesting_level
                 FROM cst_messages 
                 WHERE session_id = ? 
                 ORDER BY message_index
@@ -1887,8 +1922,9 @@ class Database:
                 cursor.execute(
                     """
                     INSERT INTO cst_messages
-                    (session_id, message_index, role, content, timestamp, cached_markdown)
-                    VALUES (?, ?, ?, ?, ?, ?)
+                    (session_id, message_index, role, content, timestamp, cached_markdown,
+                     agent_id, agent_display_name, agent_nesting_level)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         session.session_id,
@@ -1897,6 +1933,9 @@ class Database:
                         msg.content,
                         msg.timestamp,
                         cached_markdown,
+                        msg.agent_id,
+                        msg.agent_display_name,
+                        msg.agent_nesting_level,
                     ),
                 )
                 message_id = cursor.lastrowid
@@ -1918,8 +1957,8 @@ class Database:
                         """
                         INSERT INTO cst_tool_invocations
                         (message_id, name, input, result, status, start_time, end_time,
-                         source_type, invocation_message)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                         source_type, invocation_message, subagent_invocation_id)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
                             message_id,
@@ -1931,6 +1970,7 @@ class Database:
                             tool.end_time,
                             tool.source_type,
                             tool.invocation_message,
+                            tool.subagent_invocation_id,
                         ),
                     )
 

@@ -63,8 +63,21 @@ class _CliSessionBuilder:
     combining consecutive assistant messages and interleaving tool invocations.
     """
 
-    def __init__(self, tool_executions: dict) -> None:
+    def __init__(
+        self,
+        tool_executions: dict,
+        subagent_child_tools: dict[str, list[str]] | None = None,
+        subagent_failures: dict[str, str] | None = None,
+        bg_agent_results: dict[str, str] | None = None,
+        bg_agent_id_map: dict[str, str] | None = None,
+        subagent_completions: set[str] | None = None,
+    ) -> None:
         self.tool_executions = tool_executions
+        self.subagent_child_tools = subagent_child_tools or {}
+        self.subagent_failures = subagent_failures or {}
+        self.bg_agent_results = bg_agent_results or {}
+        self.bg_agent_id_map = bg_agent_id_map or {}
+        self.subagent_completions = subagent_completions or set()
         self.messages: list[ChatMessage] = []
         self.current_assistant_content_blocks: list[ContentBlock] = []
         self.current_assistant_tool_invocations: list[ToolInvocation] = []
@@ -252,6 +265,10 @@ class _CliSessionBuilder:
             self.current_assistant_command_runs.append(cmd_run)
 
         elif tool_inv:
+            if tool_name == "task":
+                # Don't render task tool inline — the subagent block replaces it
+                self.current_assistant_tool_invocations.append(tool_inv)
+                return
             # Add tool invocation inline as a content block
             display_text = tool_inv.invocation_message or tool_inv.name
             self.current_assistant_content_blocks.append(
@@ -357,6 +374,16 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
 
         # Build tool execution map: toolCallId -> (start_data, complete_data, user_requested)
         tool_executions: dict = {}
+        # Map parent agent toolCallId -> list of child tool display names
+        subagent_child_tools: dict[str, list[str]] = {}
+        # Track which subagents failed (toolCallId -> error message)
+        subagent_failures: dict[str, str] = {}
+        # Track which subagents completed successfully
+        subagent_completions: set[str] = set()
+        # Map agent-N -> best result text from read_agent (for background agents)
+        bg_agent_results: dict[str, str] = {}
+        # Map task toolCallId -> agent-N id (parsed from background placeholder)
+        bg_agent_id_map: dict[str, str] = {}
         for event in events:
             event_type = event.get("type", "")
             event_data = event.get("data", {})
@@ -367,6 +394,16 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                     if tool_call_id not in tool_executions:
                         tool_executions[tool_call_id] = {"start": None, "complete": None, "user_requested": False}
                     tool_executions[tool_call_id]["start"] = event
+                # Track child tools of subagents
+                parent_tcid = event_data.get("parentToolCallId")
+                if parent_tcid:
+                    tool_name = event_data.get("toolName", "")
+                    # Skip internal/meta tools from child tool display
+                    if tool_name not in ("report_intent", "read_agent", "read_powershell", "read_bash", "skill", "task"):
+                        arguments = event_data.get("arguments", {})
+                        display = _format_tool_display_message(tool_name, arguments)
+                        if display:
+                            subagent_child_tools.setdefault(parent_tcid, []).append(display)
 
             elif event_type == "tool.user_requested":
                 # User explicitly requested this tool execution
@@ -383,17 +420,54 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                     if tool_call_id not in tool_executions:
                         tool_executions[tool_call_id] = {"start": None, "complete": None, "user_requested": False}
                     tool_executions[tool_call_id]["complete"] = event
+                    # Map task toolCallId -> agent_id from background placeholder
+                    result_obj = event_data.get("result", {})
+                    result_content = result_obj.get("content", "") if isinstance(result_obj, dict) else ""
+                    if result_content.startswith("Agent started in background with agent_id: "):
+                        bg_id = result_content.split("agent_id: ", 1)[1].split(".")[0].strip()
+                        bg_agent_id_map[tool_call_id] = bg_id
+                    # Collect read_agent results for background agents
+                    start_info = tool_executions[tool_call_id].get("start")
+                    if start_info and start_info.get("data", {}).get("toolName") == "read_agent" and isinstance(result_obj, dict):
+                        content = result_content
+                        detailed = result_obj.get("detailedContent", "")
+                        # Extract result text from content after "Result:\n" header
+                        result_from_content = ""
+                        if content and "Result:\n" in content:
+                            result_from_content = content.split("Result:\n", 1)[-1].strip()
+                        # Use the longer of content-after-Result vs detailedContent
+                        best = result_from_content if len(result_from_content) > len(detailed) else detailed
+                        if best:
+                            agent_id = start_info["data"].get("arguments", {}).get("agent_id", "")
+                            # Only keep the best (longest) result per agent
+                            if len(best) > len(bg_agent_results.get(agent_id, "")):
+                                bg_agent_results[agent_id] = best
+
+            elif event_type == "subagent.failed":
+                tool_call_id = event_data.get("toolCallId", "")
+                error = event_data.get("error") or ""
+                if tool_call_id:
+                    subagent_failures[tool_call_id] = error
+
+            elif event_type == "subagent.completed":
+                tool_call_id = event_data.get("toolCallId", "")
+                if tool_call_id:
+                    subagent_completions.add(tool_call_id)
 
         # Build messages using VSCode-style rendering:
         # - Process events in order
         # - Combine consecutive assistant messages
         # - Interleave tool invocations inline with content
-        builder = _CliSessionBuilder(tool_executions)
+        builder = _CliSessionBuilder(tool_executions, subagent_child_tools, subagent_failures, bg_agent_results, bg_agent_id_map, subagent_completions)
 
         for event in events:
             event_type = event.get("type", "")
             event_data = event.get("data", {})
             timestamp = event.get("timestamp")
+
+            # Skip events belonging to a subagent — they have parentToolCallId
+            if event_data.get("parentToolCallId"):
+                continue
 
             if event_type == "user.message":
                 # Flush any pending assistant content before user message
@@ -557,19 +631,70 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
             # --- Subagent lifecycle events ---
             elif event_type == "subagent.started":
                 display_name = event_data.get("agentDisplayName") or event_data.get("agentName", "unknown")
-                builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=f"🤖 Subagent started: {display_name}", description="subagent"))
+                tool_call_id = event_data.get("toolCallId", "")
+                req = builder.pending_tool_requests.get(tool_call_id, {})
+                req_args = req.get("arguments", {})
+                description = req_args.get("description", "")
+                failed = tool_call_id in builder.subagent_failures
+                completed = tool_call_id in builder.subagent_completions
+                # Title includes status indicator for template
+                title = f"{display_name}: {description}" if description else display_name
+                if failed:
+                    title = f"❌ {title}"
+                # Build content: child tool summaries + result or error
+                parts: list[str] = []
+                for child_display in builder.subagent_child_tools.get(tool_call_id, []):
+                    parts.append(f"*{child_display}*")
+                if failed:
+                    error = builder.subagent_failures[tool_call_id]
+                    parts.append(f"**Error:** {error}" if error else "**Error:** Unknown error")
+                else:
+                    # Get the agent's result — check for background agent placeholder
+                    result_text = ""
+                    execution = builder.tool_executions.get(tool_call_id, {})
+                    complete_event = execution.get("complete")
+                    if complete_event:
+                        complete_data = complete_event.get("data", {})
+                        result_obj = complete_data.get("result", {})
+                        if isinstance(result_obj, dict):
+                            result_text = result_obj.get("content", "")
+                        elif result_obj:
+                            result_text = str(result_obj)
+                    # Background agents return a placeholder — use read_agent result instead
+                    if not result_text or result_text.startswith("Agent started in background"):
+                        agent_id = builder.bg_agent_id_map.get(tool_call_id, "")
+                        if agent_id:
+                            result_text = builder.bg_agent_results.get(agent_id, "")
+                        else:
+                            result_text = ""
+                    if result_text:
+                        parts.append(result_text)
+                content = "\n\n".join(parts) if parts else "(no output)"
+                if failed:
+                    kind = "subagent_failed"
+                elif completed:
+                    kind = "subagent"
+                else:
+                    kind = "subagent_incomplete"
+                builder.current_assistant_content_blocks.append(ContentBlock(kind=kind, content=content, description=title))
 
             elif event_type == "subagent.completed":
                 display_name = event_data.get("agentDisplayName") or event_data.get("agentName", "unknown")
-                builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=f"✅ Subagent completed: {display_name}", description="subagent"))
+                tool_call_id = event_data.get("toolCallId", "")
+                req = builder.pending_tool_requests.get(tool_call_id, {})
+                req_args = req.get("arguments", {})
+                description = req_args.get("description", "")
+                label = f"{display_name}: {description} — completed" if description else f"{display_name} — completed"
+                builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=label, description="subagent"))
 
             elif event_type == "subagent.failed":
                 display_name = event_data.get("agentDisplayName") or event_data.get("agentName", "unknown")
-                error = event_data.get("error") or ""
-                if len(error) > 200:
-                    error = error[:200] + "…"
-                error_suffix = f" — {error}" if error else ""
-                builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=f"❌ Subagent failed: {display_name}{error_suffix}", description="subagent"))
+                tool_call_id = event_data.get("toolCallId", "")
+                req = builder.pending_tool_requests.get(tool_call_id, {})
+                req_args = req.get("arguments", {})
+                description = req_args.get("description", "")
+                label = f"{display_name}: {description} — failed" if description else f"{display_name} — failed"
+                builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=label, description="subagent-error"))
 
             # --- Session lifecycle events ---
             elif event_type == "session.handoff":

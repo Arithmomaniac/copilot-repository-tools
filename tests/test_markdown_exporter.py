@@ -621,3 +621,91 @@ class TestCommandRunDescriptionInMarkdown:
         md = session_to_markdown(session)
         # Should use the pretty content, not the raw tool name
         assert "Searching for `pattern` in `path`" in md
+
+
+class TestAgentBlockquotes:
+    """Test agent subagent content block rendering in markdown."""
+
+    def test_subagent_block_rendered_as_details(self):
+        """ContentBlock(kind='subagent') should render as a collapsible details block."""
+        messages = [
+            ChatMessage(
+                role="assistant",
+                content="",
+                content_blocks=[
+                    ContentBlock(kind="subagent", content="Found auth patterns in 3 files", description="Explore Agent"),
+                ],
+            ),
+        ]
+        session = ChatSession(
+            session_id="test-123",
+            workspace_name="test",
+            workspace_path="/test",
+            messages=messages,
+        )
+        md = session_to_markdown(session)
+        assert "<details>" in md
+        assert "Explore Agent" in md
+        assert "> Found auth patterns in 3 files" in md
+
+    def test_subagent_block_with_agent_number(self):
+        """Subagent block with agent number in description renders correctly."""
+        messages = [
+            ChatMessage(
+                role="assistant",
+                content="",
+                content_blocks=[
+                    ContentBlock(kind="subagent", content="Test results: all passed", description="Task Agent: Run tests"),
+                ],
+            ),
+        ]
+        session = ChatSession(
+            session_id="test-numbered",
+            workspace_name="test",
+            workspace_path="/test",
+            messages=messages,
+        )
+        md = session_to_markdown(session)
+        assert "<details>" in md
+        assert "Task Agent: Run tests" in md
+        assert "> Test results: all passed" in md
+
+    def test_non_agent_messages_not_blockquoted(self):
+        """Top-level messages should not be blockquoted."""
+        messages = [
+            ChatMessage(role="user", content="Hello"),
+            ChatMessage(role="assistant", content="World"),
+        ]
+        session = ChatSession(
+            session_id="test-123",
+            workspace_name="test",
+            workspace_path="/test",
+            messages=messages,
+        )
+        md = session_to_markdown(session)
+        lines = md.split("\n")
+        # Content lines shouldn't start with > (except empty lines or header)
+        content_lines = [line for line in lines if line.strip() and not line.startswith("#") and not line.startswith("-") and not line.startswith("*")]
+        blockquoted = [line for line in content_lines if line.startswith(">")]
+        assert len(blockquoted) == 0, f"Non-agent messages shouldn't be blockquoted, got: {blockquoted}"
+
+    def test_subagent_block_summary_includes_completed(self):
+        """The details summary should include the completed label."""
+        messages = [
+            ChatMessage(
+                role="assistant",
+                content="",
+                content_blocks=[
+                    ContentBlock(kind="subagent", content="Result text", description="Code Review Agent"),
+                ],
+            ),
+        ]
+        session = ChatSession(
+            session_id="test-header",
+            workspace_name="test",
+            workspace_path="/test",
+            messages=messages,
+        )
+        md = session_to_markdown(session)
+        assert "Code Review Agent" in md
+        assert "completed" in md

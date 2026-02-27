@@ -19,6 +19,7 @@ class ToolInvocation:
     end_time: int | None = None
     source_type: str | None = None  # 'mcp' or 'internal'
     invocation_message: str | None = None  # Pretty display message (e.g., "Reading file.txt, lines 1 to 100")
+    subagent_invocation_id: str | None = None  # VS Code: links child tools to parent sub-agent
 
 
 @dataclass
@@ -78,6 +79,9 @@ class ChatMessage:
     command_runs: list[CommandRun] = field(default_factory=list)
     content_blocks: list[ContentBlock] = field(default_factory=list)  # Structured content with kind
     cached_markdown: str | None = None  # Pre-computed markdown for this message
+    agent_id: str | None = None  # toolCallId linking to parent task tool invocation
+    agent_display_name: str | None = None  # "General Purpose Agent", "Explore Agent", etc.
+    agent_nesting_level: int = 0  # 0=top-level, 1=inside agent, 2=nested agent, etc.
 
 
 @dataclass

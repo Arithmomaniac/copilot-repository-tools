@@ -450,7 +450,8 @@ header h1 {
     color: #dc2626;
 }
 
-.status-badge.error {
+.status-badge.error,
+.status-badge.subagent-error {
     background-color: rgba(239, 68, 68, 0.15);
     color: #dc2626;
 }
@@ -461,10 +462,16 @@ header h1 {
         color: #9ca3af;
     }
     .status-badge.abort,
-    .status-badge.error {
+    .status-badge.error,
+    .status-badge.subagent-error {
         background-color: rgba(248, 113, 113, 0.2);
         color: #f87171;
     }
+}
+
+/* Failed subagent collapsible */
+.subagent-block.subagent-failed {
+    border-left-color: #dc2626;
 }
 
 /* Thinking blocks */
@@ -527,9 +534,114 @@ header h1 {
     background-color: var(--bg-tertiary);
 }
 
+/* Sub-agent blocks */
+.subagent-started {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 0.85em;
+    font-weight: 500;
+    margin: 4px 0;
+    background-color: rgba(99, 102, 241, 0.1);
+    color: #6366f1;
+}
+
+@media (prefers-color-scheme: dark) {
+    .subagent-started {
+        background-color: rgba(165, 180, 252, 0.15);
+        color: #a5b4fc;
+    }
+}
+
+/* Completed subagent: matches .tool-invocation-wrapper styling */
+.subagent-block {
+    margin: 2px 0;
+    border: 1px solid var(--border-color);
+    border-left: 3px solid #6366f1;
+    border-radius: 6px;
+    background-color: var(--bg-tertiary);
+}
+
+.subagent-block > summary {
+    padding: 10px 14px;
+    cursor: pointer;
+    font-weight: 500;
+    font-size: 0.9em;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    user-select: none;
+    list-style: none;
+}
+
+.subagent-block > summary:hover {
+    background-color: var(--border-color);
+}
+
+.subagent-block > summary::-webkit-details-marker { display: none; }
+
+.subagent-block > summary .collapsible-icon {
+    font-size: 0.7em;
+    transition: transform 0.2s;
+}
+
+.subagent-block[open] > summary .collapsible-icon {
+    transform: rotate(90deg);
+}
+
+.subagent-label {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: #6366f1;
+    font-weight: 500;
+}
+
+@media (prefers-color-scheme: dark) {
+    .subagent-label {
+        color: #a5b4fc;
+    }
+}
+
+.subagent-content {
+    padding: 12px 14px;
+    border-top: 1px solid var(--border-color);
+}
+
+/* Compact tool-call lines inside subagent results */
+.subagent-content p em:only-child {
+    font-size: 0.9em;
+    display: block;
+    margin: 0;
+    line-height: 1.25;
+}
+
+.subagent-content p:has(> em:only-child) {
+    margin: 0;
+}
+
 /* Content blocks */
 .content-block {
     margin: 4px 0;
+}
+
+/* Collapse margins between consecutive tool invocation blocks */
+.content-block-toolInvocation + .content-block-toolInvocation {
+    margin-top: 0;
+}
+
+/* Non-collapsible tool invocations: compact inline display */
+.content-block-toolInvocation {
+    font-size: 0.9em;
+    line-height: 1.25;
+}
+
+.content-block-toolInvocation p {
+    margin: 0;
 }
 
 .result-block {
@@ -1221,7 +1333,28 @@ footer a {
                             {% elif block.kind == 'skill' %}
                             <span class="skill-badge">skill: <code>{{ block.content }}</code></span>
                             {% elif block.kind == 'status' %}
+                            {% if block.description == 'subagent' %}
+                            <span class="subagent-started">{{ block.content }}</span>
+                            {% else %}
                             <span class="status-badge {{ block.description or '' }}">{{ block.content }}</span>
+                            {% endif %}
+                            {% elif block.kind in ('subagent', 'subagent_failed', 'subagent_incomplete') %}
+                            <details class="subagent-block{% if block.kind == 'subagent_failed' %} subagent-failed{% endif %}">
+                                <summary>
+                                    <span class="collapsible-icon" aria-hidden="true">▶</span>
+                                    <span class="subagent-label">{{ block.description or 'Agent' }}</span>
+                                    {% if block.kind == 'subagent_failed' %}
+                                    <span class="status-badge error">failed</span>
+                                    {% elif block.kind == 'subagent_incomplete' %}
+                                    <span class="status-badge abort">incomplete</span>
+                                    {% else %}
+                                    <span class="status-badge success">completed</span>
+                                    {% endif %}
+                                </summary>
+                                <div class="subagent-content">
+                                    {{ block.content | markdown | safe }}
+                                </div>
+                            </details>
                             {% elif block.kind == 'thinking' %}
                             <details class="thinking-block">
                                 <summary>
@@ -1329,9 +1462,11 @@ footer a {
                             </div>
                             {% endif %}
                             {% elif block.kind == 'text' %}
+                            {% if block.content.strip() %}
                             <div class="content-block content-block-text result-block">
                                 {{ block.content | markdown | safe }}
                             </div>
+                            {% endif %}
                             {% else %}
                             <div class="content-block content-block-{{ block.kind }}">
                                 {{ block.content | markdown | safe }}

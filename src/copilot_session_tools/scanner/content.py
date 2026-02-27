@@ -170,7 +170,7 @@ def _merge_content_blocks(blocks: list[tuple[str, str, str | None]]) -> list[Con
     current_description = None
 
     # Kinds that should never be merged - each gets its own block
-    standalone_kinds = {"toolInvocation", "status", "ask_user", "intent", "skill"}
+    standalone_kinds = {"toolInvocation", "status", "ask_user", "intent", "skill", "subagent", "subagent_failed", "subagent_incomplete"}
 
     for block in blocks:
         # Handle both 2-tuples and 3-tuples for backward compatibility
@@ -226,6 +226,9 @@ def _merge_content_blocks(blocks: list[tuple[str, str, str | None]]) -> list[Con
     if current_content:
         merged.append(ContentBlock(kind=current_kind or "text", content="".join(current_content), description=current_description))
 
+    # Filter out trivial text blocks (orphaned code fences, bare quotes)
+    merged = [b for b in merged if b.kind != "text" or b.content.strip().strip("`").strip('"').strip("'").strip()]
+
     return merged
 
 
@@ -265,6 +268,7 @@ _TOOL_DISPLAY_FORMATS: dict[str, tuple[str, list[str]]] = {
     "web_search": ("\U0001f50d Web search: `{query_short}`", ["query"]),
     "web_fetch": ("\U0001f310 Fetching `{url_short}`", ["url"]),
     "task": ("\U0001f916 Agent ({agent_type}): {description}", ["agent_type", "description"]),
+    "read_agent": ("\u23f3 Checking agent {agent_id}", ["agent_id"]),
     "update_todo": ("Updated TODO list", []),
     "store_memory": ("\U0001f4be Stored memory: {subject}", ["subject"]),
     "task_complete": ("\u2705 Task complete: {summary}", ["summary"]),
