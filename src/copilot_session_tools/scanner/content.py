@@ -147,16 +147,19 @@ def _extract_uri_path(uri: dict) -> str:
     return path
 
 
-def _merge_content_blocks(blocks: list[tuple[str, str, str | None]]) -> list[ContentBlock]:
+def _merge_content_blocks(blocks: list[tuple]) -> list[ContentBlock]:
     """Merge consecutive non-thinking content blocks into single blocks.
 
-    Takes a list of (kind, content, description) tuples and merges consecutive non-thinking
+    Takes a list of (kind, content, description, ...) tuples and merges consecutive non-thinking
     blocks into single ContentBlock objects. This ensures that inline references
     and text flow together as a single rendered unit.
 
+    For subagent blocks, the tuple may contain additional elements:
+    (kind, content, description, nested_blocks, nested_tool_invocations, nested_file_changes, nested_command_runs)
+
     Args:
-        blocks: List of (kind, content, description) tuples where kind is 'thinking' or 'text'
-                and description is optional (used for thinking block descriptions)
+        blocks: List of tuples where the first 3 elements are (kind, content, description).
+                Subagent tuples may have 7 elements with structured nested data.
 
     Returns:
         List of ContentBlock objects with consecutive text blocks merged
@@ -173,12 +176,26 @@ def _merge_content_blocks(blocks: list[tuple[str, str, str | None]]) -> list[Con
     standalone_kinds = {"toolInvocation", "status", "ask_user", "intent", "skill", "subagent", "subagent_failed", "subagent_incomplete"}
 
     for block in blocks:
-        # Handle both 2-tuples and 3-tuples for backward compatibility
-        if len(block) == 3:
+        # Handle 2-tuples, 3-tuples, and extended 7-tuples (subagent with structured data)
+        if len(block) >= 7:
+            kind, content, description = block[0], block[1], block[2]
+            nested_blocks_data = block[3]
+            nested_tool_invocations = block[4]
+            nested_file_changes = block[5]
+            nested_command_runs = block[6]
+        elif len(block) == 3:
             kind, content, description = block
+            nested_blocks_data = None
+            nested_tool_invocations = None
+            nested_file_changes = None
+            nested_command_runs = None
         else:
             kind, content = block
             description = None
+            nested_blocks_data = None
+            nested_tool_invocations = None
+            nested_file_changes = None
+            nested_command_runs = None
 
         # Never merge standalone kinds - each should be separate
         if kind in standalone_kinds:
@@ -188,8 +205,17 @@ def _merge_content_blocks(blocks: list[tuple[str, str, str | None]]) -> list[Con
                 current_content = []
                 current_kind = None
                 current_description = None
-            # Add as standalone block
-            merged.append(ContentBlock(kind=kind, content=content, description=description))
+            # Add as standalone block, attaching nested data for subagent blocks
+            cb = ContentBlock(kind=kind, content=content, description=description)
+            if nested_blocks_data:
+                cb.content_blocks = nested_blocks_data
+            if nested_tool_invocations:
+                cb.tool_invocations = nested_tool_invocations
+            if nested_file_changes:
+                cb.file_changes = nested_file_changes
+            if nested_command_runs:
+                cb.command_runs = nested_command_runs
+            merged.append(cb)
         elif kind == "thinking":
             effective_kind = "thinking"
             if effective_kind == current_kind:

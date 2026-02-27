@@ -20,6 +20,7 @@ from .models import (
     ChatMessage,
     ChatSession,
     CommandRun,
+    ContentBlock,
     FileChange,
     ToolInvocation,
 )
@@ -265,15 +266,40 @@ def _process_response_items(
                     tcid = item.get("toolCallId", "")
                     # Build content: child tool summaries + result
                     parts: list[str] = []
+                    # Build structured content_blocks for nested rendering
+                    nested_blocks: list[ContentBlock] = []
+                    nested_tool_invocations: list[ToolInvocation] = []
+                    nested_file_changes: list[FileChange] = []
+                    nested_command_runs: list[CommandRun] = []
                     for child in subagent_children.get(tcid, []):
                         child_inv = _parse_tool_invocation_serialized(child)
                         if child_inv and child_inv.invocation_message:
                             parts.append(f"*{child_inv.invocation_message}*")
+                            nested_tool_invocations.append(child_inv)
+                            nested_blocks.append(ContentBlock(kind="toolInvocation", content=child_inv.invocation_message))
+                        # Extract file changes from child textEditGroup items
+                        child_kind = child.get("kind")
+                        if child_kind == "textEditGroup":
+                            fc = _parse_text_edit_group(child, file_contents_cache)
+                            if fc:
+                                nested_file_changes.append(fc)
+                        # Extract command runs from child items
+                        if child_inv and child_inv.name == "run_in_terminal":
+                            nested_command_runs.append(
+                                CommandRun(
+                                    command=child_inv.input or "",
+                                    result=child_inv.result,
+                                    status=child_inv.status,
+                                    output=child_inv.result,
+                                )
+                            )
                     if result_text:
                         parts.append(str(result_text))
+                        nested_blocks.append(ContentBlock(kind="text", content=str(result_text)))
                     content = "\n\n".join(parts) if parts else "(no output)"
                     title = f"{agent_name}: {description}" if description else agent_name
-                    raw_blocks.append(("subagent", content, title))
+                    # Store as structured tuple: (kind, content, title, nested_blocks, nested_tool_invocations, nested_file_changes, nested_command_runs)
+                    raw_blocks.append(("subagent", content, title, nested_blocks, nested_tool_invocations, nested_file_changes, nested_command_runs))
                 # Also extract the invocation message as content (non-subagent)
                 elif item.get("invocationMessage"):
                     msg_text = item["invocationMessage"]

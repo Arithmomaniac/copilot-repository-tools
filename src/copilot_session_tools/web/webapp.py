@@ -234,6 +234,50 @@ def _match_tool_for_block(block_content: str, tools: list, used_indices: set) ->
     return None, used_indices
 
 
+def _build_block_metadata(content_blocks, tool_invocations, command_runs):
+    """Build tool/command matching metadata for a set of content blocks.
+
+    This is used for both outer message blocks and nested subagent blocks.
+
+    Returns:
+        Dict with block_tool_map, block_cmd_map, matched_tool_names, matched_cmd_indices.
+    """
+    block_tool_map = {}
+    block_cmd_map = {}
+    used_tool_indices = set()
+    used_cmd_indices = set()
+
+    for i, block in enumerate(content_blocks):
+        if block.kind == "toolInvocation":
+            # First try to match against command runs (for CLI shell commands)
+            if command_runs and block.content.startswith("$"):
+                cmd_text = block.content[1:].strip()
+                for j, cmd in enumerate(command_runs):
+                    if j in used_cmd_indices:
+                        continue
+                    if cmd.command and (cmd.command.startswith(cmd_text[:30]) or cmd_text[:30] in cmd.command):
+                        block_cmd_map[i] = cmd
+                        used_cmd_indices.add(j)
+                        break
+
+            # If no command match, try matching against tool invocations
+            if i not in block_cmd_map and tool_invocations:
+                matched_tool, used_tool_indices = _match_tool_for_block(block.content, tool_invocations, used_tool_indices)
+                if matched_tool:
+                    block_tool_map[i] = matched_tool
+
+        # Recursively build metadata for nested subagent blocks
+        if block.kind in ("subagent", "subagent_failed", "subagent_incomplete") and block.content_blocks:
+            block._nested_meta = _build_block_metadata(block.content_blocks, block.tool_invocations, block.command_runs)
+
+    return {
+        "block_tool_map": block_tool_map,
+        "block_cmd_map": block_cmd_map,
+        "matched_tool_names": {t.name for t in block_tool_map.values()},
+        "matched_cmd_indices": used_cmd_indices,
+    }
+
+
 def create_app(
     db_path: str,
     title: str = "Copilot Chat Archive",
@@ -272,6 +316,7 @@ def create_app(
 
     # Register global function for tool matching
     app.jinja_env.globals["match_tool_for_block"] = _match_tool_for_block
+    app.jinja_env.globals["get_nested_meta"] = lambda block: getattr(block, "_nested_meta", {})
 
     # Store database path, title, storage paths, and CLI inclusion in app config
     app.config["DB_PATH"] = db_path
@@ -435,38 +480,7 @@ def create_app(
             if message.role == "user" and first_user_prompt is None:
                 first_user_prompt = message.content
 
-            block_tool_map = {}
-            block_cmd_map = {}
-            used_tool_indices = set()
-            used_cmd_indices = set()
-
-            for i, block in enumerate(message.content_blocks):
-                if block.kind == "toolInvocation":
-                    # First try to match against command runs (for CLI shell commands)
-                    # CLI commands have content like "$ git fetch --prune"
-                    if message.command_runs and block.content.startswith("$"):
-                        cmd_text = block.content[1:].strip()  # Remove leading $
-                        for j, cmd in enumerate(message.command_runs):
-                            if j in used_cmd_indices:
-                                continue
-                            # Match if the command starts with or contains the block text
-                            if cmd.command and (cmd.command.startswith(cmd_text[:30]) or cmd_text[:30] in cmd.command):
-                                block_cmd_map[i] = cmd
-                                used_cmd_indices.add(j)
-                                break
-
-                    # If no command match, try matching against tool invocations
-                    if i not in block_cmd_map and message.tool_invocations:
-                        matched_tool, used_tool_indices = _match_tool_for_block(block.content, message.tool_invocations, used_tool_indices)
-                        if matched_tool:
-                            block_tool_map[i] = matched_tool
-
-            message_metadata[msg_idx] = {
-                "block_tool_map": block_tool_map,
-                "block_cmd_map": block_cmd_map,
-                "matched_tool_names": {t.name for t in block_tool_map.values()},
-                "matched_cmd_indices": used_cmd_indices,
-            }
+            message_metadata[msg_idx] = _build_block_metadata(message.content_blocks, message.tool_invocations, message.command_runs)
 
         return render_template(
             "session.html",

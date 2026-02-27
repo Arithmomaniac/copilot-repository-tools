@@ -71,6 +71,7 @@ class _CliSessionBuilder:
         bg_agent_results: dict[str, str] | None = None,
         bg_agent_id_map: dict[str, str] | None = None,
         subagent_completions: set[str] | None = None,
+        subagent_child_structured: dict[str, list[tuple]] | None = None,
     ) -> None:
         self.tool_executions = tool_executions
         self.subagent_child_tools = subagent_child_tools or {}
@@ -78,6 +79,7 @@ class _CliSessionBuilder:
         self.bg_agent_results = bg_agent_results or {}
         self.bg_agent_id_map = bg_agent_id_map or {}
         self.subagent_completions = subagent_completions or set()
+        self.subagent_child_structured = subagent_child_structured or {}
         self.messages: list[ChatMessage] = []
         self.current_assistant_content_blocks: list[ContentBlock] = []
         self.current_assistant_tool_invocations: list[ToolInvocation] = []
@@ -376,6 +378,8 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
         tool_executions: dict = {}
         # Map parent agent toolCallId -> list of child tool display names
         subagent_child_tools: dict[str, list[str]] = {}
+        # Map parent agent toolCallId -> list of (ToolInvocation | None, CommandRun | None, content_blocks)
+        subagent_child_structured: dict[str, list[tuple]] = {}
         # Track which subagents failed (toolCallId -> error message)
         subagent_failures: dict[str, str] = {}
         # Track which subagents completed successfully
@@ -404,6 +408,8 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                         display = _format_tool_display_message(tool_name, arguments)
                         if display:
                             subagent_child_tools.setdefault(parent_tcid, []).append(display)
+                        # Also store structured data for child tool (toolCallId, toolName, arguments)
+                        subagent_child_structured.setdefault(parent_tcid, []).append((tool_call_id, tool_name, arguments))
 
             elif event_type == "tool.user_requested":
                 # User explicitly requested this tool execution
@@ -458,7 +464,7 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
         # - Process events in order
         # - Combine consecutive assistant messages
         # - Interleave tool invocations inline with content
-        builder = _CliSessionBuilder(tool_executions, subagent_child_tools, subagent_failures, bg_agent_results, bg_agent_id_map, subagent_completions)
+        builder = _CliSessionBuilder(tool_executions, subagent_child_tools, subagent_failures, bg_agent_results, bg_agent_id_map, subagent_completions, subagent_child_structured)
 
         for event in events:
             event_type = event.get("type", "")
@@ -676,7 +682,32 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                     kind = "subagent"
                 else:
                     kind = "subagent_incomplete"
-                builder.current_assistant_content_blocks.append(ContentBlock(kind=kind, content=content, description=title))
+
+                # Build structured content_blocks for the subagent interior
+                nested_blocks: list[ContentBlock] = []
+                nested_tool_invocations: list[ToolInvocation] = []
+                nested_command_runs: list[CommandRun] = []
+                for child_tcid, child_tool_name, child_args in builder.subagent_child_structured.get(tool_call_id, []):
+                    tool_inv, cmd_run = builder.build_tool_invocation(child_tcid, child_tool_name, child_args)
+                    display = _format_tool_display_message(child_tool_name, child_args)
+                    if tool_inv:
+                        nested_tool_invocations.append(tool_inv)
+                        nested_blocks.append(ContentBlock(kind="toolInvocation", content=display or child_tool_name))
+                    elif cmd_run:
+                        nested_command_runs.append(cmd_run)
+                        nested_blocks.append(ContentBlock(kind="toolInvocation", content=display or cmd_run.command))
+                # Add result text as a text block
+                if result_text:
+                    nested_blocks.append(ContentBlock(kind="text", content=result_text))
+                elif failed:
+                    error = builder.subagent_failures.get(tool_call_id, "Unknown error")
+                    nested_blocks.append(ContentBlock(kind="text", content=f"**Error:** {error}" if error else "**Error:** Unknown error"))
+
+                block = ContentBlock(kind=kind, content=content, description=title)
+                block.content_blocks = nested_blocks
+                block.tool_invocations = nested_tool_invocations
+                block.command_runs = nested_command_runs
+                builder.current_assistant_content_blocks.append(block)
 
             elif event_type == "subagent.completed":
                 display_name = event_data.get("agentDisplayName") or event_data.get("agentName", "unknown")

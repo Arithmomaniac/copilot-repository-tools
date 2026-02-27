@@ -173,7 +173,44 @@ def _get_jinja_env() -> Environment:
     env.filters["extract_filename"] = _extract_filename
     env.filters["strip_ansi"] = _strip_ansi
     env.globals["match_tool_for_block"] = _match_tool_for_block
+    env.globals["get_nested_meta"] = lambda block: getattr(block, "_nested_meta", {})
     return env
+
+
+def _build_block_metadata(content_blocks, tool_invocations, command_runs):
+    """Build tool/command matching metadata for a set of content blocks."""
+    block_tool_map = {}
+    block_cmd_map = {}
+    used_tool_indices: set = set()
+    used_cmd_indices: set = set()
+
+    for i, block in enumerate(content_blocks):
+        if block.kind == "toolInvocation":
+            if command_runs and block.content.startswith("$"):
+                cmd_text = block.content[1:].strip()
+                for j, cmd in enumerate(command_runs):
+                    if j in used_cmd_indices:
+                        continue
+                    if cmd.command and (cmd.command.startswith(cmd_text[:30]) or cmd_text[:30] in cmd.command):
+                        block_cmd_map[i] = cmd
+                        used_cmd_indices.add(j)
+                        break
+
+            if i not in block_cmd_map and tool_invocations:
+                matched_tool, used_tool_indices = _match_tool_for_block(block.content, tool_invocations, used_tool_indices)
+                if matched_tool:
+                    block_tool_map[i] = matched_tool
+
+        # Recursively build metadata for nested subagent blocks
+        if block.kind in ("subagent", "subagent_failed", "subagent_incomplete") and block.content_blocks:
+            block._nested_meta = _build_block_metadata(block.content_blocks, block.tool_invocations, block.command_runs)
+
+    return {
+        "block_tool_map": block_tool_map,
+        "block_cmd_map": block_cmd_map,
+        "matched_tool_names": {t.name for t in block_tool_map.values()},
+        "matched_cmd_indices": used_cmd_indices,
+    }
 
 
 def _preprocess_messages(session: ChatSession) -> tuple[str | None, dict[int, dict]]:
@@ -188,34 +225,7 @@ def _preprocess_messages(session: ChatSession) -> tuple[str | None, dict[int, di
         if message.role == "user" and first_user_prompt is None:
             first_user_prompt = message.content
 
-        block_tool_map = {}
-        block_cmd_map = {}
-        used_tool_indices: set = set()
-        used_cmd_indices: set = set()
-
-        for i, block in enumerate(message.content_blocks):
-            if block.kind == "toolInvocation":
-                if message.command_runs and block.content.startswith("$"):
-                    cmd_text = block.content[1:].strip()
-                    for j, cmd in enumerate(message.command_runs):
-                        if j in used_cmd_indices:
-                            continue
-                        if cmd.command and (cmd.command.startswith(cmd_text[:30]) or cmd_text[:30] in cmd.command):
-                            block_cmd_map[i] = cmd
-                            used_cmd_indices.add(j)
-                            break
-
-                if i not in block_cmd_map and message.tool_invocations:
-                    matched_tool, used_tool_indices = _match_tool_for_block(block.content, message.tool_invocations, used_tool_indices)
-                    if matched_tool:
-                        block_tool_map[i] = matched_tool
-
-        message_metadata[msg_idx] = {
-            "block_tool_map": block_tool_map,
-            "block_cmd_map": block_cmd_map,
-            "matched_tool_names": {t.name for t in block_tool_map.values()},
-            "matched_cmd_indices": used_cmd_indices,
-        }
+        message_metadata[msg_idx] = _build_block_metadata(message.content_blocks, message.tool_invocations, message.command_runs)
 
     return first_user_prompt, message_metadata
 
