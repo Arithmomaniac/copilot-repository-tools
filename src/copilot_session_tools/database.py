@@ -1130,6 +1130,7 @@ class Database:
         include_diffs: bool = True,
         include_tool_inputs: bool = True,
         include_thinking: bool = False,
+        include_agent_details: bool = True,
     ) -> str:
         """Get markdown for specific messages or all messages in a session.
 
@@ -1140,6 +1141,7 @@ class Database:
             include_diffs: Whether to include file diffs in the markdown.
             include_tool_inputs: Whether to include tool inputs in the markdown.
             include_thinking: Whether to include thinking/reasoning blocks.
+            include_agent_details: Whether to include full agent/subagent content.
 
         Returns:
             Combined markdown string for the selected messages.
@@ -1178,8 +1180,8 @@ class Database:
             rows = cursor.fetchall()
             markdown_parts = []
 
-            # If both options are enabled, use cached markdown
-            if include_diffs and include_tool_inputs and not include_thinking:
+            # If all default options, use cached markdown
+            if include_diffs and include_tool_inputs and not include_thinking and include_agent_details:
                 for row in rows:
                     md = row["cached_markdown"]
                     if md:
@@ -1200,6 +1202,7 @@ class Database:
                         include_diffs=include_diffs,
                         include_tool_inputs=include_tool_inputs,
                         include_thinking=include_thinking,
+                        include_agent_details=include_agent_details,
                     )
                     markdown_parts.append(md)
 

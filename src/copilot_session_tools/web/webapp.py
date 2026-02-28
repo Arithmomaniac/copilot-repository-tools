@@ -561,6 +561,7 @@ def create_app(
         include_diffs = request.args.get("include_diffs", "true").lower() == "true"
         include_tool_inputs = request.args.get("include_tool_inputs", "true").lower() == "true"
         include_thinking = request.args.get("include_thinking", "false").lower() == "true"
+        include_agent_details = request.args.get("include_agent_details", "true").lower() == "true"
         download = request.args.get("download", "false").lower() == "true"
 
         start = None
@@ -592,6 +593,7 @@ def create_app(
             include_diffs=include_diffs,
             include_tool_inputs=include_tool_inputs,
             include_thinking=include_thinking,
+            include_agent_details=include_agent_details,
         )
 
         if not markdown_content:
