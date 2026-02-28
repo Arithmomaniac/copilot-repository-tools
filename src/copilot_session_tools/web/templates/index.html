@@ -686,6 +686,55 @@ footer a {
     }
 }
 
+.upgrade-banner {
+    background-color: #fff8c5;
+    border: 1px solid #d4a72c;
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin-bottom: 20px;
+    color: #6a5300;
+    font-size: 0.9em;
+    position: relative;
+}
+
+.upgrade-banner code {
+    background-color: rgba(0, 0, 0, 0.08);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 0.9em;
+}
+
+.upgrade-banner .dismiss-btn {
+    position: absolute;
+    top: 8px;
+    right: 12px;
+    background: none;
+    border: none;
+    font-size: 1.2em;
+    cursor: pointer;
+    color: #6a5300;
+    opacity: 0.6;
+    padding: 0 4px;
+}
+
+.upgrade-banner .dismiss-btn:hover {
+    opacity: 1;
+}
+
+@media (prefers-color-scheme: dark) {
+    .upgrade-banner {
+        background-color: #3d3500;
+        border-color: #9e6a03;
+        color: #e3b341;
+    }
+    .upgrade-banner code {
+        background-color: rgba(255, 255, 255, 0.1);
+    }
+    .upgrade-banner .dismiss-btn {
+        color: #e3b341;
+    }
+}
+
 /* Pagination styles */
 .pagination {
     display: flex;
@@ -767,6 +816,13 @@ footer a {
     </header>
 
     <main class="container">
+        {% if upgrade_available %}
+        <div class="upgrade-banner" id="upgrade-banner">
+            💡 A newer version (v{{ upgrade_available }}) of Copilot Session Tools is available.
+            Upgrade with: <code>pip install --upgrade copilot-session-tools</code>
+            <button class="dismiss-btn" onclick="document.getElementById('upgrade-banner').style.display='none'" title="Dismiss">&times;</button>
+        </div>
+        {% endif %}
         <form method="GET" action="/" class="search-box" id="search-form">
             <div class="search-input-group">
                 <input type="text" name="q" placeholder="Search sessions... (use &quot;quotes&quot; for exact match, role:user workspace:name)" autocomplete="off" value="{{ query or '' }}">

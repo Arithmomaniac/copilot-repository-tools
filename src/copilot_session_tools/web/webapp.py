@@ -278,6 +278,14 @@ def create_app(
     app.config["ARCHIVE_TITLE"] = title
     app.config["STORAGE_PATHS"] = storage_paths  # None means use default VS Code paths
 
+    # Check for PyPI upgrade (cached, non-blocking)
+    try:
+        from copilot_session_tools.version_check import check_for_upgrade
+
+        app.config["UPGRADE_AVAILABLE"] = check_for_upgrade()
+    except Exception:
+        app.config["UPGRADE_AVAILABLE"] = None
+
     def _create_snippet(content: str, max_length: int = 150) -> str:
         """Create a snippet from content, normalizing whitespace."""
         if not content:
@@ -389,6 +397,7 @@ def create_app(
             sort_by=sort_by,
             has_cst_tables=cst_tables_exist,
             version_refresh_count=version_refresh_count,
+            upgrade_available=app.config.get("UPGRADE_AVAILABLE"),
             # Pagination context
             page=page,
             per_page=per_page,

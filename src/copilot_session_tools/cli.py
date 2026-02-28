@@ -93,6 +93,18 @@ def format_timestamp(ts: str | int | None) -> str:
         return str(ts)
 
 
+def _print_upgrade_notice():
+    """Print a notice if a newer version is available on PyPI."""
+    try:
+        from copilot_session_tools.version_check import check_for_upgrade
+
+        latest = check_for_upgrade()
+        if latest:
+            console.print(f"\n[yellow]💡 A newer version (v{latest}) is available. Upgrade with: pip install --upgrade copilot-session-tools[/yellow]")
+    except Exception:  # noqa: S110
+        pass
+
+
 @app.callback()
 def main(
     version: Annotated[
@@ -241,6 +253,8 @@ def scan(
     console.print(f"  {stats['session_count']} sessions")
     console.print(f"  {stats['message_count']} messages")
     console.print(f"  {stats['workspace_count']} workspaces")
+
+    _print_upgrade_notice()
 
 
 @app.command()
@@ -859,6 +873,8 @@ def web(
     console.print(f"  Messages: {db_stats['message_count']}")
     console.print(f"\nOpen http://{host}:{port}/ in a browser to view your archive.")
     console.print("Press Ctrl+C to stop the server.\n")
+
+    _print_upgrade_notice()
 
     run_server(
         host=host,
