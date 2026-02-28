@@ -282,7 +282,7 @@ from .scanner import (
     ToolInvocation,
 )
 
-CST_SCHEMA_VERSION = 2
+CST_SCHEMA_VERSION = 3
 
 CST_SCHEMA = """
 CREATE TABLE IF NOT EXISTS cst_schema_version (
@@ -305,7 +305,8 @@ CREATE TABLE IF NOT EXISTS cst_sessions (
     type TEXT DEFAULT 'vscode',
     repository_url TEXT,
     parser_version INTEGER NOT NULL DEFAULT 1,
-    source_format TEXT
+    source_format TEXT,
+    enrichment_version TEXT
 );
 
 CREATE TABLE IF NOT EXISTS cst_messages (
@@ -490,6 +491,10 @@ class Database:
                     ]:
                         with contextlib.suppress(Exception):
                             cursor.execute(col_sql)
+                if current_version < 3:
+                    # v3: add enrichment_version column to cst_sessions
+                    with contextlib.suppress(Exception):
+                        cursor.execute("ALTER TABLE cst_sessions ADD COLUMN enrichment_version TEXT")
                 if current_version < CST_SCHEMA_VERSION:
                     cursor.execute(
                         "UPDATE cst_schema_version SET version = ?",
@@ -789,6 +794,68 @@ class Database:
                 (current_parser_version,),
             ).fetchall()
             return [dict(r) for r in rows]
+
+            return [dict(r) for r in rows]
+
+    def count_sessions_needing_version_refresh(self, current_version: str) -> int:
+        """Count enriched sessions whose enrichment_version differs from current_version."""
+        from packaging.version import Version
+
+        current = Version(current_version)
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cst_sessions'")
+            if cursor.fetchone() is None:
+                return 0
+            rows = conn.execute(
+                "SELECT DISTINCT enrichment_version FROM cst_sessions",
+            ).fetchall()
+            stale_versions = [r[0] for r in rows if r[0] is None or Version(r[0]) < current]
+            if not stale_versions:
+                return 0
+            # Count sessions with NULL or any stale version
+            placeholders = ",".join("?" for _ in stale_versions if _ is not None)
+            has_null = any(v is None for v in stale_versions)
+            conditions = []
+            params: list[str] = []
+            if has_null:
+                conditions.append("enrichment_version IS NULL")
+            if placeholders:
+                conditions.append(f"enrichment_version IN ({placeholders})")
+                params.extend(v for v in stale_versions if v is not None)
+            row = conn.execute(
+                f"SELECT COUNT(*) FROM cst_sessions WHERE {' OR '.join(conditions)}",  # noqa: S608
+                params,
+            ).fetchone()
+            return row[0] if row else 0
+
+    def get_sessions_needing_version_refresh(self, current_version: str) -> list[dict]:
+        """Find enriched sessions whose enrichment_version is older than current_version."""
+        from packaging.version import Version
+
+        current = Version(current_version)
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cst_sessions'")
+            if cursor.fetchone() is None:
+                return []
+            rows = conn.execute(
+                "SELECT session_id, type, source_format, source_file, enrichment_version FROM cst_sessions",
+            ).fetchall()
+            return [dict(r) for r in rows if r["enrichment_version"] is None or Version(r["enrichment_version"]) < current]
+
+    def get_session_enrichment_version(self, session_id: str) -> str | None:
+        """Get the enrichment_version for a specific session, or None if not enriched."""
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='cst_sessions'")
+            if cursor.fetchone() is None:
+                return None
+            row = conn.execute(
+                "SELECT enrichment_version FROM cst_sessions WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+            return row[0] if row else None
 
     def delete_cst_session(self, session_id: str) -> bool:
         """Delete all cst_* data for a session. Returns True if session existed."""
@@ -1870,6 +1937,8 @@ class Database:
         """
         from datetime import datetime
 
+        from copilot_session_tools import __version__
+
         enriched_at = datetime.now(UTC).isoformat()
 
         with self._get_connection() as conn:
@@ -1887,8 +1956,8 @@ class Database:
                 (session_id, workspace_name, workspace_path, created_at, updated_at,
                  source_file, vscode_edition, custom_title, requester_username, responder_username,
                  source_file_mtime, source_file_size, type, repository_url,
-                 parser_version, source_format)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 parser_version, source_format, enrichment_version)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     session.session_id,
@@ -1907,6 +1976,7 @@ class Database:
                     session.repository_url,
                     session.parser_version,
                     session.source_format,
+                    __version__,
                 ),
             )
 
