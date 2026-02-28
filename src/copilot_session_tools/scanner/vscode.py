@@ -283,8 +283,8 @@ def _process_response_items(
                             fc = _parse_text_edit_group(child, file_contents_cache)
                             if fc:
                                 nested_file_changes.append(fc)
-                        # Extract command runs from child items
-                        if child_inv and child_inv.name == "run_in_terminal":
+                        # Extract command runs from child items — only if not already captured as ToolInvocation
+                        if child_inv and child_inv.name == "run_in_terminal" and not child_inv.invocation_message:
                             nested_command_runs.append(
                                 CommandRun(
                                     command=child_inv.input or "",
@@ -300,6 +300,8 @@ def _process_response_items(
                     title = f"{agent_name}: {description}" if description else agent_name
                     # Store as structured tuple: (kind, content, title, nested_blocks, nested_tool_invocations, nested_file_changes, nested_command_runs)
                     raw_blocks.append(("subagent", content, title, nested_blocks, nested_tool_invocations, nested_file_changes, nested_command_runs))
+                    # Include subagent content in response_content for FTS indexing
+                    response_content.append(content)
                 # Also extract the invocation message as content (non-subagent)
                 elif item.get("invocationMessage"):
                     msg_text = item["invocationMessage"]

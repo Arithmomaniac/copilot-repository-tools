@@ -98,6 +98,9 @@ class _CliSessionBuilder:
         for block in self.current_assistant_content_blocks:
             if block.kind == "text" and block.content.strip():
                 text_parts.append(block.content)
+            elif block.kind in ("subagent", "subagent_failed", "subagent_incomplete") and block.content.strip():
+                # Include subagent content in flat text for FTS indexing
+                text_parts.append(block.content)
         flat_content = "\n\n".join(text_parts)
 
         self.messages.append(

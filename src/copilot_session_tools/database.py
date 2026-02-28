@@ -293,7 +293,9 @@ def _serialize_nested_data(block: ContentBlock) -> str | None:
 
     data: dict = {}
     if block.content_blocks:
-        data["content_blocks"] = [{k: v for k, v in asdict(cb).items() if v or k in ("kind", "content")} for cb in block.content_blocks]
+        # Only serialize the fields deserialization actually uses (kind, content, description)
+        # to avoid silent data loss from asdict's deep recursion on nested ContentBlocks
+        data["content_blocks"] = [{"kind": cb.kind, "content": cb.content, "description": cb.description} for cb in block.content_blocks]
     if block.tool_invocations:
         data["tool_invocations"] = [{k: v for k, v in asdict(t).items() if v is not None} for t in block.tool_invocations]
     if block.file_changes:
