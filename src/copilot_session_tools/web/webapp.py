@@ -472,7 +472,11 @@ def create_app(
             }
 
         enrichment_version = db.get_session_enrichment_version(session_id) if is_enriched else None
-        needs_version_refresh = is_enriched and (enrichment_version is None or enrichment_version < __version__)
+        needs_version_refresh = False
+        if is_enriched and (enrichment_version is None or enrichment_version != __version__):
+            from packaging.version import Version
+
+            needs_version_refresh = enrichment_version is None or Version(enrichment_version) < Version(__version__)
 
         return render_template(
             "session.html",
