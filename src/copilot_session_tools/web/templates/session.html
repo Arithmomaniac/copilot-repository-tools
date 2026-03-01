@@ -1388,7 +1388,6 @@ footer a {
                             <span class="status-badge {{ block.description or '' }}">{{ block.content }}</span>
                             {% endif %}
                             {% elif block.kind in ('subagent', 'subagent_failed', 'subagent_incomplete') %}
-                            {% if include_agent_details is not defined or include_agent_details %}
                             <details class="subagent-block{% if block.kind == 'subagent_failed' %} subagent-failed{% endif %}">
                                 <summary>
                                     <span class="collapsible-icon" aria-hidden="true">▶</span>
@@ -1402,22 +1401,32 @@ footer a {
                                     {% endif %}
                                 </summary>
                                 <div class="subagent-content">
+                                    {% if include_agent_details is not defined or include_agent_details %}
+                                    {# Full details: all tools, commands, file changes, result #}
                                     {% if block.content_blocks %}
-                                    {# Structured rendering: reuse the same pipeline recursively #}
                                     {{ render_content_blocks(block.content_blocks, block.tool_invocations, block.file_changes, block.command_runs, get_nested_meta(block), block.content) }}
                                     {% else %}
-                                    {# Legacy fallback: render as flat markdown #}
                                     {{ block.content | markdown | safe }}
+                                    {% endif %}
+                                    {% else %}
+                                    {# Result only: just show text blocks (the agent's response) #}
+                                    {% set has_result = false %}
+                                    {% if block.content_blocks %}
+                                    {% for inner in block.content_blocks %}
+                                    {% if inner.kind == 'text' and inner.content.strip() %}
+                                    <div class="content-block content-block-text result-block">
+                                        {{ inner.content | markdown | safe }}
+                                    </div>
+                                    {% set has_result = true %}
+                                    {% endif %}
+                                    {% endfor %}
+                                    {% endif %}
+                                    {% if not has_result %}
+                                    {{ block.content | markdown | safe }}
+                                    {% endif %}
                                     {% endif %}
                                 </div>
                             </details>
-                            {% else %}
-                            {# Collapsed summary: just show agent name and status #}
-                            <div class="content-block content-block-toolInvocation">
-                                <em>🤖 {{ block.description or 'Agent' }} —
-                                {% if block.kind == 'subagent_failed' %}failed{% elif block.kind == 'subagent_incomplete' %}incomplete{% else %}completed{% endif %}</em>
-                            </div>
-                            {% endif %}
                             {% elif block.kind == 'thinking' %}
                             <details class="thinking-block">
                                 <summary>
