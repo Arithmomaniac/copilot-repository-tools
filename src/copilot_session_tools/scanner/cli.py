@@ -449,6 +449,13 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                     if result_content.startswith("Agent started in background with agent_id: "):
                         bg_id = result_content.split("agent_id: ", 1)[1].split(".")[0].strip()
                         bg_agent_id_map[tool_call_id] = bg_id
+                        # Build display name from task tool arguments
+                        start_info = tool_executions[tool_call_id].get("start")
+                        if start_info:
+                            args = start_info.get("data", {}).get("arguments", {})
+                            agent_type = args.get("agent_type", "agent")
+                            desc = args.get("description", "")
+                            agent_display_names[bg_id] = f"{agent_type}: {desc}" if desc else agent_type
                     # Collect read_agent results for background agents
                     start_info = tool_executions[tool_call_id].get("start")
                     if start_info and start_info.get("data", {}).get("toolName") == "read_agent" and isinstance(result_obj, dict):
@@ -473,18 +480,7 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                     subagent_failures[tool_call_id] = error
 
             elif event_type == "subagent.started":
-                # Build agent_id -> display title mapping for read_agent resolution
-                tool_call_id = event_data.get("toolCallId", "")
-                agent_id = bg_agent_id_map.get(tool_call_id)
-                if agent_id:
-                    display_name = event_data.get("agentDisplayName") or event_data.get("agentName", "")
-                    exec_info = tool_executions.get(tool_call_id, {})
-                    start_evt = exec_info.get("start")
-                    desc = ""
-                    if start_evt:
-                        desc = start_evt.get("data", {}).get("arguments", {}).get("description", "")
-                    title = f"{display_name}: {desc}" if desc else display_name
-                    agent_display_names[agent_id] = title
+                pass  # agent_display_names built from tool.execution_complete below
 
             elif event_type == "subagent.completed":
                 tool_call_id = event_data.get("toolCallId", "")
