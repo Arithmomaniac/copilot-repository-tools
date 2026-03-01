@@ -259,9 +259,11 @@ class _CliSessionBuilder:
         if tool_name == "read_agent":
             agent_id = arguments.get("agent_id", "")
             display = self.agent_display_names.get(agent_id, agent_id)
-            self.current_assistant_content_blocks.append(ContentBlock(kind="toolInvocation", content=f"⏳ Checking agent {display}"))
+            resolved_msg = f"⏳ Checking agent {display}"
+            self.current_assistant_content_blocks.append(ContentBlock(kind="toolInvocation", content=resolved_msg))
             tool_inv, _ = self.build_tool_invocation(tool_call_id, tool_name, arguments)
             if tool_inv:
+                tool_inv.invocation_message = resolved_msg
                 self.current_assistant_tool_invocations.append(tool_inv)
             return
 
