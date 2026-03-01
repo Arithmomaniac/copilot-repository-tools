@@ -1388,6 +1388,7 @@ footer a {
                             <span class="status-badge {{ block.description or '' }}">{{ block.content }}</span>
                             {% endif %}
                             {% elif block.kind in ('subagent', 'subagent_failed', 'subagent_incomplete') %}
+                            {% if include_agent_details is not defined or include_agent_details %}
                             <details class="subagent-block{% if block.kind == 'subagent_failed' %} subagent-failed{% endif %}">
                                 <summary>
                                     <span class="collapsible-icon" aria-hidden="true">▶</span>
@@ -1410,6 +1411,13 @@ footer a {
                                     {% endif %}
                                 </div>
                             </details>
+                            {% else %}
+                            {# Collapsed summary: just show agent name and status #}
+                            <div class="content-block content-block-toolInvocation">
+                                <em>🤖 {{ block.description or 'Agent' }} —
+                                {% if block.kind == 'subagent_failed' %}failed{% elif block.kind == 'subagent_incomplete' %}incomplete{% else %}completed{% endif %}</em>
+                            </div>
+                            {% endif %}
                             {% elif block.kind == 'thinking' %}
                             <details class="thinking-block">
                                 <summary>

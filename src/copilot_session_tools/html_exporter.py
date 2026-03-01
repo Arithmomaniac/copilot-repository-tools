@@ -230,11 +230,13 @@ def _preprocess_messages(session: ChatSession) -> tuple[str | None, dict[int, di
     return first_user_prompt, message_metadata
 
 
-def session_to_html(session: ChatSession) -> str:
+def session_to_html(session: ChatSession, include_agent_details: bool = True) -> str:
     """Convert a chat session to a self-contained static HTML string.
 
     Args:
         session: The ChatSession to convert.
+        include_agent_details: If True (default), render full agent content.
+                              If False, show only a summary line per agent.
 
     Returns:
         Complete HTML document as a string.
@@ -250,6 +252,7 @@ def session_to_html(session: ChatSession) -> str:
         message_metadata=message_metadata,
         static=True,
         is_enriched=True,
+        include_agent_details=include_agent_details,
     )
 
 
