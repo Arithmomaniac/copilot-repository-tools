@@ -226,8 +226,9 @@ def _match_tool_for_block(block_content: str, tools: list, used_indices: set) ->
                 return tool, used_indices
 
     # Fallback: try sequential matching for tools not yet used
+    # Skip 'task' tools — they render as subagent blocks, not inline tool invocations
     for i, tool in enumerate(tools):
-        if i not in used_indices:
+        if i not in used_indices and tool.name != "task":
             used_indices = used_indices | {i}
             return tool, used_indices
 
