@@ -698,7 +698,13 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                         nested_blocks.append(ContentBlock(kind="toolInvocation", content=display or child_tool_name))
                     elif cmd_run:
                         nested_command_runs.append(cmd_run)
-                        nested_blocks.append(ContentBlock(kind="toolInvocation", content=display or cmd_run.command))
+                        # Use "$ command" format so metadata matching connects them inline
+                        cmd_content = f"$ {cmd_run.command}" if cmd_run.command else (display or cmd_run.command)
+                        nested_blocks.append(ContentBlock(
+                            kind="toolInvocation",
+                            content=cmd_content,
+                            description=cmd_run.title,
+                        ))
                 # Add result text as a text block
                 if result_text:
                     nested_blocks.append(ContentBlock(kind="text", content=result_text))
