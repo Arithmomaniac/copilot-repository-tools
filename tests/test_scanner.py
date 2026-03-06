@@ -3,6 +3,7 @@
 import json
 import time
 from pathlib import Path
+from typing import cast
 
 import pytest
 from conftest import requires_sample_files
@@ -22,6 +23,8 @@ from copilot_session_tools.scanner import (
     _merge_content_blocks,
     _parse_tool_invocation_serialized,
 )
+from copilot_session_tools.scanner.models import ContentBlock
+from copilot_session_tools.scanner.models import ToolInvocation as ScannerToolInvocation
 from copilot_session_tools.scanner.vscode import _process_response_items
 
 
@@ -1811,24 +1814,208 @@ class TestVSCodeSubagentParsing:
                 "toolCallId": "call_regular",
             },
         ]
-        _, raw_blocks, _, _, _ = _process_response_items(response_items)
+        _, raw_blocks, tool_invocations, _, _ = _process_response_items(response_items)
         # Should have: one subagent block (with children absorbed) + one regular toolInvocation
         subagent_blocks = [b for b in raw_blocks if b[0] == "subagent"]
         tool_blocks = [b for b in raw_blocks if b[0] == "toolInvocation"]
         assert len(subagent_blocks) == 1, f"Expected 1 subagent block, got {len(subagent_blocks)}: {subagent_blocks}"
         assert len(tool_blocks) == 1, f"Expected 1 regular tool block, got {len(tool_blocks)}: {tool_blocks}"
+        assert len(tool_invocations) == 2
+        assert tool_invocations[0].name == "RunSubagentTool"
+        assert tool_invocations[1].name == "vscode_readFile"
+        assert tool_invocations[1].invocation_message == "Reading README.md"
         # The subagent block content should include child tool invocation messages and the result
         subagent_content = subagent_blocks[0][1]
         assert "auth.py" in subagent_content, f"Child tool should be in subagent content: {subagent_content[:200]}"
         assert "middleware.py" in subagent_content
         assert "Found 3 auth files" in subagent_content
         # The subagent title should include the agent name and description
-        subagent_title = subagent_blocks[0][2]
+        subagent_block = cast(tuple[str, str, str | None], subagent_blocks[0][:3])
+        subagent_title = subagent_block[2]
         assert subagent_title is not None
         assert "search" in subagent_title
         assert "Find auth files" in subagent_title
         # The regular tool should still appear
         assert "README.md" in tool_blocks[0][1]
+
+    def test_duplicate_parent_and_child_updates_collapse_to_one_subagent_block(self):
+        """Repeated VS Code updates for the same subagent/toolCallId should render once."""
+        response_items = [
+            {
+                "kind": "toolInvocationSerialized",
+                "toolId": "runSubagent",
+                "invocationMessage": "",
+                "toolSpecificData": {
+                    "kind": "subagent",
+                    "agentName": "Agent",
+                    "description": "Search archive",
+                },
+                "isComplete": True,
+                "toolCallId": "parent_1",
+            },
+            {
+                "kind": "toolInvocationSerialized",
+                "toolId": "copilot_readFile",
+                "invocationMessage": "Reading skill docs",
+                "toolSpecificData": {},
+                "isComplete": True,
+                "toolCallId": "child_1",
+                "subAgentInvocationId": "parent_1",
+            },
+            {
+                "kind": "toolInvocationSerialized",
+                "toolId": "copilot_readFile",
+                "invocationMessage": "Reading skill docs",
+                "toolSpecificData": {},
+                "isComplete": True,
+                "toolCallId": "child_1",
+                "subAgentInvocationId": "parent_1",
+            },
+            {
+                "kind": "toolInvocationSerialized",
+                "toolId": "runSubagent",
+                "invocationMessage": "",
+                "toolSpecificData": {
+                    "kind": "subagent",
+                    "agentName": "Agent",
+                    "description": "Search archive",
+                    "result": "Agent completed with no output",
+                },
+                "isComplete": True,
+                "toolCallId": "parent_1",
+            },
+        ]
+
+        _, raw_blocks, tool_invocations, _, _ = _process_response_items(response_items)
+        subagent_blocks = [b for b in raw_blocks if b[0] == "subagent"]
+        assert len(subagent_blocks) == 1
+        assert [tool.name for tool in tool_invocations] == ["runSubagent"]
+
+        subagent_block = cast(
+            tuple[
+                str,
+                str,
+                str | None,
+                list[ContentBlock],
+                list[ScannerToolInvocation],
+                list,
+                list,
+            ],
+            subagent_blocks[0],
+        )
+        nested_blocks = subagent_block[3]
+        nested_tool_invocations = subagent_block[4]
+        assert len(nested_tool_invocations) == 1
+        assert len(nested_blocks) == 2
+        assert nested_blocks[0].content == "Reading skill docs"
+        assert nested_blocks[1].kind == "text"
+        assert "Agent completed with no output" in nested_blocks[1].content
+
+    def test_subagent_terminal_children_render_inline_via_command_blocks(self):
+        """VS Code subagent terminal children without invocation text should still get inline blocks."""
+        response_items = [
+            {
+                "kind": "toolInvocationSerialized",
+                "toolId": "runSubagent",
+                "invocationMessage": "",
+                "toolSpecificData": {
+                    "kind": "subagent",
+                    "agentName": "Agent",
+                    "description": "Search archive",
+                    "result": "Done",
+                },
+                "isComplete": True,
+                "toolCallId": "parent_1",
+            },
+            {
+                "kind": "toolInvocationSerialized",
+                "toolId": "run_in_terminal",
+                "invocationMessage": "",
+                "toolSpecificData": {
+                    "kind": "terminal",
+                    "commandLine": "copilot-session-tools scan --verbose",
+                },
+                "resultDetails": {
+                    "output": [
+                        {
+                            "value": "scan output",
+                        }
+                    ]
+                },
+                "isComplete": True,
+                "toolCallId": "child_cmd_1",
+                "subAgentInvocationId": "parent_1",
+            },
+        ]
+
+        _, raw_blocks, _, _, _ = _process_response_items(response_items)
+        subagent_blocks = [b for b in raw_blocks if b[0] == "subagent"]
+        assert len(subagent_blocks) == 1
+
+        subagent_block = cast(
+            tuple[
+                str,
+                str,
+                str | None,
+                list[ContentBlock],
+                list[ScannerToolInvocation],
+                list,
+                list,
+            ],
+            subagent_blocks[0],
+        )
+        nested_blocks = subagent_block[3]
+        nested_command_runs = subagent_block[6]
+        assert len(nested_command_runs) == 1
+        assert nested_command_runs[0].command == "copilot-session-tools scan --verbose"
+        assert nested_blocks[0].content == "$ copilot-session-tools scan --verbose"
+        assert nested_blocks[1].kind == "text"
+
+    def test_top_level_terminal_tools_without_invocation_message_render_inline(self):
+        """Top-level VS Code terminal tools without invocation text should still get inline blocks."""
+        response_items = [
+            {
+                "kind": "toolInvocationSerialized",
+                "toolId": "run_in_terminal",
+                "invocationMessage": "",
+                "toolSpecificData": {
+                    "kind": "terminal",
+                    "commandLine": "echo hello",
+                },
+                "resultDetails": {
+                    "output": [
+                        {
+                            "value": "hello",
+                        }
+                    ]
+                },
+                "isComplete": True,
+                "toolCallId": "cmd_1",
+            },
+            {
+                "kind": "toolInvocationSerialized",
+                "toolId": "run_in_terminal",
+                "invocationMessage": "",
+                "toolSpecificData": {
+                    "kind": "terminal",
+                    "commandLine": "echo world",
+                },
+                "resultDetails": {
+                    "output": [
+                        {
+                            "value": "world",
+                        }
+                    ]
+                },
+                "isComplete": True,
+                "toolCallId": "cmd_2",
+            },
+        ]
+
+        _, raw_blocks, tool_invocations, _, _ = _process_response_items(response_items)
+        tool_blocks = [b for b in raw_blocks if b[0] == "toolInvocation"]
+        assert [block[1] for block in tool_blocks] == ["$ echo hello", "$ echo world"]
+        assert [tool.name for tool in tool_invocations] == ["run_in_terminal", "run_in_terminal"]
 
 
 class TestCLIStructuredSubagentContent:
