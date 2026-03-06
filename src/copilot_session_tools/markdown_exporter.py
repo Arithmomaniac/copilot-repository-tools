@@ -178,6 +178,10 @@ def _format_message_content(
                 agent_content = block.content.replace(chr(10), chr(10) + "> ")
                 parts.append(f"<details>\n<summary>{agent_name} — {status}</summary>\n\n> {agent_content}\n\n</details>")
                 continue
+            elif block.kind == "status" and block.description == "task-complete":
+                tc_content = block.content.replace(chr(10), chr(10) + "> ")
+                parts.append(f"<details>\n<summary>✅ Task complete</summary>\n\n> {tc_content}\n\n</details>")
+                continue
             elif block.kind == "toolInvocation":
                 # For command runs, description holds the human-readable title
                 # (content starts with "$ " and is the raw command)

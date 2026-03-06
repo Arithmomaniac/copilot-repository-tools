@@ -1512,6 +1512,59 @@ class TestCLINewEventHandlers:
         assert len(blocks) == 1
         assert blocks[0].content == "Plan created"
 
+    # --- session.task_complete ---
+
+    def test_session_task_complete(self, tmp_path):
+        session = self._parse(
+            tmp_path,
+            {"type": "session.task_complete", "data": {"summary": "Implemented auth module with JWT tokens."}},
+        )
+        blocks = self._find_status_blocks(session, "task-complete")
+        assert len(blocks) == 1
+        assert blocks[0].content == "Implemented auth module with JWT tokens."
+
+    def test_session_task_complete_empty_summary(self, tmp_path):
+        """Task complete with empty summary should not produce a block."""
+        session = self._parse(
+            tmp_path,
+            {"type": "session.task_complete", "data": {"summary": ""}},
+        )
+        if session is None:
+            return
+        blocks = self._find_status_blocks(session, "task-complete")
+        assert len(blocks) == 0
+
+    # --- session.shutdown ---
+
+    def test_session_shutdown(self, tmp_path):
+        session = self._parse(
+            tmp_path,
+            {
+                "type": "session.shutdown",
+                "data": {
+                    "shutdownType": "routine",
+                    "codeChanges": {"linesAdded": 100, "linesRemoved": 20, "filesModified": ["a.py", "b.py"]},
+                    "modelMetrics": {"claude-sonnet-4": {"requests": {"count": 10, "cost": 5}, "usage": {}}},
+                },
+            },
+        )
+        blocks = self._find_status_blocks(session, "shutdown")
+        assert len(blocks) == 1
+        assert "routine" in blocks[0].content
+        assert "+100/-20" in blocks[0].content
+        assert "2 files" in blocks[0].content
+        assert "claude-sonnet-4" in blocks[0].content
+
+    def test_session_shutdown_minimal(self, tmp_path):
+        """Shutdown with only shutdownType should still render."""
+        session = self._parse(
+            tmp_path,
+            {"type": "session.shutdown", "data": {"shutdownType": "crash"}},
+        )
+        blocks = self._find_status_blocks(session, "shutdown")
+        assert len(blocks) == 1
+        assert "crash" in blocks[0].content
+
     # --- skip internal events ---
 
     def test_skip_internal_events(self, tmp_path):
@@ -1527,6 +1580,28 @@ class TestCLINewEventHandlers:
         # Internal events add no content, so parser returns None (no messages)
         if session is None:
             return  # correctly produced no messages
+        all_blocks = []
+        for msg in session.messages:
+            all_blocks.extend(msg.content_blocks)
+        assert len(all_blocks) == 0
+
+    def test_skip_ephemeral_events(self, tmp_path):
+        """Ephemeral events from v0.0.422+ schema should produce no content blocks."""
+        ephemeral_events = [
+            {"type": "permission.requested", "data": {"requestId": "r1", "permissionRequest": {"kind": "shell"}}},
+            {"type": "permission.completed", "data": {"requestId": "r1"}},
+            {"type": "elicitation.requested", "data": {"requestId": "r2", "message": "Choose:", "requestedSchema": {}}},
+            {"type": "elicitation.completed", "data": {"requestId": "r2"}},
+            {"type": "user_input.requested", "data": {"requestId": "r3", "question": "Continue?"}},
+            {"type": "user_input.completed", "data": {"requestId": "r3"}},
+            {"type": "external_tool.requested", "data": {"requestId": "r4", "toolName": "ext"}},
+            {"type": "external_tool.completed", "data": {"requestId": "r4"}},
+            {"type": "command.queued", "data": {"requestId": "r5", "command": "npm test"}},
+            {"type": "command.completed", "data": {"requestId": "r5"}},
+        ]
+        session = self._parse(tmp_path, *ephemeral_events)
+        if session is None:
+            return
         all_blocks = []
         for msg in session.messages:
             all_blocks.extend(msg.content_blocks)

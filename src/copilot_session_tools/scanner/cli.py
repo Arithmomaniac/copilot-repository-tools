@@ -806,10 +806,32 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                 operation = event_data.get("operation") or "changed"
                 builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=f"Plan {operation}", description="plan-change"))
 
+            elif event_type == "session.task_complete":
+                summary = (event_data.get("summary") or "").strip()
+                if summary:
+                    builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=summary, description="task-complete"))
+
+            elif event_type == "session.shutdown":
+                shutdown_type = event_data.get("shutdownType") or "unknown"
+                code_changes = event_data.get("codeChanges") or {}
+                lines_added = code_changes.get("linesAdded", 0)
+                lines_removed = code_changes.get("linesRemoved", 0)
+                files_modified = code_changes.get("filesModified") or []
+                parts = [f"Session ended ({shutdown_type})"]
+                if lines_added or lines_removed:
+                    parts.append(f"+{lines_added}/-{lines_removed} lines across {len(files_modified)} files")
+                model_metrics = event_data.get("modelMetrics") or {}
+                for model_name, metrics in model_metrics.items():
+                    requests = (metrics.get("requests") or {}).get("count", 0)
+                    cost = (metrics.get("requests") or {}).get("cost", 0)
+                    if requests:
+                        parts.append(f"{model_name}: {requests} requests, cost {cost}")
+                builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=" · ".join(parts), description="shutdown"))
+
             # Skip internal/metadata events (already parsed in metadata extraction or no user content)
             elif event_type in (
                 "session.start",  # Parsed above for sessionId, startTime, context
-                "session.info",  # Parsed above for workspace, auth info
+                "session.info",  # Informational (e.g., model confirmations)
                 "session.compaction_start",  # Boundary event, paired with compaction_complete
                 "session.error",  # Handled above
                 # Internal turn boundary markers
@@ -821,6 +843,17 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                 "session.truncation",
                 # Internal file notification
                 "session.workspace_file_changed",
+                # Ephemeral UI events (permission/elicitation/input prompts — not persisted)
+                "permission.requested",
+                "permission.completed",
+                "elicitation.requested",
+                "elicitation.completed",
+                "user_input.requested",
+                "user_input.completed",
+                "external_tool.requested",
+                "external_tool.completed",
+                "command.queued",
+                "command.completed",
             ):
                 pass
 
