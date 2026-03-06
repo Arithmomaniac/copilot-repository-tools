@@ -7,7 +7,7 @@ from urllib.parse import unquote
 import markdown
 from flask import Flask, flash, jsonify, make_response, redirect, render_template, request, session, url_for
 
-from copilot_session_tools import Database, generate_session_filename, get_vscode_storage_paths
+from copilot_session_tools import Database, __version__, generate_session_filename, get_vscode_storage_paths
 from copilot_session_tools.refresh import enrich_single_session, run_enrichment, run_refresh
 
 # Create a reusable markdown converter with extensions
@@ -281,7 +281,7 @@ def _build_block_metadata(content_blocks, tool_invocations, command_runs):
 
 def create_app(
     db_path: str,
-    title: str = "Copilot Chat Archive",
+    title: str = "Copilot Session Tools",
     storage_paths: list | None = None,
 ) -> Flask:
     """Create and configure the Flask application.
@@ -323,6 +323,14 @@ def create_app(
     app.config["DB_PATH"] = db_path
     app.config["ARCHIVE_TITLE"] = title
     app.config["STORAGE_PATHS"] = storage_paths  # None means use default VS Code paths
+
+    # Check for PyPI upgrade (cached, non-blocking)
+    try:
+        from copilot_session_tools.version_check import check_for_upgrade
+
+        app.config["UPGRADE_AVAILABLE"] = check_for_upgrade()
+    except Exception:
+        app.config["UPGRADE_AVAILABLE"] = None
 
     def _create_snippet(content: str, max_length: int = 150) -> str:
         """Create a snippet from content, normalizing whitespace."""
@@ -416,10 +424,12 @@ def create_app(
         repositories = db.get_repositories()
         stats = db.get_stats()
         cst_tables_exist = db.has_cst_tables()
+        version_refresh_count = db.count_sessions_needing_version_refresh(__version__) if cst_tables_exist else 0
 
         return render_template(
             "index.html",
             title=app.config["ARCHIVE_TITLE"],
+            app_version=__version__,
             sessions=paginated_sessions,
             workspaces=workspaces,
             repositories=repositories,
@@ -432,6 +442,8 @@ def create_app(
             refresh_result=refresh_result,
             sort_by=sort_by,
             has_cst_tables=cst_tables_exist,
+            version_refresh_count=version_refresh_count,
+            upgrade_available=app.config.get("UPGRADE_AVAILABLE"),
             # Pagination context
             page=page,
             per_page=per_page,
@@ -483,9 +495,17 @@ def create_app(
 
             message_metadata[msg_idx] = _build_block_metadata(message.content_blocks, message.tool_invocations, message.command_runs)
 
+        enrichment_version = db.get_session_enrichment_version(session_id) if is_enriched else None
+        needs_version_refresh = False
+        if is_enriched and (enrichment_version is None or enrichment_version != __version__):
+            from packaging.version import Version
+
+            needs_version_refresh = enrichment_version is None or Version(enrichment_version) < Version(__version__)
+
         return render_template(
             "session.html",
             title=app.config["ARCHIVE_TITLE"],
+            app_version=__version__,
             session=session,
             message_count=len(session.messages),
             first_user_prompt=first_user_prompt,
@@ -493,6 +513,8 @@ def create_app(
             is_enriched=is_enriched,
             turns=turns,
             new_turns=new_turns,
+            needs_version_refresh=needs_version_refresh,
+            enrichment_version=enrichment_version,
         )
 
     @app.route("/refresh", methods=["POST"])
@@ -616,7 +638,7 @@ def run_server(
     host: str = "127.0.0.1",
     port: int = 5000,
     db_path: str = "copilot_chats.db",
-    title: str = "Copilot Chat Archive",
+    title: str = "Copilot Session Tools",
     debug: bool = False,
 ) -> None:
     """Run the Flask development server.

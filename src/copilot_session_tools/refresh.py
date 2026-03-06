@@ -213,6 +213,29 @@ def run_enrichment(
             if on_progress:
                 on_progress("enrich_failed", error)
 
+    # Re-enrich sessions with outdated enrichment_version
+    from copilot_session_tools import __version__
+
+    try:
+        needing_version_refresh = database.get_sessions_needing_version_refresh(__version__)
+    except Exception:
+        needing_version_refresh = []
+
+    already_processed = {e["session_id"] for e in needing_enrichment} | {e["session_id"] for e in needing_reparse}
+    for entry in needing_version_refresh:
+        sid = entry["session_id"]
+        if sid in already_processed:
+            continue
+        error = enrich_single_session(database, sid, validate=False)
+        if error is None:
+            reparsed += 1
+            if on_progress:
+                on_progress("reparsed", sid)
+        else:
+            failed += 1
+            if on_progress:
+                on_progress("enrich_failed", error)
+
     # Cleanup orphaned cst_sessions
     try:
         orphaned_ids = database.cleanup_orphaned_cst_sessions()

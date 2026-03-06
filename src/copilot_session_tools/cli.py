@@ -93,6 +93,18 @@ def format_timestamp(ts: str | int | None) -> str:
         return str(ts)
 
 
+def _print_upgrade_notice():
+    """Print a notice if a newer version is available on PyPI."""
+    try:
+        from copilot_session_tools.version_check import check_for_upgrade
+
+        latest = check_for_upgrade()
+        if latest:
+            console.print(f"\n[yellow]💡 A newer version (v{latest}) is available. Upgrade with: pip install --upgrade copilot-session-tools[/yellow]")
+    except Exception:  # noqa: S110
+        pass
+
+
 @app.callback()
 def main(
     version: Annotated[
@@ -113,7 +125,7 @@ def main(
         ),
     ] = False,
 ):
-    """Copilot Chat Archive - Create a searchable archive of VS Code GitHub Copilot chats."""
+    """Copilot Session Tools - Create a searchable archive of VS Code GitHub Copilot chats."""
     global _unenriched_only  # noqa: PLW0603
     _unenriched_only = unenriched_only
 
@@ -241,6 +253,8 @@ def scan(
     console.print(f"  {stats['session_count']} sessions")
     console.print(f"  {stats['message_count']} messages")
     console.print(f"  {stats['workspace_count']} workspaces")
+
+    _print_upgrade_notice()
 
 
 @app.command()
@@ -843,7 +857,7 @@ def web(
     db: Annotated[Path, typer.Option("--db", "-d", help="Path to SQLite database file.")] = _DEFAULT_DB,
     host: Annotated[str, typer.Option("--host", "-H", help="Host to bind to.")] = "127.0.0.1",
     port: Annotated[int, typer.Option("--port", "-p", help="Port to bind to.")] = 5000,
-    title: Annotated[str, typer.Option("--title", "-t", help="Title for the archive.")] = "Copilot Chat Archive",
+    title: Annotated[str, typer.Option("--title", "-t", help="Title for the archive.")] = "Copilot Session Tools",
     debug: Annotated[bool, typer.Option("--debug", help="Enable debug mode.")] = False,
 ):
     """Start the web viewer for browsing chat sessions."""
@@ -868,6 +882,8 @@ def web(
     console.print(f"  Messages: {db_stats['message_count']}")
     console.print(f"\nOpen http://{host}:{port}/ in a browser to view your archive.")
     console.print("Press Ctrl+C to stop the server.\n")
+
+    _print_upgrade_notice()
 
     run_server(
         host=host,

@@ -39,7 +39,7 @@ def main():
     _default_db = str(Path.home() / ".copilot-session-tools" / "copilot_chats.db")
 
     parser = argparse.ArgumentParser(
-        description="Start the Copilot Chat Archive web server",
+        description="Start the Copilot Session Tools web server",
     )
     parser.add_argument(
         "--db",
@@ -63,8 +63,8 @@ def main():
     parser.add_argument(
         "--title",
         "-t",
-        default="Copilot Chat Archive",
-        help="Title for the archive (default: Copilot Chat Archive)",
+        default="Copilot Session Tools",
+        help="Title for the archive (default: Copilot Session Tools)",
     )
     parser.add_argument(
         "--debug",

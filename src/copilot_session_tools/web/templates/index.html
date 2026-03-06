@@ -644,6 +644,97 @@ footer a {
     font-weight: 600;
 }
 
+.version-refresh-banner {
+    background-color: #ddf4ff;
+    border: 1px solid #54aeff;
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin-bottom: 20px;
+    color: #0550ae;
+    font-size: 0.9em;
+}
+
+.version-refresh-banner .refresh-btn {
+    display: inline-block;
+    margin-left: 10px;
+    padding: 2px 10px;
+    background-color: #54aeff;
+    color: #fff;
+    border-radius: 4px;
+    font-size: 0.85em;
+    font-weight: 500;
+    border: none;
+    cursor: pointer;
+}
+
+.version-refresh-banner .refresh-btn:hover {
+    background-color: #218bff;
+}
+
+@media (prefers-color-scheme: dark) {
+    .version-refresh-banner {
+        background-color: #0d1d30;
+        border-color: #1f6feb;
+        color: #58a6ff;
+    }
+    .version-refresh-banner .refresh-btn {
+        background-color: #1f6feb;
+        color: #ddf4ff;
+    }
+    .version-refresh-banner .refresh-btn:hover {
+        background-color: #388bfd;
+    }
+}
+
+.upgrade-banner {
+    background-color: #fff8c5;
+    border: 1px solid #d4a72c;
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin-bottom: 20px;
+    color: #6a5300;
+    font-size: 0.9em;
+    position: relative;
+}
+
+.upgrade-banner code {
+    background-color: rgba(0, 0, 0, 0.08);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 0.9em;
+}
+
+.upgrade-banner .dismiss-btn {
+    position: absolute;
+    top: 8px;
+    right: 12px;
+    background: none;
+    border: none;
+    font-size: 1.2em;
+    cursor: pointer;
+    color: #6a5300;
+    opacity: 0.6;
+    padding: 0 4px;
+}
+
+.upgrade-banner .dismiss-btn:hover {
+    opacity: 1;
+}
+
+@media (prefers-color-scheme: dark) {
+    .upgrade-banner {
+        background-color: #3d3500;
+        border-color: #9e6a03;
+        color: #e3b341;
+    }
+    .upgrade-banner code {
+        background-color: rgba(255, 255, 255, 0.1);
+    }
+    .upgrade-banner .dismiss-btn {
+        color: #e3b341;
+    }
+}
+
 /* Pagination styles */
 .pagination {
     display: flex;
@@ -709,7 +800,7 @@ footer a {
 <body>
     <header>
         <div class="container">
-            <h1>{{ title }}</h1>
+            <h1>{{ title }}{% if app_version %} <span style="font-size: 0.5em; opacity: 0.6;">v{{ app_version }}</span>{% endif %}</h1>
             <div class="stats">
                 {{ stats.session_count }} sessions &bull; 
                 {{ stats.message_count }} messages &bull; 
@@ -725,6 +816,13 @@ footer a {
     </header>
 
     <main class="container">
+        {% if upgrade_available %}
+        <div class="upgrade-banner" id="upgrade-banner">
+            💡 A newer version (v{{ upgrade_available }}) of Copilot Session Tools is available.
+            Upgrade with: <code>pip install --upgrade copilot-session-tools</code>
+            <button class="dismiss-btn" onclick="document.getElementById('upgrade-banner').style.display='none'" title="Dismiss">&times;</button>
+        </div>
+        {% endif %}
         <form method="GET" action="/" class="search-box" id="search-form">
             <div class="search-input-group">
                 <input type="text" name="q" placeholder="Search sessions... (use &quot;quotes&quot; for exact match, role:user workspace:name)" autocomplete="off" value="{{ query or '' }}">
@@ -756,6 +854,16 @@ footer a {
             skipped {{ refresh_result.skipped }} unchanged sessions.
             {% if refresh_result.enriched %}Enriched {{ refresh_result.enriched }} CLI sessions.{% endif %}
             {% if refresh_result.reparsed %}Reparsed {{ refresh_result.reparsed }} sessions.{% endif %}
+        </div>
+        {% endif %}
+
+        {% if version_refresh_count and version_refresh_count > 0 %}
+        <div class="version-refresh-banner">
+            🔄 {{ version_refresh_count }} session{{ 's' if version_refresh_count != 1 else '' }} {{ 'were' if version_refresh_count != 1 else 'was' }} enriched with an older version of Copilot Session Tools. Re-enrich for improved parsing.
+            <form method="POST" action="/refresh" style="display:inline">
+                <input type="hidden" name="full" value="true">
+                <button type="submit" class="refresh-btn">Rebuild All</button>
+            </form>
         </div>
         {% endif %}
 
