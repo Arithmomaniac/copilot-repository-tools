@@ -8,7 +8,7 @@ Exports chat sessions to markdown format with:
 - Thinking block notices in italics (without the full content)
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -30,7 +30,7 @@ def _format_timestamp(value: str | int | None) -> str:
         # Check if milliseconds (common for JS timestamps)
         if numeric_value > _MILLISECONDS_THRESHOLD:
             numeric_value = numeric_value / 1000
-        dt = datetime.fromtimestamp(numeric_value)
+        dt = datetime.fromtimestamp(numeric_value, tz=UTC)
         return dt.strftime("%Y-%m-%d %H:%M:%S")
     except (ValueError, TypeError, OSError):
         # If parsing fails, return original value as string
@@ -440,7 +440,7 @@ def generate_session_filename(session: ChatSession) -> str:
                 ts = float(ts)
             if ts > _MILLISECONDS_THRESHOLD:
                 ts = ts / 1000
-            date_str = datetime.fromtimestamp(ts).strftime("%Y%m%d")
+            date_str = datetime.fromtimestamp(ts, tz=UTC).strftime("%Y%m%d")
         except (ValueError, TypeError, OSError):
             pass
 

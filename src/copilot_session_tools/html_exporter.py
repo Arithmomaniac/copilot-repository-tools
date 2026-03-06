@@ -6,7 +6,7 @@ AJAX, copy buttons) stripped out via the `static=True` flag.
 """
 
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -100,7 +100,7 @@ def _format_timestamp(value: str) -> str:
     try:
         epoch_ms = float(value)
         epoch_s = epoch_ms / 1000
-        dt = datetime.fromtimestamp(epoch_s)
+        dt = datetime.fromtimestamp(epoch_s, tz=UTC)
         return dt.strftime("%Y-%m-%d %H:%M:%S")
     except (ValueError, TypeError, OSError):
         return str(value)
