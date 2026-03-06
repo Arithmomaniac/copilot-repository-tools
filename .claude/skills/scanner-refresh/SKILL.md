@@ -413,6 +413,14 @@ uv run ruff format .
 uv run ty check
 ```
 
+**Snapshot baselines:** Scanner and exporter changes will likely break snapshot tests (`tests/test_snapshot.py`). After confirming the new output is correct, regenerate baselines:
+```bash
+# Regenerate only failing baselines
+uv run pytest tests/test_snapshot.py --force-regen -v
+# Then force-add gitignored baselines for CI
+git add -f tests/snapshots/baselines/
+```
+
 ### Step 8: Visual validation
 
 After tests pass, visually verify that new event types render correctly in both the markdown export and the web viewer.

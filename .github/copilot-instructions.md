@@ -76,10 +76,73 @@ Before committing any changes:
 
 Linting, formatting, and type checks are also enforced by a sessionEnd hook. The full test suite is enforced in CI via GitHub Actions and must pass before merging.
 
+## Visual Self-Verification
+
+This project renders Copilot chat sessions as HTML (web viewer) and Markdown (export). Rendering changes are invisible to unit tests alone — you must verify them visually.
+
+### Snapshot baselines (automated regression detection)
+
+Golden-file baselines in `tests/snapshots/baselines/` catch unintended rendering changes. The `tests/test_snapshot.py` suite parses real session fixtures through the scanner and exporters, then diffs the output against saved baselines using `pytest-regressions`.
+
+```bash
+# Run snapshot tests (compares against baselines)
+uv run pytest tests/test_snapshot.py -v
+
+# Regenerate only failing baselines after intentional changes
+uv run pytest tests/test_snapshot.py --force-regen -v
+
+# Regenerate ALL baselines from scratch
+uv run pytest tests/test_snapshot.py --regen-all -v
+```
+
+**Important:** Baselines are gitignored but shared across worktrees via NTFS junctions pointing to `C:\_SRC\copilot-repository-tools.snapshots\`. When updating baselines for a PR, force-add them: `git add -f tests/snapshots/baselines/`.
+
+After any change to the scanner, exporters, or web templates (`session.html`), run snapshot tests. If baselines change, regenerate them and verify the diff is intentional.
+
+### Playwright screenshots (visual spot-checking)
+
+For rendering changes (CSS, HTML structure, new content block types), capture screenshots via Playwright to verify the web viewer looks correct:
+
+```python
+from playwright.sync_api import sync_playwright
+with sync_playwright() as p:
+    browser = p.chromium.launch()
+    page = browser.new_page(viewport={"width": 1400, "height": 900})
+    page.goto("http://127.0.0.1:5000/session/<session-id>")
+    page.wait_for_load_state("networkidle")
+    page.screenshot(path="temp_export/screenshot.png", full_page=False)
+    browser.close()
+```
+
+Upload the captured PNGs to yourself (use the `view` tool on the image file) to visually confirm:
+- New content blocks render with readable formatting
+- Layout is consistent with existing blocks
+- No regressions in adjacent elements (CSS changes can cascade)
+- Collapsible/interactive elements work in both collapsed and expanded states
+
+### Showboat demos (documenting visual changes)
+
+For rendering-heavy changes, create a [Showboat](https://github.com/simonw/showboat) demo document in `temp_export/` that combines prose, screenshots, and sample data into a single reviewable artifact. This serves as:
+- **Proof of work** — the user can see exactly what changed before approving a PR
+- **Visual changelog** — shows before/after or new rendering in context
+- **Regression reference** — future scanner refreshes can compare against prior demos
+
+```powershell
+showboat init temp_export/demo.md "Feature: New Block Type"
+showboat note temp_export/demo.md "## Collapsed view"
+showboat image temp_export/demo.md "temp_export/collapsed.png"
+showboat note temp_export/demo.md "## Expanded view"
+showboat image temp_export/demo.md "temp_export/expanded.png"
+```
+
+Showboat demos are not committed — they live in `temp_export/` (gitignored) for session-scoped review.
+
 ## Project Structure
 
 - `src/copilot_session_tools/` - Main package (database, scanner, CLI, web)
 - `tests/` - Test suite
+- `tests/snapshots/` - Snapshot fixtures and baselines (gitignored, shared via junctions)
+- `temp_export/` - Working directory for demos, screenshots, and intermediate artifacts (gitignored)
 
 ## Dependencies
 
