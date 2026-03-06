@@ -1,7 +1,7 @@
 """Flask web application for viewing Copilot chat archive."""
 
 import re
-from datetime import datetime
+from datetime import UTC, datetime
 from urllib.parse import unquote
 
 import markdown
@@ -132,7 +132,7 @@ def _format_timestamp(value: str) -> str:
         epoch_ms = float(value)
         # Convert milliseconds to seconds
         epoch_s = epoch_ms / 1000
-        dt = datetime.fromtimestamp(epoch_s)
+        dt = datetime.fromtimestamp(epoch_s, tz=UTC)
         return dt.strftime("%Y-%m-%d %H:%M:%S")
     except (ValueError, TypeError, OSError):
         # If parsing fails, return original value

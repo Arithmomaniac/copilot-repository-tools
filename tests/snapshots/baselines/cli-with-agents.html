@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>cli-agent-test-session - Fix authentication bug using agents</title>
+    <title>Fix authentication bug using agents - Fix authentication bug using agents</title>
     
     <style>
 :root {
@@ -193,6 +193,34 @@ header h1 {
     background-color: #b8922a;
 }
 
+.version-refresh-banner {
+    background-color: #ddf4ff;
+    border: 1px solid #54aeff;
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin-bottom: 20px;
+    color: #0550ae;
+    font-size: 0.9em;
+}
+
+.version-refresh-banner .scan-now-btn {
+    display: inline-block;
+    margin-left: 10px;
+    padding: 2px 10px;
+    background-color: #54aeff;
+    color: #fff;
+    border-radius: 4px;
+    text-decoration: none;
+    font-size: 0.85em;
+    font-weight: 500;
+    border: none;
+    cursor: pointer;
+}
+
+.version-refresh-banner .scan-now-btn:hover {
+    background-color: #218bff;
+}
+
 @media (prefers-color-scheme: dark) {
     .unenriched-banner {
         background-color: #3d3500;
@@ -205,6 +233,18 @@ header h1 {
     }
     .unenriched-banner .scan-now-btn:hover {
         background-color: #b8922a;
+    }
+    .version-refresh-banner {
+        background-color: #0d1d30;
+        border-color: #1f6feb;
+        color: #58a6ff;
+    }
+    .version-refresh-banner .scan-now-btn {
+        background-color: #1f6feb;
+        color: #ddf4ff;
+    }
+    .version-refresh-banner .scan-now-btn:hover {
+        background-color: #388bfd;
     }
 }
 
