@@ -6,12 +6,20 @@ from pathlib import Path
 import pytest
 
 from copilot_session_tools import ChatMessage, ChatSession, ContentBlock, Database
-from copilot_session_tools.web import create_app
+from copilot_session_tools.utils import (
+    extract_filename as _extract_filename,
+)
+from copilot_session_tools.utils import (
+    markdown_to_html as _markdown_to_html,
+)
+from copilot_session_tools.utils import (
+    parse_diff_stats as _parse_diff_stats,
+)
+from copilot_session_tools.utils import (
+    strip_ansi as _strip_ansi,
+)
 from copilot_session_tools.web.webapp import (
-    _extract_filename,
-    _markdown_to_html,
-    _parse_diff_stats,
-    _strip_ansi,
+    create_app,
 )
 
 

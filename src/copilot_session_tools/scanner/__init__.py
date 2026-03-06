@@ -5,7 +5,7 @@ Data structures are informed by:
 - microsoft/vscode-copilot-chat (https://github.com/microsoft/vscode-copilot-chat)
 """
 
-PARSER_VERSION = 1
+PARSER_VERSION = 2
 
 from .cli import _parse_cli_jsonl_file, _parse_workspace_yaml
 from .content import (
@@ -35,6 +35,12 @@ from .models import (
     SessionFileInfo,
     ToolInvocation,
 )
+from .shared import (
+    SHELL_TOOL_NAMES,
+    extract_command_run,
+    normalize_invocation_message,
+    normalize_tool_status,
+)
 from .vscode import (
     _apply_jsonl_operations,
     _extract_session_from_dict,
@@ -46,6 +52,7 @@ from .vscode import (
 
 __all__ = [
     "PARSER_VERSION",
+    "SHELL_TOOL_NAMES",
     "ChatMessage",
     "ChatSession",
     "CommandRun",
@@ -67,9 +74,12 @@ __all__ = [
     "_parse_vscode_jsonl_file",
     "_parse_workspace_yaml",
     "detect_repository_url",
+    "extract_command_run",
     "find_copilot_chat_dirs",
     "get_cli_storage_paths",
     "get_vscode_storage_paths",
+    "normalize_invocation_message",
+    "normalize_tool_status",
     "parse_session_file",
     "scan_chat_sessions",
     "scan_session_files",

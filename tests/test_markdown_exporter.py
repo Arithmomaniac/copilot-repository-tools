@@ -18,8 +18,8 @@ from copilot_session_tools.markdown_exporter import (
     _format_timestamp,
     _format_tool_summary,
     _had_thinking_content,
-    _sanitize_filename,
 )
+from copilot_session_tools.utils import sanitize_filename as _sanitize_filename
 
 
 @pytest.fixture
