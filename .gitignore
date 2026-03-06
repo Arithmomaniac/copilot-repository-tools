@@ -80,3 +80,6 @@ temp_export/
 # Snapshot test fixtures and baselines (real user session data, not committed)
 tests/snapshots/fixtures/
 tests/snapshots/baselines/
+
+# Machine-specific skill config (contains local paths)
+.claude/skills/*/config.local.json

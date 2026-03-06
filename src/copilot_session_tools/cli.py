@@ -814,6 +814,76 @@ def import_json(
 
 
 @app.command()
+def migrate(
+    db: Annotated[
+        Path,
+        typer.Option(
+            "--db",
+            "-d",
+            help="Path to SQLite database file.",
+        ),
+    ] = _DEFAULT_DB,
+):
+    """Run database schema migrations.
+
+    Applies any pending schema changes to the cst_* enrichment tables.
+    This is normally automatic, but can be run explicitly if the database
+    was created by an older version or a migration was interrupted.
+
+    Safe to run multiple times — already-applied migrations are skipped.
+    """
+    _ensure_db_exists(db)
+
+    console.print(f"Migrating database: {db}")
+
+    # Read version before migration
+    import sqlite3
+
+    conn = sqlite3.connect(str(db))
+    try:
+        row = conn.execute("SELECT version FROM cst_schema_version LIMIT 1").fetchone()
+        version_before = row[0] if row else 0
+    except sqlite3.OperationalError:
+        version_before = 0
+    conn.close()
+
+    # Force schema migration by instantiating Database
+    database = Database(db, unenriched_only=_unenriched_only)
+
+    # Read version after
+    from copilot_session_tools.database import CST_SCHEMA_VERSION
+
+    conn = sqlite3.connect(str(db))
+    row = conn.execute("SELECT version FROM cst_schema_version LIMIT 1").fetchone()
+    version_after = row[0] if row else 0
+    conn.close()
+
+    if version_before < version_after:
+        console.print(f"  [green]Migrated schema v{version_before} → v{version_after}[/green]")
+    elif version_after < CST_SCHEMA_VERSION:
+        console.print(f"  [yellow]Warning: schema is at v{version_after}, expected v{CST_SCHEMA_VERSION}[/yellow]")
+    else:
+        console.print(f"  Schema already at v{version_after} (current)")
+
+    # Verify key columns exist
+    conn = sqlite3.connect(str(db))
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(cst_sessions)").fetchall()}
+    conn.close()
+
+    expected = {"enrichment_version", "parser_version", "source_format", "repository_url"}
+    missing = expected - cols
+    if missing:
+        console.print(f"  [red]Missing columns: {', '.join(sorted(missing))}[/red]")
+        console.print("  Try: copilot-session-tools scan --full")
+    else:
+        console.print("  [green]All expected columns present[/green]")
+
+    # Show stats
+    db_stats = database.get_stats()
+    console.print(f"  Sessions: {db_stats['session_count']}, Messages: {db_stats['message_count']}")
+
+
+@app.command()
 def optimize(
     db: Annotated[
         Path,

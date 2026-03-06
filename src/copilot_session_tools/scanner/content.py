@@ -289,16 +289,28 @@ _TOOL_DISPLAY_FORMATS: dict[str, tuple[str, list[str]]] = {
     "view": ("Viewing `{short_path}`", ["path"]),
     "edit": ("Edited `{short_path}`", ["path"]),
     "create": ("Created `{short_path}`", ["path"]),
+    "show_file": ("Showing `{short_path}`", ["path"]),
     "grep": ("Searching for `{pattern}` in `{short_path}`", ["pattern", "path"]),
     "glob": ("Finding `{pattern}` in `{short_path}`", ["pattern", "path"]),
     "web_search": ("\U0001f50d Web search: `{query_short}`", ["query"]),
     "web_fetch": ("\U0001f310 Fetching `{url_short}`", ["url"]),
     "task": ("\U0001f916 Agent ({agent_type}): {description}", ["agent_type", "description"]),
     "read_agent": ("\u23f3 Checking agent {agent_id}", ["agent_id"]),
+    "list_agents": ("Listing background agents", []),
     "update_todo": ("Updated TODO list", []),
     "store_memory": ("\U0001f4be Stored memory: {subject}", ["subject"]),
     "task_complete": ("\u2705 Task complete: {summary}", ["summary"]),
     "sql": ("\U0001f5c4\ufe0f SQL: {description}", ["description"]),
+    "ask_user": ("\u2753 Asking: {question_short}", ["question", "message"]),
+    "skill": ("\U0001f9e9 Skill: {skill}", ["skill"]),
+    "lsp": ("\U0001f50e LSP {operation}: {file}", ["operation", "file", "query"]),
+    "propose_work": ("\U0001f4cb Proposed: {workTitle}", ["workTitle"]),
+    "exit_plan_mode": ("Exiting plan mode", []),
+    "fetch_copilot_cli_documentation": ("Fetching CLI documentation", []),
+    "gh-advisory-database": ("\U0001f6e1\ufe0f Security advisory check", []),
+    "parallel_validation": ("Running parallel validation", []),
+    "list_bash": ("Listing bash sessions", []),
+    "list_powershell": ("Listing PowerShell sessions", []),
 }
 
 
@@ -318,12 +330,15 @@ def _format_tool_display_message(
         for key in arg_keys:
             val = arguments.get(key, "")
             subs[key] = str(val) if val else ""
+        # Fallback: if 'question' is empty but 'message' exists (ask_user tool)
+        if not subs.get("question") and subs.get("message"):
+            subs["question"] = subs["message"]
         # Auto-generate short_path from path arg (default to empty)
         subs.setdefault("short_path", "")
         if "path" in arguments:
             subs["short_path"] = _shorten_path(arguments.get("path", ""))
         # Auto-generate truncated versions
-        for key in ("query", "url", "question"):
+        for key in ("query", "url", "question", "message"):
             if key in subs:
                 val = subs[key]
                 subs[f"{key}_short"] = val[:80] + "..." if len(val) > 80 else val

@@ -1,6 +1,6 @@
 ---
 name: scanner-refresh
-description: Research recent changes in Copilot CLI/SDK/VS Code repositories and update the chat session scanner to handle new event types and response kinds. Use when user says "refresh scanner", "update parser", "check for new event types", or mentions keeping the scanner up-to-date with Copilot changes.
+description: Research recent changes in Copilot CLI/SDK/VS Code repositories (and optional Shadow CLI) and update the chat session scanner to handle new event types and response kinds. Use when user says "refresh scanner", "update parser", "check for new event types", or mentions keeping the scanner up-to-date with Copilot changes.
 ---
 
 # Scanner Refresh
@@ -16,6 +16,33 @@ Use `temp_export/` (gitignored) as the working directory for any intermediate ma
 New-Item -ItemType Directory -Path "temp_export" -Force | Out-Null
 ```
 
+## Configuration
+
+Optional machine-specific settings are stored in `.claude/skills/scanner-refresh/config.local.json` (gitignored). This file is **not required** — the skill works without it. Create it when you have a local Shadow CLI mirror available.
+
+The Shadow CLI is a beautified/decompiled mirror of each `@github/copilot` release, maintained via `Sync-CopilotShadow.ps1` (in the `avilevin-pastebin` repo). Each commit in the shadow repo represents a CLI version.
+
+**Schema:**
+```json
+{
+  "shadowCli": {
+    "localPath": "C:\\path\\to\\copilot-cli-shadow",
+    "description": "Beautified/decompiled mirror of @github/copilot CLI releases"
+  }
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `shadowCli.localPath` | `string` | No | Absolute path to the local Shadow CLI repo. If present and the directory exists, the skill includes it in research. |
+
+**Keeping the shadow repo up to date:**
+```powershell
+# Run the sync script to pull the latest CLI version into the shadow repo
+# (located in the avilevin-pastebin repo)
+& "C:\_SRC\avilevin-pastebin\Sync-CopilotShadow.ps1"
+```
+
 ## Quick start
 
 When triggered, follow this workflow:
@@ -28,7 +55,7 @@ When triggered, follow this workflow:
 
 ## Instructions
 
-### Step 0: Determine search window
+### Step 0: Determine search window and detect optional sources
 
 Restrict research to changes **since the last scanner update** to avoid redundant work.
 
@@ -42,6 +69,27 @@ Write-Output "Search window: since $lastScannerChange"
 
 Use this date as the `--since` filter for all `github-mcp-server-list_commits` calls and as the `since:` qualifier for `github-mcp-server-search_pull_requests`. If no date is available, fall back to "past 2 weeks".
 
+**Detect Shadow CLI (optional):**
+
+```powershell
+$configPath = ".claude/skills/scanner-refresh/config.local.json"
+$shadowCliPath = $null
+if (Test-Path $configPath) {
+    $config = Get-Content $configPath | ConvertFrom-Json
+    $candidate = $config.shadowCli.localPath
+    if ($candidate -and (Test-Path $candidate)) {
+        $shadowCliPath = $candidate
+        Write-Output "Shadow CLI detected at: $shadowCliPath"
+    } else {
+        Write-Output "Shadow CLI config found but path does not exist: $candidate"
+    }
+} else {
+    Write-Output "No config.local.json — skipping Shadow CLI research"
+}
+```
+
+If `$shadowCliPath` is set, include it in Step 1 research. Otherwise, skip Shadow CLI sections silently.
+
 ### Step 1: Research source repositories
 
 Check recent commits and PRs (**since last scanner update**) in these repositories:
@@ -52,12 +100,78 @@ Check recent commits and PRs (**since last scanner update**) in these repositori
 | `github/copilot-sdk` | Schema changes, new data structures |
 | `microsoft/vscode-copilot-chat` | New response item kinds, chat session format changes, background session storage (`chatSessionWorktreeServiceImpl.ts`) |
 | `microsoft/vscode` | Session serialization (`chatModel.ts`), storage (`chatSessionStore.ts`), location enum (`constants.ts`), copy-all format (`chatCopyActions.ts`, `chatActions.ts`) |
+| **Shadow CLI** *(if detected)* | New event types, JSONL format changes, session structure, changelog entries, SDK divergences |
 
 Use GitHub MCP tools:
 ```
 github-mcp-server-list_commits (past 2 weeks)
 github-mcp-server-search_pull_requests (merged PRs)
 ```
+
+#### Shadow CLI research (local repo — only if detected in Step 0)
+
+The Shadow CLI is a **beautified/decompiled mirror** of the `@github/copilot` CLI package. Each commit represents a released version (e.g., `v0.0.421-0 (commit 49c1cdc)`), created by `Sync-CopilotShadow.ps1`. It is **not** a traditional source repository — research means diffing between version commits, grepping the beautified JS, and reading structured schema/changelog files.
+
+**Key files in the shadow repo:**
+
+| File | What it contains |
+|------|-----------------|
+| `schemas/session-events.schema.json` | **Canonical JSON Schema for CLI session events** — the authoritative source for all event types, their `data` payloads, and field types. Compare against scanner handlers directly. |
+| `changelog.json` | Structured changelog with version entries, change types (`added`/`fixed`/`improved`/`removed`), descriptions, and PR links to `github/copilot-agent-runtime`. |
+| `index.js` | Beautified CLI source (~250K lines) — grep for event type registrations, callback handlers, serialization logic. |
+| `sdk/index.js` | Beautified SDK source — event schemas, data structures. |
+| `sdk/index.d.ts` | TypeScript type definitions (already readable) — interfaces, enums, type unions. |
+| `definitions/*.agent.yaml` | Built-in agent definitions (explore, task, code-review) — `promptParts`, tool filters, model configs. |
+
+**Research commands:**
+
+```powershell
+# 1. What versions were released since last scanner update?
+git -C $shadowCliPath --no-pager log --oneline --since="$lastScannerChange"
+
+# 2. Diff the session-events schema between versions (most important!)
+#    This reveals new/changed event types and payload fields
+git -C $shadowCliPath --no-pager diff HEAD~1 -- schemas/session-events.schema.json
+
+# 3. Diff the changelog for new entries
+git -C $shadowCliPath --no-pager diff HEAD~1 -- changelog.json
+
+# 4. Full diff stats to see what changed overall
+git -C $shadowCliPath --no-pager diff --stat HEAD~2..HEAD
+
+# 5. Grep for event type string literals in the beautified source
+git -C $shadowCliPath --no-pager grep -n '"type":\s*"' -- schemas/session-events.schema.json | Select-Object -First 50
+
+# 6. Search for specific event handling patterns in index.js
+git -C $shadowCliPath --no-pager grep -n "event_type\|eventType\|\.type ===" -- index.js | Select-Object -First 50
+
+# 7. Check agent definitions for changes (new tools, prompts)
+git -C $shadowCliPath --no-pager diff HEAD~1 -- definitions/
+
+# 8. Check SDK type definitions for new interfaces/enums
+git -C $shadowCliPath --no-pager diff HEAD~1 -- sdk/index.d.ts
+```
+
+**What to look for in the Shadow CLI:**
+
+| Area | Best source | How to find it |
+|------|------------|---------------|
+| New event types | `session-events.schema.json` | Diff the schema — new `"type": "const"` entries = new events |
+| Event payload changes | `session-events.schema.json` | New or changed `"data"` properties in existing event types |
+| Changelog entries | `changelog.json` | New version entries with `"type": "added"` for features |
+| Implementation details | `index.js` | `git grep` for handler registrations, serialization calls |
+| SDK type changes | `sdk/index.d.ts` | Diff for new interfaces, enum values, type unions |
+| Agent definition changes | `definitions/*.agent.yaml` | New tools in `promptParts.tools`, model or prompt changes |
+| Version/release info | `git log` | Commit messages are `vX.Y.Z (commit hash)` |
+
+**Comparing Shadow CLI against public repos:**
+
+After researching the shadow repo, compare findings against `github/copilot-cli` and `github/copilot-sdk`:
+1. **Schema-defined but unhandled events** — types in `session-events.schema.json` that the scanner doesn't handle
+2. **Changelog features** — new capabilities mentioned in `changelog.json` that might produce new event shapes
+3. **SDK type divergences** — interfaces in `sdk/index.d.ts` that differ from what `github/copilot-sdk` exposes publicly
+
+Save findings to `temp_export/shadow-cli-research.md`.
 
 **Key files to monitor for structural changes in `microsoft/vscode`:**
 
@@ -171,7 +285,7 @@ The scanner is at: `src/copilot_session_tools/scanner/`
 - Known tools get user-friendly `invocation_message` values (e.g., `edit` → "Edited `filename`")
 - Unknown tools fall back to `description` argument, then bare `tool_name`
 - **When adding new MCP tools**, add a pretty handler here — bare tool names like "web_search" are unhelpful in the viewer
-- Current pretty-formatted tools: `view`, `edit`, `create`, `str_replace_editor`, `grep`, `glob`, `web_search`, `web_fetch`, `task`, `store_memory`, `task_complete`, `sql`, `update_todo`
+- Current pretty-formatted tools: `view`, `edit`, `create`, `show_file`, `str_replace_editor`, `grep`, `glob`, `web_search`, `web_fetch`, `task`, `read_agent`, `list_agents`, `store_memory`, `task_complete`, `sql`, `ask_user`, `skill`, `lsp`, `propose_work`, `exit_plan_mode`, `fetch_copilot_cli_documentation`, `gh-advisory-database`, `parallel_validation`, `list_bash`, `list_powershell`, `update_todo`
 - Pattern for adding new tool formatters:
 ```python
 elif tool_name == "new_tool":
@@ -212,6 +326,7 @@ username: response markdown
 Create a gap analysis and save it to `temp_export/scanner-gap-analysis.md`:
 - List event types found in local files but not handled in scanner
 - List structural/metadata fields present in source repos but not extracted
+- **Include Shadow CLI findings** (if researched) — flag Shadow-only event types and payload differences
 - Categorize by priority:
   - **HIGH**: Contains user-visible content that would be lost
   - **MEDIUM**: Contains metadata that aids understanding (e.g., session type, mode)
@@ -226,10 +341,28 @@ Create a gap analysis and save it to `temp_export/scanner-gap-analysis.md`:
 - Changes to `stringifyItem()` format (affects "Copy All" markdown parsing)
 - New VS Code JSONL append-log format (`chatSessionOperationLog.ts`, used >=1.109)
 - **New MCP tools without pretty-format handlers** — check `_build_tool_invocation()` for any tool names that fall through to bare name display
+- **Shadow CLI event types** not present in public CLI (if Shadow CLI was researched) — compare `session-events.schema.json` event types against scanner handlers; decide whether to add handlers preemptively or wait for public release
 
 ### Step 5: Implement handlers
 
 For each HIGH/MEDIUM priority gap:
+
+**Using the Shadow CLI to understand how new events should render:**
+
+When implementing handlers for new event types, the shadow repo provides critical context for *how* to render them — not just *what* fields they contain. Use these sources in order:
+
+1. **`schemas/session-events.schema.json`** — defines the payload shape (which fields exist, types, required vs optional)
+2. **`sdk/index.d.ts`** — TypeScript interfaces show the semantic meaning of fields (e.g., `PermissionRequestKind`, `ElicitationMode`) and which are user-facing
+3. **`index.js`** — search for how the CLI itself renders these events in the terminal. Grep for the event type string to find the handler, then trace how it formats the output:
+   ```powershell
+   # Find how the CLI renders a specific event type
+   git -C $shadowCliPath --no-pager grep -n '"permission.requested"\|permission_requested\|permissionRequest' -- index.js | Select-Object -First 20
+   
+   # Find rendering/formatting functions near event handlers
+   git -C $shadowCliPath --no-pager grep -n -B 5 -A 15 '"permission.requested"' -- index.js
+   ```
+
+The CLI's own rendering logic (what it shows in the terminal timeline) is the best guide for what information is important to display in our web viewer and markdown export.
 
 **CLI event handler pattern:**
 ```python
@@ -278,6 +411,69 @@ uv run pytest tests/ --ignore=tests/test_webapp_e2e.py -v
 uv run ruff check .
 uv run ruff format .
 uv run ty check
+```
+
+### Step 8: Visual validation
+
+After tests pass, visually verify that new event types render correctly in both the markdown export and the web viewer.
+
+**Find real sessions containing the new event types:**
+```powershell
+# Search local sessions for the new events
+Get-ChildItem -Path "$env:USERPROFILE\.copilot\session-state" -Recurse -Filter "events.jsonl" |
+  ForEach-Object {
+    $types = Get-Content $_.FullName | ForEach-Object { ($_ | ConvertFrom-Json -ErrorAction SilentlyContinue).type } | Sort-Object -Unique
+    # Match against the new event types you just implemented
+    $new = $types | Where-Object { $_ -match 'the_new_event_type' }
+    if ($new) { Write-Output "$($_.Directory.Name): $($new -join ', ')" }
+  } | Select-Object -First 5
+```
+
+**Enrich the sessions and start the web viewer:**
+```powershell
+uv run copilot-session-tools enrich <session-id>
+uv run copilot-session-tools web --port 5000
+```
+
+**Use Playwright to capture screenshots** of the web viewer and markdown export:
+```python
+from playwright.sync_api import sync_playwright
+with sync_playwright() as p:
+    browser = p.chromium.launch()
+    page = browser.new_page(viewport={"width": 1400, "height": 900})
+    # CLI session with new events
+    page.goto("http://127.0.0.1:5000/session/<id>")
+    page.wait_for_load_state("networkidle")
+    page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+    page.screenshot(path="temp_export/web_new_events.png", full_page=False)
+    # Also spot-check a VS Code session to confirm no regressions
+    page.goto("http://127.0.0.1:5000/session/<vscode-session-id>")
+    page.wait_for_load_state("networkidle")
+    page.screenshot(path="temp_export/web_vscode_check.png", full_page=False)
+    browser.close()
+```
+
+**Upload screenshots to yourself** (use the `view` tool on captured PNGs) and verify:
+- New content blocks render with readable formatting
+- Content isn't truncated or garbled
+- Layout is consistent with existing status blocks (warnings, errors, mode changes)
+- Long content (e.g., multi-line task summaries) wraps properly
+
+### Step 9: Showboat demo
+
+Create an executable demo document with [showboat](https://github.com/simonw/showboat) that demonstrates what was found and changed. The demo should show:
+- Raw sample events from real sessions
+- How each new event type renders in the markdown export and web viewer
+- Screenshots captured via Playwright as proof-of-work
+
+```powershell
+showboat init temp_export/scanner-refresh-demo.md "Scanner Refresh: New Event Types"
+
+# For each new event type:
+showboat note temp_export/scanner-refresh-demo.md "## <event_type> — <what it represents>"
+showboat exec temp_export/scanner-refresh-demo.md powershell '<command to extract a raw sample event from a real session>'
+showboat note temp_export/scanner-refresh-demo.md "Rendered in the web viewer:"
+showboat image temp_export/scanner-refresh-demo.md '<playwright screenshot command>'
 ```
 
 ## Content block kinds reference
