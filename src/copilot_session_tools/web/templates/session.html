@@ -461,11 +461,59 @@ header h1 {
     padding: 0;
 }
 
+/* Expandable skill block (when description is available) */
+.skill-block {
+    margin: 4px 0;
+    border: 1px solid #c9d1f5;
+    border-left: 3px solid #6366f1;
+    border-radius: 6px;
+    background-color: #f0f3ff;
+}
+
+.skill-block > summary {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    cursor: pointer;
+    font-size: 0.85em;
+    list-style: none;
+}
+
+.skill-block > summary::-webkit-details-marker { display: none; }
+
+.skill-badge-label {
+    color: #4338ca;
+}
+
+.skill-badge-label code {
+    font-size: 0.95em;
+    background: transparent;
+    padding: 0;
+}
+
+.skill-content {
+    padding: 6px 14px;
+    border-top: 1px solid #c9d1f5;
+    font-size: 0.85em;
+    color: var(--text-secondary);
+}
+
 @media (prefers-color-scheme: dark) {
     .skill-badge {
         background-color: rgba(99, 102, 241, 0.2);
         color: #a5b4fc;
     }
+
+    .skill-block {
+        background-color: rgba(99, 102, 241, 0.1);
+        border-color: rgba(99, 102, 241, 0.3);
+        border-left-color: #6366f1;
+    }
+
+    .skill-block > summary { color: #a5b4fc; }
+    .skill-badge-label { color: #a5b4fc; }
+    .skill-content { border-top-color: rgba(99, 102, 241, 0.3); }
 }
 
 /* Status badges for session events */
@@ -1341,6 +1389,10 @@ footer a {
                     <input type="checkbox" id="include-thinking">
                     Thinking
                 </label>
+                <label title="Include full agent/subagent content in the markdown">
+                    <input type="checkbox" id="include-agent-details" checked>
+                    Agent details
+                </label>
             </div>
             
             <button type="button" class="copy-markdown-btn" id="copy-markdown-btn" data-session-id="{{ session.session_id }}" data-message-count="{{ message_count }}">
@@ -1356,30 +1408,27 @@ footer a {
         </div>
         {% endif %}
 
-        <div class="messages">
-            {% for message in session.messages %}
-            {% set msg_meta = message_metadata.get(loop.index0, {}) %}
-            <div class="message {{ message.role }}" id="msg-{{ loop.index }}">
-                <div class="message-header">
-                    <div class="message-role">{{ message.role }}</div>
-                    {% if message.timestamp %}
-                    <span class="message-timestamp">{{ message.timestamp | format_timestamp }}</span>
-                    {% endif %}
-                    <a href="#msg-{{ loop.index }}" class="message-anchor" title="Link to this message">#{{ loop.index }}</a>
-                    {% if not static %}
-                    <button type="button" class="message-copy-btn" data-message-index="{{ loop.index }}" data-session-id="{{ session.session_id }}" title="Copy this message as markdown">
-                        <i class="fa-regular fa-copy"></i>
-                    </button>
-                    {% endif %}
-                </div>
-                <div class="message-content">
-                    {% if message.content_blocks %}
+        {# ===== Macro: render_content_blocks ===== #}
+        {# Renders content blocks, tool invocations, file changes, and command runs. #}
+        {# Used for both outer messages and nested subagent content (recursive). #}
+        {% macro render_content_blocks(content_blocks, tool_invocations, file_changes, command_runs, meta, fallback_content='') %}
+                    {% if content_blocks %}
                         {# Render structured content blocks with kind differentiation #}
-                        {% for block in message.content_blocks %}
+                        {% for block in content_blocks %}
                             {% if block.kind == 'intent' %}
                             <span class="intent-badge">{{ block.content }}</span>
                             {% elif block.kind == 'skill' %}
+                            {% if block.description %}
+                            <details class="skill-block">
+                                <summary>
+                                    <span class="collapsible-icon" aria-hidden="true">▶</span>
+                                    <span class="skill-badge-label">⚡ skill: <code>{{ block.content }}</code></span>
+                                </summary>
+                                <div class="skill-content">{{ block.description }}</div>
+                            </details>
+                            {% else %}
                             <span class="skill-badge">skill: <code>{{ block.content }}</code></span>
+                            {% endif %}
                             {% elif block.kind == 'status' %}
                             {% if block.description == 'subagent' %}
                             <span class="subagent-started">{{ block.content }}</span>
@@ -1400,7 +1449,30 @@ footer a {
                                     {% endif %}
                                 </summary>
                                 <div class="subagent-content">
+                                    {% if include_agent_details is not defined or include_agent_details %}
+                                    {# Full details: all tools, commands, file changes, result #}
+                                    {% if block.content_blocks %}
+                                    {{ render_content_blocks(block.content_blocks, block.tool_invocations, block.file_changes, block.command_runs, get_nested_meta(block), block.content) }}
+                                    {% else %}
                                     {{ block.content | markdown | safe }}
+                                    {% endif %}
+                                    {% else %}
+                                    {# Result only: just show text blocks (the agent's response) #}
+                                    {% set has_result = false %}
+                                    {% if block.content_blocks %}
+                                    {% for inner in block.content_blocks %}
+                                    {% if inner.kind == 'text' and inner.content.strip() %}
+                                    <div class="content-block content-block-text result-block">
+                                        {{ inner.content | markdown | safe }}
+                                    </div>
+                                    {% set has_result = true %}
+                                    {% endif %}
+                                    {% endfor %}
+                                    {% endif %}
+                                    {% if not has_result %}
+                                    {{ block.content | markdown | safe }}
+                                    {% endif %}
+                                    {% endif %}
                                 </div>
                             </details>
                             {% elif block.kind == 'thinking' %}
@@ -1418,10 +1490,10 @@ footer a {
                             </details>
                             {% elif block.kind == 'toolInvocation' %}
                             {# Check for matched command run first (for CLI shell commands) #}
-                            {% set matched_cmd = msg_meta.get('block_cmd_map', {}).get(loop.index0) %}
+                            {% set matched_cmd = meta.get('block_cmd_map', {}).get(loop.index0) if meta else none %}
                             
                             {# Then check for matched tool invocation #}
-                            {% set matched_tool = msg_meta.get('block_tool_map', {}).get(loop.index0) %}
+                            {% set matched_tool = meta.get('block_tool_map', {}).get(loop.index0) if meta else none %}
                             
                             {% if matched_cmd %}
                             {# CLI command run - show as collapsible command block with Input/Output like VSCode logs #}
@@ -1521,18 +1593,16 @@ footer a {
                             </div>
                             {% endif %}
                         {% endfor %}
-                    {% else %}
+                    {% elif fallback_content %}
                         {# Fallback to flat content for backwards compatibility #}
-                        {{ message.content | markdown | safe }}
+                        {{ fallback_content | markdown | safe }}
                     {% endif %}
-                </div>
 
-                {# Only show unmatched tool invocations at the bottom #}
-                {# Include MCP tools and run_in_terminal with input/output #}
+                {# Show unmatched tool invocations #}
                 {% set unmatched_tools = [] %}
-                {% for tool in message.tool_invocations %}
+                {% for tool in tool_invocations %}
                     {% set is_collapsible_tool = (tool.source_type == 'mcp' or tool.name == 'run_in_terminal') and (tool.input or tool.result) %}
-                    {% if tool.name not in msg_meta.get('matched_tool_names', []) and is_collapsible_tool %}
+                    {% if tool.name not in (meta.get('matched_tool_names', []) if meta else []) and is_collapsible_tool %}
                         {% set _ = unmatched_tools.append(tool) %}
                     {% endif %}
                 {% endfor %}
@@ -1582,15 +1652,15 @@ footer a {
                 </details>
                 {% endif %}
 
-                {% if message.file_changes %}
-                <p class="tool-summary"><em>Changed {{ message.file_changes | length }} file{{ 's' if message.file_changes | length > 1 else '' }}: {{ message.file_changes | map(attribute='path') | list | join(', ') | truncate(100) }}</em></p>
+                {% if file_changes %}
+                <p class="tool-summary"><em>Changed {{ file_changes | length }} file{{ 's' if file_changes | length > 1 else '' }}: {{ file_changes | map(attribute='path') | list | join(', ') | truncate(100) }}</em></p>
                 <details class="collapsible file-changes">
                     <summary aria-label="Toggle file changes section">
                         <span class="collapsible-icon" aria-hidden="true">▶</span>
-                        File Changes ({{ message.file_changes | length }})
+                        File Changes ({{ file_changes | length }})
                     </summary>
                     <div class="collapsible-content">
-                        {% for change in message.file_changes %}
+                        {% for change in file_changes %}
                         <div class="file-change">
                             <div class="file-header">
                                 <strong>{{ change.path | extract_filename }}</strong>
@@ -1618,8 +1688,8 @@ footer a {
                 {% endif %}
 
                 {# Only show Command Runs section for commands not already rendered inline #}
-                {% set unmatched_cmd_count = (message.command_runs | length) - (msg_meta.get('matched_cmd_indices', []) | length) %}
-                {% if message.command_runs and unmatched_cmd_count > 0 %}
+                {% set unmatched_cmd_count = (command_runs | length) - ((meta.get('matched_cmd_indices', []) if meta else []) | length) %}
+                {% if command_runs and unmatched_cmd_count > 0 %}
                 <p class="tool-summary"><em>Ran {{ unmatched_cmd_count }} command{{ 's' if unmatched_cmd_count > 1 else '' }}</em></p>
                 <details class="collapsible command-runs" open>
                     <summary aria-label="Toggle command runs section">
@@ -1627,9 +1697,9 @@ footer a {
                         Command Runs ({{ unmatched_cmd_count }})
                     </summary>
                     <div class="collapsible-content">
-                        {% for cmd in message.command_runs %}
+                        {% for cmd in command_runs %}
                         {# Skip commands already rendered inline #}
-                        {% if loop.index0 not in (msg_meta.get('matched_cmd_indices') or []) %}
+                        {% if loop.index0 not in ((meta.get('matched_cmd_indices') if meta else none) or []) %}
                         <div class="terminal-command">
                             <div class="terminal-header">
                                 <span class="terminal-icon {{ cmd.status or 'pending' }}" aria-hidden="true">
@@ -1665,6 +1735,27 @@ footer a {
                     </div>
                 </details>
                 {% endif %}
+        {% endmacro %}
+
+        <div class="messages">
+            {% for message in session.messages %}
+            {% set msg_meta = message_metadata.get(loop.index0, {}) %}
+            <div class="message {{ message.role }}" id="msg-{{ loop.index }}">
+                <div class="message-header">
+                    <div class="message-role">{{ message.role }}</div>
+                    {% if message.timestamp %}
+                    <span class="message-timestamp">{{ message.timestamp | format_timestamp }}</span>
+                    {% endif %}
+                    <a href="#msg-{{ loop.index }}" class="message-anchor" title="Link to this message">#{{ loop.index }}</a>
+                    {% if not static %}
+                    <button type="button" class="message-copy-btn" data-message-index="{{ loop.index }}" data-session-id="{{ session.session_id }}" title="Copy this message as markdown">
+                        <i class="fa-regular fa-copy"></i>
+                    </button>
+                    {% endif %}
+                </div>
+                <div class="message-content">
+                    {{ render_content_blocks(message.content_blocks, message.tool_invocations, message.file_changes, message.command_runs, msg_meta, message.content) }}
+                </div>
             </div>
             {% endfor %}
         </div>
@@ -1763,7 +1854,7 @@ footer a {
             }
 
             // Toggle collapsible icon on details open/close
-            document.querySelectorAll('details.collapsible, details.tool-invocations-header, details.terminal-output-toggle, details.tool-invocation-wrapper').forEach(details => {
+            document.querySelectorAll('details.collapsible, details.tool-invocations-header, details.terminal-output-toggle, details.tool-invocation-wrapper, details.skill-block').forEach(details => {
                 details.addEventListener('toggle', function() {
                     const icon = this.querySelector(':scope > summary > .collapsible-icon');
                     if (icon) {
@@ -1812,6 +1903,7 @@ footer a {
                 const includeDiffs = document.getElementById('include-diffs');
                 const includeToolInputs = document.getElementById('include-tool-inputs');
                 const includeThinking = document.getElementById('include-thinking');
+                const includeAgentDetails = document.getElementById('include-agent-details');
 
                 const start = rangeStart.value ? parseInt(rangeStart.value, 10) : 1;
                 const end = rangeEnd.value ? parseInt(rangeEnd.value, 10) : messageCount;
@@ -1829,6 +1921,7 @@ footer a {
                 params.set('include_diffs', includeDiffs.checked);
                 params.set('include_tool_inputs', includeToolInputs.checked);
                 params.set('include_thinking', includeThinking.checked);
+                params.set('include_agent_details', includeAgentDetails.checked);
 
                 return params;
             }

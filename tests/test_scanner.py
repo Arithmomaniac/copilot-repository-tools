@@ -3,6 +3,7 @@
 import json
 import time
 from pathlib import Path
+from typing import cast
 
 import pytest
 from conftest import requires_sample_files
@@ -22,6 +23,8 @@ from copilot_session_tools.scanner import (
     _merge_content_blocks,
     _parse_tool_invocation_serialized,
 )
+from copilot_session_tools.scanner.models import ContentBlock
+from copilot_session_tools.scanner.models import ToolInvocation as ScannerToolInvocation
 from copilot_session_tools.scanner.vscode import _process_response_items
 
 
@@ -1811,21 +1814,395 @@ class TestVSCodeSubagentParsing:
                 "toolCallId": "call_regular",
             },
         ]
-        _, raw_blocks, _, _, _ = _process_response_items(response_items)
+        _, raw_blocks, tool_invocations, _, _ = _process_response_items(response_items)
         # Should have: one subagent block (with children absorbed) + one regular toolInvocation
         subagent_blocks = [b for b in raw_blocks if b[0] == "subagent"]
         tool_blocks = [b for b in raw_blocks if b[0] == "toolInvocation"]
         assert len(subagent_blocks) == 1, f"Expected 1 subagent block, got {len(subagent_blocks)}: {subagent_blocks}"
         assert len(tool_blocks) == 1, f"Expected 1 regular tool block, got {len(tool_blocks)}: {tool_blocks}"
+        assert len(tool_invocations) == 2
+        assert tool_invocations[0].name == "RunSubagentTool"
+        assert tool_invocations[1].name == "vscode_readFile"
+        assert tool_invocations[1].invocation_message == "Reading README.md"
         # The subagent block content should include child tool invocation messages and the result
         subagent_content = subagent_blocks[0][1]
         assert "auth.py" in subagent_content, f"Child tool should be in subagent content: {subagent_content[:200]}"
         assert "middleware.py" in subagent_content
         assert "Found 3 auth files" in subagent_content
         # The subagent title should include the agent name and description
-        subagent_title = subagent_blocks[0][2]
+        subagent_block = cast(tuple[str, str, str | None], subagent_blocks[0][:3])
+        subagent_title = subagent_block[2]
         assert subagent_title is not None
         assert "search" in subagent_title
         assert "Find auth files" in subagent_title
         # The regular tool should still appear
         assert "README.md" in tool_blocks[0][1]
+
+    def test_duplicate_parent_and_child_updates_collapse_to_one_subagent_block(self):
+        """Repeated VS Code updates for the same subagent/toolCallId should render once."""
+        response_items = [
+            {
+                "kind": "toolInvocationSerialized",
+                "toolId": "runSubagent",
+                "invocationMessage": "",
+                "toolSpecificData": {
+                    "kind": "subagent",
+                    "agentName": "Agent",
+                    "description": "Search archive",
+                },
+                "isComplete": True,
+                "toolCallId": "parent_1",
+            },
+            {
+                "kind": "toolInvocationSerialized",
+                "toolId": "copilot_readFile",
+                "invocationMessage": "Reading skill docs",
+                "toolSpecificData": {},
+                "isComplete": True,
+                "toolCallId": "child_1",
+                "subAgentInvocationId": "parent_1",
+            },
+            {
+                "kind": "toolInvocationSerialized",
+                "toolId": "copilot_readFile",
+                "invocationMessage": "Reading skill docs",
+                "toolSpecificData": {},
+                "isComplete": True,
+                "toolCallId": "child_1",
+                "subAgentInvocationId": "parent_1",
+            },
+            {
+                "kind": "toolInvocationSerialized",
+                "toolId": "runSubagent",
+                "invocationMessage": "",
+                "toolSpecificData": {
+                    "kind": "subagent",
+                    "agentName": "Agent",
+                    "description": "Search archive",
+                    "result": "Agent completed with no output",
+                },
+                "isComplete": True,
+                "toolCallId": "parent_1",
+            },
+        ]
+
+        _, raw_blocks, tool_invocations, _, _ = _process_response_items(response_items)
+        subagent_blocks = [b for b in raw_blocks if b[0] == "subagent"]
+        assert len(subagent_blocks) == 1
+        assert [tool.name for tool in tool_invocations] == ["runSubagent"]
+
+        subagent_block = cast(
+            tuple[
+                str,
+                str,
+                str | None,
+                list[ContentBlock],
+                list[ScannerToolInvocation],
+                list,
+                list,
+            ],
+            subagent_blocks[0],
+        )
+        nested_blocks = subagent_block[3]
+        nested_tool_invocations = subagent_block[4]
+        assert len(nested_tool_invocations) == 1
+        assert len(nested_blocks) == 2
+        assert nested_blocks[0].content == "Reading skill docs"
+        assert nested_blocks[1].kind == "text"
+        assert "Agent completed with no output" in nested_blocks[1].content
+
+    def test_subagent_terminal_children_render_inline_via_command_blocks(self):
+        """VS Code subagent terminal children without invocation text should still get inline blocks."""
+        response_items = [
+            {
+                "kind": "toolInvocationSerialized",
+                "toolId": "runSubagent",
+                "invocationMessage": "",
+                "toolSpecificData": {
+                    "kind": "subagent",
+                    "agentName": "Agent",
+                    "description": "Search archive",
+                    "result": "Done",
+                },
+                "isComplete": True,
+                "toolCallId": "parent_1",
+            },
+            {
+                "kind": "toolInvocationSerialized",
+                "toolId": "run_in_terminal",
+                "invocationMessage": "",
+                "toolSpecificData": {
+                    "kind": "terminal",
+                    "commandLine": "copilot-session-tools scan --verbose",
+                },
+                "resultDetails": {
+                    "output": [
+                        {
+                            "value": "scan output",
+                        }
+                    ]
+                },
+                "isComplete": True,
+                "toolCallId": "child_cmd_1",
+                "subAgentInvocationId": "parent_1",
+            },
+        ]
+
+        _, raw_blocks, _, _, _ = _process_response_items(response_items)
+        subagent_blocks = [b for b in raw_blocks if b[0] == "subagent"]
+        assert len(subagent_blocks) == 1
+
+        subagent_block = cast(
+            tuple[
+                str,
+                str,
+                str | None,
+                list[ContentBlock],
+                list[ScannerToolInvocation],
+                list,
+                list,
+            ],
+            subagent_blocks[0],
+        )
+        nested_blocks = subagent_block[3]
+        nested_command_runs = subagent_block[6]
+        assert len(nested_command_runs) == 1
+        assert nested_command_runs[0].command == "copilot-session-tools scan --verbose"
+        assert nested_blocks[0].content == "$ copilot-session-tools scan --verbose"
+        assert nested_blocks[1].kind == "text"
+
+    def test_top_level_terminal_tools_without_invocation_message_render_inline(self):
+        """Top-level VS Code terminal tools without invocation text should still get inline blocks."""
+        response_items = [
+            {
+                "kind": "toolInvocationSerialized",
+                "toolId": "run_in_terminal",
+                "invocationMessage": "",
+                "toolSpecificData": {
+                    "kind": "terminal",
+                    "commandLine": "echo hello",
+                },
+                "resultDetails": {
+                    "output": [
+                        {
+                            "value": "hello",
+                        }
+                    ]
+                },
+                "isComplete": True,
+                "toolCallId": "cmd_1",
+            },
+            {
+                "kind": "toolInvocationSerialized",
+                "toolId": "run_in_terminal",
+                "invocationMessage": "",
+                "toolSpecificData": {
+                    "kind": "terminal",
+                    "commandLine": "echo world",
+                },
+                "resultDetails": {
+                    "output": [
+                        {
+                            "value": "world",
+                        }
+                    ]
+                },
+                "isComplete": True,
+                "toolCallId": "cmd_2",
+            },
+        ]
+
+        _, raw_blocks, tool_invocations, _, _ = _process_response_items(response_items)
+        tool_blocks = [b for b in raw_blocks if b[0] == "toolInvocation"]
+        assert [block[1] for block in tool_blocks] == ["$ echo hello", "$ echo world"]
+        assert [tool.name for tool in tool_invocations] == ["run_in_terminal", "run_in_terminal"]
+
+
+class TestCLIStructuredSubagentContent:
+    """Tests for structured content_blocks, tool_invocations, file_changes on subagent blocks."""
+
+    def _make_events_jsonl(self, *events):
+        import orjson
+
+        lines = [
+            orjson.dumps(
+                {
+                    "type": "session.start",
+                    "data": {
+                        "sessionId": "structured-subagent-test",
+                        "startTime": "2026-01-01T00:00:00Z",
+                    },
+                }
+            ).decode()
+        ]
+        for evt in events:
+            lines.append(orjson.dumps(evt).decode())
+        return "\n".join(lines)
+
+    def _parse(self, tmp_path, *events):
+        from copilot_session_tools.scanner import _parse_cli_jsonl_file
+
+        f = tmp_path / "events.jsonl"
+        f.write_text(self._make_events_jsonl(*events), encoding="utf-8")
+        return _parse_cli_jsonl_file(f)
+
+    def _find_blocks(self, session, kind):
+        blocks = []
+        for msg in session.messages:
+            for cb in msg.content_blocks:
+                if cb.kind == kind:
+                    blocks.append(cb)
+        return blocks
+
+    def test_subagent_has_structured_content_blocks(self, tmp_path):
+        """Subagent block should have structured content_blocks with child tool invocations."""
+        session = self._parse(
+            tmp_path,
+            {
+                "type": "assistant.message",
+                "data": {
+                    "content": "Let me search for the code.",
+                    "toolRequests": [
+                        {"toolCallId": "tc1", "name": "task", "arguments": {"agent_type": "explore", "description": "Find auth code"}},
+                    ],
+                },
+            },
+            {"type": "tool.execution_start", "data": {"toolCallId": "tc1", "toolName": "task", "arguments": {"agent_type": "explore"}}},
+            # Child tools with parentToolCallId
+            {"type": "tool.execution_start", "data": {"toolCallId": "child1", "toolName": "grep", "parentToolCallId": "tc1", "arguments": {"pattern": "jwt", "path": "src/"}}},
+            {"type": "tool.execution_complete", "data": {"toolCallId": "child1", "success": True, "result": {"content": "src/auth.py:10: import jwt"}}},
+            {"type": "tool.execution_start", "data": {"toolCallId": "child2", "toolName": "view", "parentToolCallId": "tc1", "arguments": {"path": "src/auth.py"}}},
+            {"type": "tool.execution_complete", "data": {"toolCallId": "child2", "success": True, "result": {"content": "file contents..."}}},
+            {"type": "subagent.started", "data": {"toolCallId": "tc1", "agentDisplayName": "Explore Agent"}},
+            {"type": "subagent.completed", "data": {"toolCallId": "tc1", "agentDisplayName": "Explore Agent"}},
+            {"type": "tool.execution_complete", "data": {"toolCallId": "tc1", "success": True, "result": {"content": "Found JWT auth in src/auth.py"}}},
+        )
+        blocks = self._find_blocks(session, "subagent")
+        assert len(blocks) == 1
+        block = blocks[0]
+        # Should have structured content_blocks
+        assert len(block.content_blocks) > 0, "Subagent should have nested content_blocks"
+        # Should have toolInvocation blocks for child tools
+        tool_blocks = [cb for cb in block.content_blocks if cb.kind == "toolInvocation"]
+        assert len(tool_blocks) == 2, f"Expected 2 child tool blocks, got {len(tool_blocks)}"
+        # Should have a text block for the result
+        text_blocks = [cb for cb in block.content_blocks if cb.kind == "text"]
+        assert len(text_blocks) == 1
+        assert "Found JWT auth" in text_blocks[0].content
+        # Should have tool_invocations list
+        assert len(block.tool_invocations) == 2
+        assert block.tool_invocations[0].name == "grep"
+        assert block.tool_invocations[1].name == "view"
+
+    def test_subagent_child_command_runs(self, tmp_path):
+        """Subagent with shell command child tools should have command_runs."""
+        session = self._parse(
+            tmp_path,
+            {
+                "type": "assistant.message",
+                "data": {
+                    "content": "Running tests...",
+                    "toolRequests": [
+                        {"toolCallId": "tc1", "name": "task", "arguments": {"agent_type": "task", "description": "Run tests"}},
+                    ],
+                },
+            },
+            {"type": "tool.execution_start", "data": {"toolCallId": "tc1", "toolName": "task", "arguments": {"agent_type": "task"}}},
+            # Shell command as child
+            {
+                "type": "tool.execution_start",
+                "data": {
+                    "toolCallId": "child1",
+                    "toolName": "powershell",
+                    "parentToolCallId": "tc1",
+                    "arguments": {"command": "uv run pytest tests/ -q"},
+                },
+            },
+            {"type": "tool.execution_complete", "data": {"toolCallId": "child1", "success": True, "result": {"content": "5 passed"}}},
+            {"type": "subagent.started", "data": {"toolCallId": "tc1", "agentDisplayName": "Task Agent"}},
+            {"type": "subagent.completed", "data": {"toolCallId": "tc1", "agentDisplayName": "Task Agent"}},
+            {"type": "tool.execution_complete", "data": {"toolCallId": "tc1", "success": True, "result": {"content": "All tests pass."}}},
+        )
+        blocks = self._find_blocks(session, "subagent")
+        assert len(blocks) == 1
+        block = blocks[0]
+        # Shell commands become CommandRuns, not ToolInvocations
+        assert len(block.command_runs) == 1
+        assert "uv run pytest" in block.command_runs[0].command
+        assert block.command_runs[0].output == "5 passed"
+
+    def test_subagent_fts_content(self, tmp_path):
+        """Subagent content should be included in flat ChatMessage.content for FTS indexing."""
+        session = self._parse(
+            tmp_path,
+            {
+                "type": "assistant.message",
+                "data": {
+                    "content": "Delegating...",
+                    "toolRequests": [
+                        {"toolCallId": "tc1", "name": "task", "arguments": {"agent_type": "explore", "description": "Search"}},
+                    ],
+                },
+            },
+            {"type": "tool.execution_start", "data": {"toolCallId": "tc1", "toolName": "task", "arguments": {}}},
+            {"type": "subagent.started", "data": {"toolCallId": "tc1", "agentDisplayName": "Agent"}},
+            {"type": "subagent.completed", "data": {"toolCallId": "tc1", "agentDisplayName": "Agent"}},
+            {"type": "tool.execution_complete", "data": {"toolCallId": "tc1", "success": True, "result": {"content": "Found unique_searchable_term_xyz"}}},
+        )
+        # The subagent result should be in the flat content for FTS
+        assert any("unique_searchable_term_xyz" in msg.content for msg in session.messages)
+
+    def test_subagent_db_roundtrip(self, tmp_path):
+        """Structured subagent data should survive database save/load cycle."""
+        from copilot_session_tools.database import Database
+
+        session = self._parse(
+            tmp_path,
+            {
+                "type": "assistant.message",
+                "data": {
+                    "content": "Using agent...",
+                    "toolRequests": [
+                        {"toolCallId": "tc1", "name": "task", "arguments": {"agent_type": "explore", "description": "Find bugs"}},
+                    ],
+                },
+            },
+            {"type": "tool.execution_start", "data": {"toolCallId": "tc1", "toolName": "task", "arguments": {"agent_type": "explore"}}},
+            {"type": "tool.execution_start", "data": {"toolCallId": "child1", "toolName": "grep", "parentToolCallId": "tc1", "arguments": {"pattern": "TODO", "path": "src/"}}},
+            {"type": "tool.execution_complete", "data": {"toolCallId": "child1", "success": True, "result": {"content": "3 matches"}}},
+            {"type": "subagent.started", "data": {"toolCallId": "tc1", "agentDisplayName": "Explore Agent"}},
+            {"type": "subagent.completed", "data": {"toolCallId": "tc1", "agentDisplayName": "Explore Agent"}},
+            {"type": "tool.execution_complete", "data": {"toolCallId": "tc1", "success": True, "result": {"content": "Found 3 TODOs"}}},
+        )
+
+        # Save to DB
+        db_path = tmp_path / "test.db"
+        # Create a minimal session-store.db with required schema
+        import sqlite3
+
+        conn = sqlite3.connect(str(db_path))
+        conn.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER)")
+        conn.execute("INSERT INTO schema_version VALUES (1)")
+        conn.execute("CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY)")
+        conn.commit()
+        conn.close()
+
+        db = Database(str(db_path))
+        db.add_session(session)
+
+        # Load back
+        loaded = db.get_session(session.session_id)
+        assert loaded is not None
+
+        # Find the subagent block
+        subagent_blocks = []
+        for msg in loaded.messages:
+            for cb in msg.content_blocks:
+                if cb.kind == "subagent":
+                    subagent_blocks.append(cb)
+        assert len(subagent_blocks) == 1
+        block = subagent_blocks[0]
+        # Verify structured data survived round-trip
+        assert len(block.content_blocks) > 0, "content_blocks should survive DB round-trip"
+        assert len(block.tool_invocations) > 0, "tool_invocations should survive DB round-trip"
+        assert block.tool_invocations[0].name == "grep"

@@ -64,6 +64,63 @@ class TestCLISessionSnapshot:
         file_regression.check(html, fullpath=BASELINES_DIR / "cli.html", encoding="utf-8")
 
 
+# --- CLI Session with Agents Snapshots ---
+
+_cli_agents_events = FIXTURES_DIR / "cli-with-agents" / "events.jsonl"
+_cli_agents_fixture_exists = _cli_agents_events.exists() if FIXTURES_DIR.exists() else False
+
+
+@pytest.mark.skipif(not _cli_agents_fixture_exists, reason="CLI agents fixture not populated")
+class TestCLIAgentSessionSnapshot:
+    """Snapshot tests for CLI session with structured agent rendering."""
+
+    session: ChatSession
+
+    @pytest.fixture(autouse=True)
+    def parse_session(self):
+        parsed = _parse_cli_jsonl_file(_cli_agents_events)
+        assert parsed is not None, f"Failed to parse CLI agents fixture: {_cli_agents_events}"
+        self.session = parsed
+        self.session.source_file = "cli-with-agents"
+
+    def test_markdown_export(self, file_regression):
+        md = session_to_markdown(
+            self.session,
+            include_diffs=True,
+            include_tool_inputs=True,
+            include_thinking=True,
+        )
+        file_regression.check(md, fullpath=BASELINES_DIR / "cli-with-agents.md", encoding="utf-8")
+
+    def test_html_export(self, file_regression):
+        html = session_to_html(self.session)
+        file_regression.check(html, fullpath=BASELINES_DIR / "cli-with-agents.html", encoding="utf-8")
+
+    def test_session_has_subagent_blocks(self):
+        """Verify the parsed session has structured subagent content."""
+        subagent_blocks = []
+        for msg in self.session.messages:
+            for cb in msg.content_blocks:
+                if cb.kind in ("subagent", "subagent_failed", "subagent_incomplete"):
+                    subagent_blocks.append(cb)
+        assert len(subagent_blocks) >= 2, f"Expected at least 2 subagent blocks, got {len(subagent_blocks)}"
+        # First agent should have structured content
+        agent1 = subagent_blocks[0]
+        assert len(agent1.content_blocks) > 0, "First agent should have structured content_blocks"
+        assert len(agent1.tool_invocations) > 0, "First agent should have tool_invocations"
+        # Verify child tools are present
+        tool_names = {t.name for t in agent1.tool_invocations}
+        assert "grep" in tool_names, f"Expected grep in child tools, got {tool_names}"
+        assert "view" in tool_names, f"Expected view in child tools, got {tool_names}"
+        assert "edit" in tool_names, f"Expected edit in child tools, got {tool_names}"
+        # Should have command runs (powershell)
+        assert len(agent1.command_runs) > 0, "First agent should have command_runs"
+        # Verify result text is present
+        text_blocks = [cb for cb in agent1.content_blocks if cb.kind == "text"]
+        assert len(text_blocks) > 0, "Agent should have result text block"
+        assert "JWT" in text_blocks[0].content
+
+
 _SESSION_STORE_DB = Path.home() / ".copilot" / "session-store.db"
 # Same session as the CLI fixture so enriched/unenriched snapshots are directly comparable
 _UNENRICHED_SESSION_ID = "01488532-ff4e-41c6-b137-5f75a48742d3"

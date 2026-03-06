@@ -8,7 +8,7 @@ Exports chat sessions to markdown format with:
 - Thinking block notices in italics (without the full content)
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import unquote
 
@@ -30,7 +30,7 @@ def _format_timestamp(value: str | int | None) -> str:
         # Check if milliseconds (common for JS timestamps)
         if numeric_value > _MILLISECONDS_THRESHOLD:
             numeric_value = numeric_value / 1000
-        dt = datetime.fromtimestamp(numeric_value)
+        dt = datetime.fromtimestamp(numeric_value, tz=UTC)
         return dt.strftime("%Y-%m-%d %H:%M:%S")
     except (ValueError, TypeError, OSError):
         # If parsing fails, return original value as string
@@ -136,13 +136,19 @@ def _has_inline_tool_blocks(message: ChatMessage) -> bool:
     return any(block.kind == "toolInvocation" for block in message.content_blocks)
 
 
-def _format_message_content(message: ChatMessage, include_thinking: bool = False) -> str:
-    """Format message content, optionally including thinking blocks.
+def _format_message_content(
+    message: ChatMessage,
+    include_thinking: bool = False,
+    include_agent_details: bool = True,
+) -> str:
+    """Format message content, optionally including thinking blocks and agent details.
 
     Args:
         message: The ChatMessage to format.
         include_thinking: If True, include thinking block content. If False, show
                          a notice that thinking occurred but omit the content.
+        include_agent_details: If True, include full agent content in collapsible blocks.
+                              If False, show only a summary line for each agent.
 
     Returns:
         Formatted message content as a string.
@@ -161,11 +167,16 @@ def _format_message_content(message: ChatMessage, include_thinking: bool = False
                     parts.append(f"> **Thinking:**\n> {block.content.replace(chr(10), chr(10) + '> ')}")
                 # If not including, we'll add a notice at the start
                 continue
-            elif block.kind == "subagent":
-                # Sub-agent result in a collapsible details block
+            elif block.kind in ("subagent", "subagent_failed", "subagent_incomplete"):
                 agent_name = block.description or "Agent"
+                status = "failed" if block.kind == "subagent_failed" else "incomplete" if block.kind == "subagent_incomplete" else "completed"
+                if not include_agent_details:
+                    # Summary only
+                    parts.append(f"*🤖 {agent_name} — {status}*")
+                    continue
+                # Full content in a collapsible details block
                 agent_content = block.content.replace(chr(10), chr(10) + "> ")
-                parts.append(f"<details>\n<summary>{agent_name} — completed</summary>\n\n> {agent_content}\n\n</details>")
+                parts.append(f"<details>\n<summary>{agent_name} — {status}</summary>\n\n> {agent_content}\n\n</details>")
                 continue
             elif block.kind == "toolInvocation":
                 # For command runs, description holds the human-readable title
@@ -212,6 +223,7 @@ def session_to_markdown(
     include_diffs: bool = False,
     include_tool_inputs: bool = False,
     include_thinking: bool = False,
+    include_agent_details: bool = True,
 ) -> str:
     """Convert a chat session to markdown format.
 
@@ -221,6 +233,8 @@ def session_to_markdown(
         include_tool_inputs: If True, include tool inputs as code blocks.
         include_thinking: If True, include thinking block content. If False (default),
                          show a notice that thinking occurred but omit the content.
+        include_agent_details: If True (default), include full agent content in
+                              collapsible blocks. If False, show only a summary line.
 
     Returns:
         Markdown string representation of the session.
@@ -280,6 +294,7 @@ def session_to_markdown(
             include_diffs=include_diffs,
             include_tool_inputs=include_tool_inputs,
             include_thinking=include_thinking,
+            include_agent_details=include_agent_details,
         )
         lines.append(msg_md)
 
@@ -292,6 +307,7 @@ def message_to_markdown(
     include_diffs: bool = False,
     include_tool_inputs: bool = False,
     include_thinking: bool = False,
+    include_agent_details: bool = True,
 ) -> str:
     """Convert a single message to markdown format.
 
@@ -319,7 +335,11 @@ def message_to_markdown(
         lines.append("")
 
     # Content (optionally including thinking blocks)
-    content = _format_message_content(message, include_thinking=include_thinking)
+    content = _format_message_content(
+        message,
+        include_thinking=include_thinking,
+        include_agent_details=include_agent_details,
+    )
     lines.append(content)
 
     # Check if tools are rendered inline via content blocks
@@ -355,6 +375,7 @@ def export_session_to_file(
     include_diffs: bool = False,
     include_tool_inputs: bool = False,
     include_thinking: bool = False,
+    include_agent_details: bool = True,
 ) -> None:
     """Export a single session to a markdown file.
 
@@ -364,12 +385,14 @@ def export_session_to_file(
         include_diffs: If True, include file diffs as code blocks.
         include_tool_inputs: If True, include tool inputs as code blocks.
         include_thinking: If True, include thinking block content in the export.
+        include_agent_details: If True (default), include full agent content.
     """
     markdown = session_to_markdown(
         session,
         include_diffs=include_diffs,
         include_tool_inputs=include_tool_inputs,
         include_thinking=include_thinking,
+        include_agent_details=include_agent_details,
     )
     Path(output_path).write_text(markdown, encoding="utf-8")
 
@@ -417,7 +440,7 @@ def generate_session_filename(session: ChatSession) -> str:
                 ts = float(ts)
             if ts > _MILLISECONDS_THRESHOLD:
                 ts = ts / 1000
-            date_str = datetime.fromtimestamp(ts).strftime("%Y%m%d")
+            date_str = datetime.fromtimestamp(ts, tz=UTC).strftime("%Y%m%d")
         except (ValueError, TypeError, OSError):
             pass
 

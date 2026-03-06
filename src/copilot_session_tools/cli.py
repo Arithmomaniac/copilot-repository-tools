@@ -608,6 +608,13 @@ def export_markdown(
             help="Include thinking/reasoning block content in the markdown output.",
         ),
     ] = False,
+    include_agent_details: Annotated[
+        bool,
+        typer.Option(
+            "--include-agent-details/--no-agent-details",
+            help="Include full agent/subagent content. If disabled, shows only a summary line per agent.",
+        ),
+    ] = True,
 ):
     """Export sessions as markdown files.
 
@@ -637,6 +644,7 @@ def export_markdown(
             include_diffs=include_diffs,
             include_tool_inputs=include_tool_inputs,
             include_thinking=include_thinking,
+            include_agent_details=include_agent_details,
         )
         console.print(f"[green]Exported: {file_path}[/green]")
     else:
@@ -654,6 +662,7 @@ def export_markdown(
                     include_diffs=include_diffs,
                     include_tool_inputs=include_tool_inputs,
                     include_thinking=include_thinking,
+                    include_agent_details=include_agent_details,
                 )
                 exported += 1
                 if verbose:

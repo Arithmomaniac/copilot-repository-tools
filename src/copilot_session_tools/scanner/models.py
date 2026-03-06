@@ -57,11 +57,21 @@ class ContentBlock:
 
     Each block has a kind (e.g., 'text', 'thinking', 'tool') and content.
     This allows differentiation between thinking/reasoning and regular output.
+
+    For subagent blocks (kind='subagent'), the interior can be rendered using
+    the structured fields (content_blocks, tool_invocations, etc.) with the
+    same rendering pipeline as the outer message. The 'content' field serves
+    as a markdown fallback for legacy data.
     """
 
     kind: str  # 'text', 'thinking', 'tool', 'promptFile', etc.
     content: str
     description: str | None = None  # Optional description (e.g., generatedTitle for thinking blocks)
+    # Structured sub-content for subagent blocks (recursive rendering)
+    content_blocks: list["ContentBlock"] = field(default_factory=list)
+    tool_invocations: list[ToolInvocation] = field(default_factory=list)
+    file_changes: list[FileChange] = field(default_factory=list)
+    command_runs: list[CommandRun] = field(default_factory=list)
 
 
 @dataclass

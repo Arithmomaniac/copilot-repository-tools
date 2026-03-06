@@ -1,0 +1,3 @@
+id: cli-agent-test-session
+cwd: /home/user/myproject
+summary: Fix authentication bug using agents

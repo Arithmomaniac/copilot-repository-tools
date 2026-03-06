@@ -20,8 +20,23 @@ from .models import (
     ChatMessage,
     ChatSession,
     CommandRun,
+    ContentBlock,
     FileChange,
     ToolInvocation,
+)
+
+RawBlock = (
+    tuple[str, str]
+    | tuple[str, str, str | None]
+    | tuple[
+        str,
+        str,
+        str | None,
+        list[ContentBlock],
+        list[ToolInvocation],
+        list[FileChange],
+        list[CommandRun],
+    ]
 )
 
 
@@ -195,7 +210,7 @@ def _parse_command_runs(raw_commands: list) -> list[CommandRun]:
 def _process_response_items(
     response_items: list,
     file_contents_cache: dict[str, str] | None = None,
-) -> tuple[list[str], list[tuple[str, str, str | None]], list[ToolInvocation], list[FileChange], list[CommandRun]]:
+) -> tuple[list[str], list[RawBlock], list[ToolInvocation], list[FileChange], list[CommandRun]]:
     """Process VS Code Copilot response items into structured data.
 
     Handles all response item kinds (toolInvocationSerialized, text, inlineReference,
@@ -210,7 +225,7 @@ def _process_response_items(
         Tuple of (response_content, raw_blocks, tool_invocations, file_changes, command_runs)
     """
     response_content: list[str] = []
-    raw_blocks: list[tuple[str, str, str | None]] = []
+    raw_blocks: list[RawBlock] = []
     tool_invocations: list[ToolInvocation] = []
     file_changes: list[FileChange] = []
     command_runs: list[CommandRun] = []
@@ -225,19 +240,27 @@ def _process_response_items(
                     cached_path, cached_content = file_content
                     file_contents_cache[cached_path] = cached_content
 
-    # Pre-scan: identify subagent parent toolCallIds and their children
-    subagent_parents: set[str] = set()  # toolCallIds that are parent subagent tools
-    subagent_children: dict[str, list[dict]] = {}  # parent_id -> list of child items
+    # Pre-scan: identify the latest parent subagent entry for each toolCallId
+    # and dedupe child tool updates by their toolCallId.
+    subagent_parents: dict[str, dict] = {}
+    subagent_children: dict[str, dict[str, dict]] = {}
     for item in response_items:
         if isinstance(item, dict) and item.get("kind") == "toolInvocationSerialized":
             tool_data = item.get("toolSpecificData", {})
             if isinstance(tool_data, dict) and tool_data.get("kind") == "subagent":
                 tcid = item.get("toolCallId", "")
                 if tcid:
-                    subagent_parents.add(tcid)
+                    # Keep the latest entry so we render a single subagent block
+                    # after the tool has accumulated its final result.
+                    subagent_parents[tcid] = item
             said = item.get("subAgentInvocationId")
             if said:
-                subagent_children.setdefault(said, []).append(item)
+                child_items = subagent_children.setdefault(said, {})
+                child_tcid = item.get("toolCallId")
+                if isinstance(child_tcid, str) and child_tcid:
+                    child_items[child_tcid] = item
+                else:
+                    child_items[f"__child_{len(child_items)}"] = item
 
     # Process all response items
     for item in response_items:
@@ -246,34 +269,76 @@ def _process_response_items(
 
             # Handle tool invocations (current VS Code format)
             if kind == "toolInvocationSerialized":
-                tool_inv = _parse_tool_invocation_serialized(item)
-                if tool_inv:
-                    tool_invocations.append(tool_inv)
-
                 # Skip child tools of a subagent — they're absorbed into the parent's block
                 said = item.get("subAgentInvocationId")
                 if said and said in subagent_parents:
                     continue
 
-                # Check for sub-agent tool invocations (parent)
                 tool_data = item.get("toolSpecificData", {})
                 tool_data_kind = tool_data.get("kind") if isinstance(tool_data, dict) else None
+                tcid = item.get("toolCallId", "")
+
+                # VS Code can emit multiple parent subagent updates with the same toolCallId.
+                # Only render the latest one so we don't duplicate the agent block.
+                if tool_data_kind == "subagent" and tcid and subagent_parents.get(tcid) is not item:
+                    continue
+
+                tool_inv = _parse_tool_invocation_serialized(item)
+                if tool_inv:
+                    tool_invocations.append(tool_inv)
+
+                # Check for sub-agent tool invocations (parent)
                 if tool_data_kind == "subagent":
                     agent_name = tool_data.get("agentName", "Agent")
                     description = tool_data.get("description", "")
                     result_text = tool_data.get("result", "")
-                    tcid = item.get("toolCallId", "")
                     # Build content: child tool summaries + result
                     parts: list[str] = []
-                    for child in subagent_children.get(tcid, []):
+                    # Build structured content_blocks for nested rendering
+                    nested_blocks: list[ContentBlock] = []
+                    nested_tool_invocations: list[ToolInvocation] = []
+                    nested_file_changes: list[FileChange] = []
+                    nested_command_runs: list[CommandRun] = []
+                    for child in subagent_children.get(tcid, {}).values():
                         child_inv = _parse_tool_invocation_serialized(child)
                         if child_inv and child_inv.invocation_message:
                             parts.append(f"*{child_inv.invocation_message}*")
+                            nested_tool_invocations.append(child_inv)
+                            nested_blocks.append(ContentBlock(kind="toolInvocation", content=child_inv.invocation_message))
+                        # Extract file changes from child textEditGroup items
+                        child_kind = child.get("kind")
+                        if child_kind == "textEditGroup":
+                            fc = _parse_text_edit_group(child, file_contents_cache)
+                            if fc:
+                                nested_file_changes.append(fc)
+                        # Terminal child tools without an invocation message still need an inline
+                        # placeholder block so they render in sequence instead of falling into the
+                        # trailing "Command Runs" section.
+                        if child_inv and child_inv.name == "run_in_terminal" and not child_inv.invocation_message:
+                            command = child_inv.input or ""
+                            nested_command_runs.append(
+                                CommandRun(
+                                    command=command,
+                                    result=child_inv.result,
+                                    status=child_inv.status,
+                                    output=child_inv.result,
+                                )
+                            )
+                            nested_blocks.append(
+                                ContentBlock(
+                                    kind="toolInvocation",
+                                    content=f"$ {command}" if command else "run_in_terminal",
+                                )
+                            )
                     if result_text:
                         parts.append(str(result_text))
+                        nested_blocks.append(ContentBlock(kind="text", content=str(result_text)))
                     content = "\n\n".join(parts) if parts else "(no output)"
                     title = f"{agent_name}: {description}" if description else agent_name
-                    raw_blocks.append(("subagent", content, title))
+                    # Store as structured tuple: (kind, content, title, nested_blocks, nested_tool_invocations, nested_file_changes, nested_command_runs)
+                    raw_blocks.append(("subagent", content, title, nested_blocks, nested_tool_invocations, nested_file_changes, nested_command_runs))
+                    # Include subagent content in response_content for FTS indexing
+                    response_content.append(content)
                 # Also extract the invocation message as content (non-subagent)
                 elif item.get("invocationMessage"):
                     msg_text = item["invocationMessage"]
@@ -283,6 +348,11 @@ def _process_response_items(
                     msg_text = str(msg_text)
                     response_content.append(msg_text)
                     raw_blocks.append(("toolInvocation", msg_text, None))
+                elif tool_inv and tool_inv.name == "run_in_terminal":
+                    command = tool_inv.input or ""
+                    inline_text = f"$ {command}" if command else "run_in_terminal"
+                    response_content.append(inline_text)
+                    raw_blocks.append(("toolInvocation", inline_text, None))
 
             # Extract text content with kind info
             elif item.get("value"):

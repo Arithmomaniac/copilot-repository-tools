@@ -282,7 +282,56 @@ from .scanner import (
     ToolInvocation,
 )
 
-CST_SCHEMA_VERSION = 3
+CST_SCHEMA_VERSION = 4
+
+
+def _serialize_nested_data(block: ContentBlock) -> str | None:
+    """Serialize a subagent ContentBlock's structured sub-content to JSON."""
+    if not (block.content_blocks or block.tool_invocations or block.file_changes or block.command_runs):
+        return None
+    from dataclasses import asdict
+
+    data: dict = {}
+    if block.content_blocks:
+        # Only serialize the fields deserialization actually uses (kind, content, description)
+        # to avoid silent data loss from asdict's deep recursion on nested ContentBlocks
+        data["content_blocks"] = [{"kind": cb.kind, "content": cb.content, "description": cb.description} for cb in block.content_blocks]
+    if block.tool_invocations:
+        data["tool_invocations"] = [{k: v for k, v in asdict(t).items() if v is not None} for t in block.tool_invocations]
+    if block.file_changes:
+        data["file_changes"] = [{k: v for k, v in asdict(f).items() if v is not None} for f in block.file_changes]
+    if block.command_runs:
+        data["command_runs"] = [{k: v for k, v in asdict(c).items() if v is not None} for c in block.command_runs]
+    return json.dumps(data)
+
+
+def _deserialize_content_block(row: sqlite3.Row) -> ContentBlock:
+    """Deserialize a content block row, including nested_data for subagent blocks."""
+    nested_data_str = row["nested_data"] if "nested_data" in row.keys() else None  # noqa: SIM118
+    block = ContentBlock(
+        kind=row["kind"],
+        content=row["content"],
+        description=row["description"] if "description" in row.keys() else None,  # noqa: SIM118
+    )
+    if nested_data_str:
+        data = json.loads(nested_data_str)
+        if "content_blocks" in data:
+            block.content_blocks = [
+                ContentBlock(
+                    kind=cb.get("kind", "text"),
+                    content=cb.get("content", ""),
+                    description=cb.get("description"),
+                )
+                for cb in data["content_blocks"]
+            ]
+        if "tool_invocations" in data:
+            block.tool_invocations = [ToolInvocation(**t) for t in data["tool_invocations"]]
+        if "file_changes" in data:
+            block.file_changes = [FileChange(**f) for f in data["file_changes"]]
+        if "command_runs" in data:
+            block.command_runs = [CommandRun(**c) for c in data["command_runs"]]
+    return block
+
 
 CST_SCHEMA = """
 CREATE TABLE IF NOT EXISTS cst_schema_version (
@@ -367,7 +416,8 @@ CREATE TABLE IF NOT EXISTS cst_content_blocks (
     block_index INTEGER NOT NULL,
     kind TEXT NOT NULL DEFAULT 'text',
     content TEXT,
-    description TEXT
+    description TEXT,
+    nested_data TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_cst_content_blocks_message ON cst_content_blocks(message_id);
 """
@@ -492,7 +542,16 @@ class Database:
                         with contextlib.suppress(Exception):
                             cursor.execute(col_sql)
                 if current_version < 3:
+                    # v3: add nested_data column to cst_content_blocks for structured subagent rendering
+                    with contextlib.suppress(Exception):
+                        cursor.execute("ALTER TABLE cst_content_blocks ADD COLUMN nested_data TEXT")
                     # v3: add enrichment_version column to cst_sessions
+                    with contextlib.suppress(Exception):
+                        cursor.execute("ALTER TABLE cst_sessions ADD COLUMN enrichment_version TEXT")
+                if current_version < 4:
+                    # v4: catch-up for databases at v3 from either branch (suppress if already present)
+                    with contextlib.suppress(Exception):
+                        cursor.execute("ALTER TABLE cst_content_blocks ADD COLUMN nested_data TEXT")
                     with contextlib.suppress(Exception):
                         cursor.execute("ALTER TABLE cst_sessions ADD COLUMN enrichment_version TEXT")
                 if current_version < CST_SCHEMA_VERSION:
@@ -750,11 +809,12 @@ class Database:
 
             # Insert content blocks
             for block_idx, block in enumerate(msg.content_blocks):
+                nested_data = _serialize_nested_data(block) if block.kind in ("subagent", "subagent_failed", "subagent_incomplete") else None
                 cursor.execute(
                     """
                     INSERT INTO cst_content_blocks
-                    (message_id, block_index, kind, content, description)
-                    VALUES (?, ?, ?, ?, ?)
+                    (message_id, block_index, kind, content, description, nested_data)
+                    VALUES (?, ?, ?, ?, ?, ?)
                     """,
                     (
                         message_id,
@@ -762,6 +822,7 @@ class Database:
                         block.kind,
                         block.content,
                         block.description,
+                        nested_data,
                     ),
                 )
 
@@ -999,14 +1060,7 @@ class Database:
 
         # Query content_blocks
         cursor.execute("SELECT * FROM cst_content_blocks WHERE message_id = ? ORDER BY block_index", (message_id,))
-        content_blocks = [
-            ContentBlock(
-                kind=b["kind"],
-                content=b["content"],
-                description=b["description"] if "description" in b.keys() else None,  # noqa: SIM118
-            )
-            for b in cursor.fetchall()
-        ]
+        content_blocks = [_deserialize_content_block(b) for b in cursor.fetchall()]
 
         # Get cached_markdown safely
         cached_md = msg_row["cached_markdown"] if "cached_markdown" in msg_row.keys() else None  # noqa: SIM118
@@ -1148,6 +1202,7 @@ class Database:
         include_diffs: bool = True,
         include_tool_inputs: bool = True,
         include_thinking: bool = False,
+        include_agent_details: bool = True,
     ) -> str:
         """Get markdown for specific messages or all messages in a session.
 
@@ -1158,6 +1213,7 @@ class Database:
             include_diffs: Whether to include file diffs in the markdown.
             include_tool_inputs: Whether to include tool inputs in the markdown.
             include_thinking: Whether to include thinking/reasoning blocks.
+            include_agent_details: Whether to include full agent/subagent content.
 
         Returns:
             Combined markdown string for the selected messages.
@@ -1196,8 +1252,8 @@ class Database:
             rows = cursor.fetchall()
             markdown_parts = []
 
-            # If both options are enabled, use cached markdown
-            if include_diffs and include_tool_inputs and not include_thinking:
+            # If all default options, use cached markdown
+            if include_diffs and include_tool_inputs and not include_thinking and include_agent_details:
                 for row in rows:
                     md = row["cached_markdown"]
                     if md:
@@ -1218,6 +1274,7 @@ class Database:
                         include_diffs=include_diffs,
                         include_tool_inputs=include_tool_inputs,
                         include_thinking=include_thinking,
+                        include_agent_details=include_agent_details,
                     )
                     markdown_parts.append(md)
 
@@ -2012,13 +2069,14 @@ class Database:
 
                 # Insert content blocks
                 for block_idx, block in enumerate(msg.content_blocks):
+                    nested_data = _serialize_nested_data(block) if block.kind in ("subagent", "subagent_failed", "subagent_incomplete") else None
                     cursor.execute(
                         """
                         INSERT INTO cst_content_blocks
-                        (message_id, block_index, kind, content, description)
-                        VALUES (?, ?, ?, ?, ?)
+                        (message_id, block_index, kind, content, description, nested_data)
+                        VALUES (?, ?, ?, ?, ?, ?)
                         """,
-                        (message_id, block_idx, block.kind, block.content, block.description),
+                        (message_id, block_idx, block.kind, block.content, block.description, nested_data),
                     )
 
                 # Insert tool invocations
