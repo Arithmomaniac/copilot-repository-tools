@@ -370,7 +370,7 @@ class TestBuildBlockMetadata:
         assert len(result["block_tool_map"]) == 0
         # But nested metadata should be built on the block
         assert hasattr(outer_block, "_nested_meta")
-        assert 0 in outer_block._nested_meta["block_tool_map"]
+        assert 0 in outer_block._nested_meta["block_tool_map"]  # ty: ignore[not-subscriptable]
 
     def test_command_preferred_over_tool_for_dollar_prefix(self):
         blocks = [ContentBlock(kind="toolInvocation", content="$ git status")]
@@ -435,7 +435,7 @@ def _session(**kwargs) -> ChatSession:
         "custom_title": None,
     }
     defaults.update(kwargs)
-    return ChatSession(**defaults)
+    return ChatSession(**defaults)  # ty: ignore[not-subscriptable]
 
 
 class TestGenerateSessionFilename:
