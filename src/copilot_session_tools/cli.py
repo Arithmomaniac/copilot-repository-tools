@@ -5,7 +5,6 @@ and exporting VS Code GitHub Copilot chat history.
 """
 
 import sys
-from datetime import datetime
 from pathlib import Path
 from typing import Annotated
 
@@ -34,12 +33,16 @@ if sys.platform == "win32":
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")  # ty: ignore[call-non-callable]
 
 
+from copilot_session_tools.utils import DEFAULT_DB_PATH as _DEFAULT_DB_PATH
+from copilot_session_tools.utils import format_timestamp
+
+
 def _default_db_path() -> Path:
     """Return the default database path: ~/.copilot/session-store.db"""
-    return Path.home() / ".copilot" / "session-store.db"
+    return _DEFAULT_DB_PATH
 
 
-_DEFAULT_DB = Path.home() / ".copilot" / "session-store.db"
+_DEFAULT_DB = _DEFAULT_DB_PATH
 
 
 def _ensure_db_exists(db: Path) -> None:
@@ -77,20 +80,6 @@ def version_callback(value: bool):
     if value:
         console.print(f"copilot-session-tools version {__version__}")
         raise typer.Exit()
-
-
-def format_timestamp(ts: str | int | None) -> str:
-    """Convert a timestamp to a human-readable date string."""
-    if ts is None:
-        return "Unknown"
-    try:
-        # Try parsing as milliseconds (JS timestamp) - int() accepts both strings and ints
-        numeric_ts = int(ts) if isinstance(ts, str) else ts
-        if numeric_ts > 1e12:  # Milliseconds
-            numeric_ts = numeric_ts / 1000
-        return datetime.fromtimestamp(numeric_ts).strftime("%Y-%m-%d %H:%M:%S")
-    except (ValueError, OSError):
-        return str(ts)
 
 
 def _print_upgrade_notice():

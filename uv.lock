@@ -100,7 +100,7 @@ wheels = [
 
 [[package]]
 name = "copilot-session-tools"
-version = "0.4.2"
+version = "0.4.3"
 source = { editable = "." }
 dependencies = [
     { name = "jinja2" },

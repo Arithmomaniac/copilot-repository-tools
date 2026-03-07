@@ -5,159 +5,24 @@ Jinja2 template as the web viewer, but with interactive elements (toolbar,
 AJAX, copy buttons) stripped out via the `static=True` flag.
 """
 
-import re
-from datetime import UTC, datetime
 from pathlib import Path
-from urllib.parse import unquote
 
-import markdown
 from jinja2 import Environment, FileSystemLoader, select_autoescape
-from markupsafe import Markup
 
-from .markdown_exporter import generate_session_filename as _md_generate_filename
 from .scanner import ChatSession
-
-# Threshold to distinguish between seconds and milliseconds timestamps.
-_MILLISECONDS_THRESHOLD = 1e12
-
-# Create a reusable markdown converter with extensions
-_md_converter = markdown.Markdown(
-    extensions=[
-        "tables",
-        "fenced_code",
-        "sane_lists",
-        "smarty",
-        "nl2br",
-    ],
-    extension_configs={
-        "smarty": {
-            "smart_dashes": True,
-            "smart_quotes": True,
-        },
-    },
+from .utils import (
+    build_block_metadata,
+    extract_filename,
+    format_timestamp,
+    markdown_to_html,
+    match_tool_for_block,
+    parse_diff_stats,
+    strip_ansi,
+    urldecode,
 )
-
-# Regex pattern for ANSI escape codes
-_ANSI_ESCAPE_PATTERN = re.compile(
-    r"\x1b"
-    r"(?:"
-    r"\[[0-9;]*[A-Za-z]"
-    r"|"
-    r"\][^\x07]*\x07"
-    r"|"
-    r"\][^\x1b]*\x1b\\"
-    r")"
+from .utils import (
+    generate_session_filename as _generate_filename,
 )
-
-
-def _markdown_to_html(text: str) -> str:
-    """Convert markdown text to HTML using the markdown library."""
-    if not text:
-        return ""
-
-    text = text.replace("\r\n", "\n")
-
-    def extract_filename_from_file_uri(uri: str) -> str:
-        decoded = unquote(uri)
-        path = decoded.replace("file:///", "").split("#")[0]
-        if "/" in path:
-            return path.split("/")[-1]
-        if "\\" in path:
-            return path.split("\\")[-1]
-        return path
-
-    def replace_empty_file_link(match):
-        uri = match.group(1)
-        filename = extract_filename_from_file_uri(uri)
-        return f"`{filename}`"
-
-    text = re.sub(r"\[\]\(file://([^)]+)\)", replace_empty_file_link, text)
-    text = re.sub(r'^(Using ["""][^"""]+["""])$', r"_\1_", text, flags=re.MULTILINE)
-    text = re.sub(r"_Edited `([^`]+)`_", r"_Edited \1_", text)
-    text = re.sub(r"^(Ran terminal command:.*)$", r"_\1_", text, flags=re.MULTILINE)
-    text = re.sub(r"^((?:Now )?[Ll]et me [^:]+:)$", r"_\1_", text, flags=re.MULTILINE)
-    text = re.sub(r"^(Made changes\.)$", r"_\1_", text, flags=re.MULTILINE)
-
-    _md_converter.reset()
-    return Markup(_md_converter.convert(text))  # noqa: S704 - markdown output is intentionally rendered as HTML
-
-
-def _urldecode(text: str) -> str:
-    if not text:
-        return ""
-    return unquote(text)
-
-
-def _strip_ansi(text: str | None) -> str:
-    if not text:
-        return ""
-    return _ANSI_ESCAPE_PATTERN.sub("", text)
-
-
-def _format_timestamp(value: str) -> str:
-    if not value:
-        return ""
-    try:
-        epoch_ms = float(value)
-        epoch_s = epoch_ms / 1000
-        dt = datetime.fromtimestamp(epoch_s, tz=UTC)
-        return dt.strftime("%Y-%m-%d %H:%M:%S")
-    except (ValueError, TypeError, OSError):
-        return str(value)
-
-
-def _parse_diff_stats(diff: str) -> dict:
-    if not diff:
-        return {"additions": 0, "deletions": 0}
-    additions = 0
-    deletions = 0
-    for line in diff.split("\n"):
-        if line.startswith("+++") or line.startswith("---") or line.startswith("@@"):
-            continue
-        if line.startswith("+"):
-            additions += 1
-        elif line.startswith("-"):
-            deletions += 1
-    return {"additions": additions, "deletions": deletions}
-
-
-def _extract_filename(path: str) -> str:
-    if not path:
-        return ""
-    if "/" in path:
-        return path.split("/")[-1]
-    if "\\" in path:
-        return path.split("\\")[-1]
-    return path
-
-
-def _match_tool_for_block(block_content: str, tools: list, used_indices: set) -> tuple:
-    """Match a tool invocation block content to a tool from the list."""
-    if not tools:
-        return None, used_indices
-
-    match = re.search(r"`([^`]+)`", block_content)
-    short_name = match.group(1) if match else None
-
-    if not short_name:
-        match = re.search(r"Running\s+(\S+)", block_content)
-        short_name = match.group(1) if match else None
-
-    if short_name:
-        for i, tool in enumerate(tools):
-            if i in used_indices:
-                continue
-            if short_name.lower() in tool.name.lower() or tool.name.lower().endswith(short_name.lower()):
-                used_indices = used_indices | {i}
-                return tool, used_indices
-
-    # Skip 'task' tools — they render as subagent blocks, not inline tool invocations
-    for i, tool in enumerate(tools):
-        if i not in used_indices and tool.name != "task":
-            used_indices = used_indices | {i}
-            return tool, used_indices
-
-    return None, used_indices
 
 
 def _get_jinja_env() -> Environment:
@@ -167,51 +32,15 @@ def _get_jinja_env() -> Environment:
         loader=FileSystemLoader(str(templates_dir)),
         autoescape=select_autoescape(["html"]),
     )
-    env.filters["markdown"] = _markdown_to_html
-    env.filters["urldecode"] = _urldecode
-    env.filters["format_timestamp"] = _format_timestamp
-    env.filters["parse_diff_stats"] = _parse_diff_stats
-    env.filters["extract_filename"] = _extract_filename
-    env.filters["strip_ansi"] = _strip_ansi
-    env.globals["match_tool_for_block"] = _match_tool_for_block
+    env.filters["markdown"] = markdown_to_html
+    env.filters["urldecode"] = urldecode
+    env.filters["format_timestamp"] = format_timestamp
+    env.filters["parse_diff_stats"] = parse_diff_stats
+    env.filters["extract_filename"] = extract_filename
+    env.filters["strip_ansi"] = strip_ansi
+    env.globals["match_tool_for_block"] = match_tool_for_block
     env.globals["get_nested_meta"] = lambda block: getattr(block, "_nested_meta", {})
     return env
-
-
-def _build_block_metadata(content_blocks, tool_invocations, command_runs):
-    """Build tool/command matching metadata for a set of content blocks."""
-    block_tool_map = {}
-    block_cmd_map = {}
-    used_tool_indices: set = set()
-    used_cmd_indices: set = set()
-
-    for i, block in enumerate(content_blocks):
-        if block.kind == "toolInvocation":
-            if command_runs and block.content.startswith("$"):
-                cmd_text = block.content[1:].strip()
-                for j, cmd in enumerate(command_runs):
-                    if j in used_cmd_indices:
-                        continue
-                    if cmd.command and (cmd.command.startswith(cmd_text[:30]) or cmd_text[:30] in cmd.command):
-                        block_cmd_map[i] = cmd
-                        used_cmd_indices.add(j)
-                        break
-
-            if i not in block_cmd_map and tool_invocations:
-                matched_tool, used_tool_indices = _match_tool_for_block(block.content, tool_invocations, used_tool_indices)
-                if matched_tool:
-                    block_tool_map[i] = matched_tool
-
-        # Recursively build metadata for nested subagent blocks
-        if block.kind in ("subagent", "subagent_failed", "subagent_incomplete") and block.content_blocks:
-            block._nested_meta = _build_block_metadata(block.content_blocks, block.tool_invocations, block.command_runs)
-
-    return {
-        "block_tool_map": block_tool_map,
-        "block_cmd_map": block_cmd_map,
-        "matched_tool_names": {t.name for t in block_tool_map.values()},
-        "matched_cmd_indices": used_cmd_indices,
-    }
 
 
 def _preprocess_messages(session: ChatSession) -> tuple[str | None, dict[int, dict]]:
@@ -226,7 +55,7 @@ def _preprocess_messages(session: ChatSession) -> tuple[str | None, dict[int, di
         if message.role == "user" and first_user_prompt is None:
             first_user_prompt = message.content
 
-        message_metadata[msg_idx] = _build_block_metadata(message.content_blocks, message.tool_invocations, message.command_runs)
+        message_metadata[msg_idx] = build_block_metadata(message.content_blocks, message.tool_invocations, message.command_runs)
 
     return first_user_prompt, message_metadata
 
@@ -280,6 +109,4 @@ def generate_session_html_filename(session: ChatSession) -> str:
     Returns:
         A safe filename string with .html extension.
     """
-    # Reuse markdown filename logic but swap extension
-    md_filename = _md_generate_filename(session)
-    return md_filename.rsplit(".", 1)[0] + ".html"
+    return _generate_filename(session, extension="html")

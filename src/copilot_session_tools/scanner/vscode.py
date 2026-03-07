@@ -24,6 +24,12 @@ from .models import (
     FileChange,
     ToolInvocation,
 )
+from .shared import (
+    SHELL_TOOL_NAMES,
+    extract_command_run,
+    normalize_invocation_message,
+    normalize_tool_status,
+)
 
 RawBlock = (
     tuple[str, str]
@@ -94,6 +100,13 @@ def _parse_tool_invocation_serialized(item: dict) -> ToolInvocation | None:
             val = tool_data.get("input")
             input_data = str(val) if val is not None else None
 
+    # D6 (issue #59): Also try toolSpecificData.input when no input found yet
+    # (above elif skips it when commandLine or file keys exist)
+    if not input_data and isinstance(tool_data, dict) and "input" in tool_data:
+        val = tool_data.get("input")
+        if val is not None:
+            input_data = str(val)
+
     # Extract MCP tool results if available
     if isinstance(result_details, dict):
         # MCP tools store input/output in resultDetails
@@ -113,8 +126,15 @@ def _parse_tool_invocation_serialized(item: dict) -> ToolInvocation | None:
                 if output_parts:
                     result_data = "\n".join(output_parts)
 
-    # Status: use isComplete to determine status
-    status = "completed" if item.get("isComplete") else "pending"
+    # Status: normalise to CLI canonical values (D1 — issue #55)
+    is_complete = item.get("isComplete", False)
+    # Detect error conditions: isComplete=false with error indicators in result
+    has_error = False
+    if not is_complete and isinstance(result_details, dict):
+        error_msg = result_details.get("errorMessage") or result_details.get("error")
+        if error_msg:
+            has_error = True
+    status = normalize_tool_status(None, is_complete=is_complete, has_error=has_error)
 
     # Extract source type (mcp vs internal)
     source = item.get("source", {})
@@ -137,6 +157,10 @@ def _parse_tool_invocation_serialized(item: dict) -> ToolInvocation | None:
             result_data = str(subagent_result)
         if not (isinstance(invocation_msg, str) and invocation_msg.strip()):
             invocation_msg = f"\U0001f916 Agent ({agent_name}): {description}"
+
+    # Normalise invocation message for built-in tools (D4 — issue #58)
+    if isinstance(invocation_msg, str):
+        invocation_msg = normalize_invocation_message(tool_id, tool_data, invocation_msg)
 
     return ToolInvocation(
         name=str(tool_id) if tool_id else "unknown",
@@ -287,6 +311,18 @@ def _process_response_items(
                 if tool_inv:
                     tool_invocations.append(tool_inv)
 
+                # D2 (issue #56): Extract CommandRun for terminal tools
+                tool_id_str = item.get("toolId", "")
+                if (tool_inv and tool_id_str in SHELL_TOOL_NAMES) or tool_data_kind == "terminal":
+                    cmd = extract_command_run(
+                        tool_name=tool_inv.name if tool_inv else tool_id_str,
+                        command=tool_inv.input if tool_inv else None,
+                        output=tool_inv.result if tool_inv else None,
+                        status=tool_inv.status if tool_inv else None,
+                    )
+                    if cmd:
+                        command_runs.append(cmd)
+
                 # Check for sub-agent tool invocations (parent)
                 if tool_data_kind == "subagent":
                     agent_name = tool_data.get("agentName", "Agent")
@@ -311,25 +347,21 @@ def _process_response_items(
                             fc = _parse_text_edit_group(child, file_contents_cache)
                             if fc:
                                 nested_file_changes.append(fc)
-                        # Terminal child tools without an invocation message still need an inline
-                        # placeholder block so they render in sequence instead of falling into the
-                        # trailing "Command Runs" section.
-                        if child_inv and child_inv.name == "run_in_terminal" and not child_inv.invocation_message:
-                            command = child_inv.input or ""
-                            nested_command_runs.append(
-                                CommandRun(
-                                    command=command,
-                                    result=child_inv.result,
-                                    status=child_inv.status,
-                                    output=child_inv.result,
-                                )
+                        # D2 (issue #56): Extract CommandRun for child terminal tools
+                        if child_inv and child_inv.name in SHELL_TOOL_NAMES:
+                            child_cmd = extract_command_run(
+                                tool_name=child_inv.name,
+                                command=child_inv.input,
+                                output=child_inv.result,
+                                status=child_inv.status,
                             )
-                            nested_blocks.append(
-                                ContentBlock(
-                                    kind="toolInvocation",
-                                    content=f"$ {command}" if command else "run_in_terminal",
-                                )
-                            )
+                            if child_cmd:
+                                nested_command_runs.append(child_cmd)
+                                # Only add a $ block if no invocation_message already covers this child
+                                if not child_inv.invocation_message:
+                                    cmd_content = f"$ {child_cmd.command}" if child_cmd.command else child_inv.name
+                                    nested_blocks.append(ContentBlock(kind="toolInvocation", content=cmd_content))
+
                     if result_text:
                         parts.append(str(result_text))
                         nested_blocks.append(ContentBlock(kind="text", content=str(result_text)))
@@ -347,8 +379,9 @@ def _process_response_items(
                         msg_text = msg_text["value"]
                     msg_text = str(msg_text)
                     response_content.append(msg_text)
-                    raw_blocks.append(("toolInvocation", msg_text, None))
-                elif tool_inv and tool_inv.name == "run_in_terminal":
+                    # D3 (issue #57): Populate description with toolId
+                    raw_blocks.append(("toolInvocation", msg_text, tool_id_str or None))
+                elif tool_inv and tool_inv.name in SHELL_TOOL_NAMES:
                     command = tool_inv.input or ""
                     inline_text = f"$ {command}" if command else "run_in_terminal"
                     response_content.append(inline_text)

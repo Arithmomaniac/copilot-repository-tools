@@ -1,282 +1,21 @@
 """Flask web application for viewing Copilot chat archive."""
 
 import re
-from datetime import UTC, datetime
-from urllib.parse import unquote
 
-import markdown
 from flask import Flask, flash, jsonify, make_response, redirect, render_template, request, session, url_for
 
 from copilot_session_tools import Database, __version__, generate_session_filename, get_vscode_storage_paths
 from copilot_session_tools.refresh import enrich_single_session, run_enrichment, run_refresh
-
-# Create a reusable markdown converter with extensions
-_md_converter = markdown.Markdown(
-    extensions=[
-        "tables",  # Support markdown tables
-        "fenced_code",  # Support ```code blocks```
-        "sane_lists",  # Better list handling
-        "smarty",  # Smart quotes and dashes
-        "nl2br",  # Convert newlines to <br> tags
-    ],
-    extension_configs={
-        "smarty": {
-            "smart_dashes": True,
-            "smart_quotes": True,
-        },
-    },
+from copilot_session_tools.utils import (
+    build_block_metadata,
+    extract_filename,
+    format_timestamp,
+    markdown_to_html,
+    match_tool_for_block,
+    parse_diff_stats,
+    strip_ansi,
+    urldecode,
 )
-
-
-def _markdown_to_html(text: str) -> str:
-    """Convert markdown text to HTML using the markdown library."""
-    if not text:
-        return ""
-
-    # Replace Windows line endings with Unix ones for consistent processing
-    text = text.replace("\r\n", "\n")
-
-    # Replace common VS Code Copilot UI patterns with proper markdown
-
-    def extract_filename_from_file_uri(uri: str) -> str:
-        """Extract the filename from a file:// URI."""
-        # Decode URL encoding and get the leaf name
-        decoded = unquote(uri)
-        # Remove file:// prefix and any anchor
-        path = decoded.replace("file:///", "").split("#")[0]
-        # Get leaf name
-        if "/" in path:
-            return path.split("/")[-1]
-        if "\\" in path:
-            return path.split("\\")[-1]
-        return path
-
-    # Handle empty-text links with file:// URIs: [](file://...) -> `filename`
-    # This covers patterns like "Reading [](file://...)" or "Created [](file://...)"
-    def replace_empty_file_link(match):
-        uri = match.group(1)
-        filename = extract_filename_from_file_uri(uri)
-        return f"`{filename}`"
-
-    text = re.sub(r"\[\]\(file://([^)]+)\)", replace_empty_file_link, text)
-
-    # "Using "Tool Name"" -> _Using "Tool Name"_
-    text = re.sub(r'^(Using ["""][^"""]+["""])$', r"_\1_", text, flags=re.MULTILINE)
-
-    # "_Edited `filename`_" -> "_Edited filename_" (remove backticks within italics)
-    text = re.sub(r"_Edited `([^`]+)`_", r"_Edited \1_", text)
-
-    # "Ran terminal command:" -> _Ran terminal command:_
-    text = re.sub(r"^(Ran terminal command:.*)$", r"_\1_", text, flags=re.MULTILINE)
-
-    # "Let me [action]:" or "Now let me [action]:" -> _Let me [action]:_
-    text = re.sub(r"^((?:Now )?[Ll]et me [^:]+:)$", r"_\1_", text, flags=re.MULTILINE)
-
-    # "Made changes." at end -> _Made changes._
-    text = re.sub(r"^(Made changes\.)$", r"_\1_", text, flags=re.MULTILINE)
-
-    # Reset the markdown converter state for each conversion
-    _md_converter.reset()
-
-    # Convert markdown to HTML
-    result = _md_converter.convert(text)
-
-    return result
-
-
-def _urldecode(text: str) -> str:
-    """Decode URL-encoded text (e.g., 'c%3A' -> 'c:')."""
-    if not text:
-        return ""
-    return unquote(text)
-
-
-# Regex pattern for ANSI escape codes (SGR sequences, cursor control, etc.)
-_ANSI_ESCAPE_PATTERN = re.compile(
-    r"\x1b"  # ESC character (can also appear as \033 or \e)
-    r"(?:"
-    r"\[[0-9;]*[A-Za-z]"  # CSI sequences like [32;1m (colors), [2J (clear)
-    r"|"
-    r"\][^\x07]*\x07"  # OSC sequences ending with BEL
-    r"|"
-    r"\][^\x1b]*\x1b\\"  # OSC sequences ending with ST
-    r")"
-)
-
-
-def _strip_ansi(text: str | None) -> str:
-    """Strip ANSI escape codes from terminal output.
-
-    Handles common ANSI sequences including:
-    - SGR (Select Graphic Rendition) codes for colors/formatting: ESC[32;1m
-    - Cursor control: ESC[2J, ESC[H
-    - OSC (Operating System Command) sequences
-
-    Args:
-        text: Text that may contain ANSI escape codes, or None.
-
-    Returns:
-        Text with ANSI escape codes removed, or empty string if text is None/empty.
-    """
-    if not text:
-        return ""
-    return _ANSI_ESCAPE_PATTERN.sub("", text)
-
-
-def _format_timestamp(value: str) -> str:
-    """Format an epoch timestamp (milliseconds) to a human-readable date string."""
-    if not value:
-        return ""
-    try:
-        # Handle both string and numeric values
-        epoch_ms = float(value)
-        # Convert milliseconds to seconds
-        epoch_s = epoch_ms / 1000
-        dt = datetime.fromtimestamp(epoch_s, tz=UTC)
-        return dt.strftime("%Y-%m-%d %H:%M:%S")
-    except (ValueError, TypeError, OSError):
-        # If parsing fails, return original value
-        return str(value)
-
-
-def _parse_diff_stats(diff: str | None) -> dict:
-    """Parse a diff string and return addition/deletion line counts.
-
-    Args:
-        diff: The diff string in unified diff format.
-
-    Returns:
-        Dictionary with 'additions' and 'deletions' counts.
-    """
-    if not diff:
-        return {"additions": 0, "deletions": 0}
-
-    additions = 0
-    deletions = 0
-
-    for line in diff.split("\n"):
-        # Skip diff headers and hunk headers
-        if line.startswith("+++") or line.startswith("---") or line.startswith("@@"):
-            continue
-        if line.startswith("+"):
-            additions += 1
-        elif line.startswith("-"):
-            deletions += 1
-
-    return {"additions": additions, "deletions": deletions}
-
-
-def _extract_filename(path: str | None) -> str:
-    """Extract the filename from a file path.
-
-    Args:
-        path: Full file path (Unix or Windows style).
-
-    Returns:
-        The filename portion of the path.
-    """
-    if not path:
-        return ""
-    # Handle both Unix and Windows path separators
-    if "/" in path:
-        return path.split("/")[-1]
-    if "\\" in path:
-        return path.split("\\")[-1]
-    return path
-
-
-def _match_tool_for_block(block_content: str, tools: list, used_indices: set) -> tuple:
-    """Match a tool invocation block content to a tool from the list.
-
-    The block content contains text like "Running `pipelines_get_build_status`"
-    but the tool name might be "mcp_ado-mcp_pipelines_get_build_status".
-    We need to match by finding if the short name appears in the full tool name.
-
-    Args:
-        block_content: The content of the toolInvocation block.
-        tools: List of ToolInvocation objects.
-        used_indices: Set of already used tool indices (to avoid duplicates).
-
-    Returns:
-        Tuple of (matched_tool or None, updated used_indices set).
-    """
-    if not tools:
-        return None, used_indices
-
-    # Extract the tool name from backticks in the content
-    # e.g., "Running `pipelines_get_build_status`" -> "pipelines_get_build_status"
-    import re
-
-    match = re.search(r"`([^`]+)`", block_content)
-    short_name = match.group(1) if match else None
-
-    # Also try to extract from "Running X" pattern without backticks
-    if not short_name:
-        match = re.search(r"Running\s+(\S+)", block_content)
-        short_name = match.group(1) if match else None
-
-    if short_name:
-        # Try to find a tool whose name ends with or contains the short name
-        for i, tool in enumerate(tools):
-            if i in used_indices:
-                continue
-            # Check if short_name appears in the tool name (case-insensitive)
-            if short_name.lower() in tool.name.lower() or tool.name.lower().endswith(short_name.lower()):
-                used_indices = used_indices | {i}
-                return tool, used_indices
-
-    # Fallback: try sequential matching for tools not yet used
-    # Skip 'task' tools — they render as subagent blocks, not inline tool invocations
-    for i, tool in enumerate(tools):
-        if i not in used_indices and tool.name != "task":
-            used_indices = used_indices | {i}
-            return tool, used_indices
-
-    return None, used_indices
-
-
-def _build_block_metadata(content_blocks, tool_invocations, command_runs):
-    """Build tool/command matching metadata for a set of content blocks.
-
-    This is used for both outer message blocks and nested subagent blocks.
-
-    Returns:
-        Dict with block_tool_map, block_cmd_map, matched_tool_names, matched_cmd_indices.
-    """
-    block_tool_map = {}
-    block_cmd_map = {}
-    used_tool_indices = set()
-    used_cmd_indices = set()
-
-    for i, block in enumerate(content_blocks):
-        if block.kind == "toolInvocation":
-            # First try to match against command runs (for CLI shell commands)
-            if command_runs and block.content.startswith("$"):
-                cmd_text = block.content[1:].strip()
-                for j, cmd in enumerate(command_runs):
-                    if j in used_cmd_indices:
-                        continue
-                    if cmd.command and (cmd.command.startswith(cmd_text[:30]) or cmd_text[:30] in cmd.command):
-                        block_cmd_map[i] = cmd
-                        used_cmd_indices.add(j)
-                        break
-
-            # If no command match, try matching against tool invocations
-            if i not in block_cmd_map and tool_invocations:
-                matched_tool, used_tool_indices = _match_tool_for_block(block.content, tool_invocations, used_tool_indices)
-                if matched_tool:
-                    block_tool_map[i] = matched_tool
-
-        # Recursively build metadata for nested subagent blocks
-        if block.kind in ("subagent", "subagent_failed", "subagent_incomplete") and block.content_blocks:
-            block._nested_meta = _build_block_metadata(block.content_blocks, block.tool_invocations, block.command_runs)
-
-    return {
-        "block_tool_map": block_tool_map,
-        "block_cmd_map": block_cmd_map,
-        "matched_tool_names": {t.name for t in block_tool_map.values()},
-        "matched_cmd_indices": used_cmd_indices,
-    }
 
 
 def create_app(
@@ -308,15 +47,15 @@ def create_app(
     app.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(24))
 
     # Register Jinja2 filters
-    app.jinja_env.filters["markdown"] = _markdown_to_html
-    app.jinja_env.filters["urldecode"] = _urldecode
-    app.jinja_env.filters["format_timestamp"] = _format_timestamp
-    app.jinja_env.filters["parse_diff_stats"] = _parse_diff_stats
-    app.jinja_env.filters["extract_filename"] = _extract_filename
-    app.jinja_env.filters["strip_ansi"] = _strip_ansi
+    app.jinja_env.filters["markdown"] = markdown_to_html
+    app.jinja_env.filters["urldecode"] = urldecode
+    app.jinja_env.filters["format_timestamp"] = format_timestamp
+    app.jinja_env.filters["parse_diff_stats"] = parse_diff_stats
+    app.jinja_env.filters["extract_filename"] = extract_filename
+    app.jinja_env.filters["strip_ansi"] = strip_ansi
 
     # Register global function for tool matching
-    app.jinja_env.globals["match_tool_for_block"] = _match_tool_for_block
+    app.jinja_env.globals["match_tool_for_block"] = match_tool_for_block
     app.jinja_env.globals["get_nested_meta"] = lambda block: getattr(block, "_nested_meta", {})
 
     # Store database path, title, storage paths, and CLI inclusion in app config
@@ -337,7 +76,6 @@ def create_app(
         if not content:
             return ""
         # Normalize whitespace (replace newlines and multiple spaces with single space)
-        import re
 
         normalized = re.sub(r"\s+", " ", content).strip()
         if len(normalized) > max_length:
@@ -493,7 +231,7 @@ def create_app(
             if message.role == "user" and first_user_prompt is None:
                 first_user_prompt = message.content
 
-            message_metadata[msg_idx] = _build_block_metadata(message.content_blocks, message.tool_invocations, message.command_runs)
+            message_metadata[msg_idx] = build_block_metadata(message.content_blocks, message.tool_invocations, message.command_runs)
 
         enrichment_version = db.get_session_enrichment_version(session_id) if is_enriched else None
         needs_version_refresh = False

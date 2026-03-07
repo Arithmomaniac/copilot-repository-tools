@@ -8,40 +8,23 @@ Exports chat sessions to markdown format with:
 - Thinking block notices in italics (without the full content)
 """
 
-from datetime import UTC, datetime
 from pathlib import Path
-from urllib.parse import unquote
 
 from .scanner import ChatMessage, ChatSession
-
-# Threshold to distinguish between seconds and milliseconds timestamps.
-# Timestamps above this value (approximately year 2001 in milliseconds) are
-# treated as milliseconds and divided by 1000 to convert to seconds.
-_MILLISECONDS_THRESHOLD = 1e12
+from .utils import (
+    format_timestamp as _format_timestamp_raw,
+)
+from .utils import (
+    generate_session_filename as _generate_session_filename,
+)
+from .utils import (
+    urldecode as _urldecode,
+)
 
 
 def _format_timestamp(value: str | int | None) -> str:
-    """Format an epoch timestamp (milliseconds) to a human-readable date string."""
-    if not value:
-        return "Unknown"
-    try:
-        # Handle both string and numeric values - float() accepts both
-        numeric_value = float(value)
-        # Check if milliseconds (common for JS timestamps)
-        if numeric_value > _MILLISECONDS_THRESHOLD:
-            numeric_value = numeric_value / 1000
-        dt = datetime.fromtimestamp(numeric_value, tz=UTC)
-        return dt.strftime("%Y-%m-%d %H:%M:%S")
-    except (ValueError, TypeError, OSError):
-        # If parsing fails, return original value as string
-        return str(value)
-
-
-def _urldecode(text: str) -> str:
-    """Decode URL-encoded text (e.g., 'c%3A' -> 'c:')."""
-    if not text:
-        return ""
-    return unquote(text)
+    """Markdown-specific timestamp wrapper (returns "Unknown" for missing values)."""
+    return _format_timestamp_raw(value, unknown_label="Unknown")
 
 
 def _format_tool_summary(message: ChatMessage, include_inputs: bool = False) -> str:
@@ -401,23 +384,6 @@ def export_session_to_file(
     Path(output_path).write_text(markdown, encoding="utf-8")
 
 
-def _sanitize_filename(name: str, max_length: int = 50) -> str:
-    """Sanitize a string to be safe for use as a filename.
-
-    Replaces any characters that are not alphanumeric, hyphen, underscore,
-    or period with underscores. Also limits the length.
-
-    Args:
-        name: The string to sanitize.
-        max_length: Maximum length of the resulting string.
-
-    Returns:
-        A filesystem-safe string.
-    """
-    safe_name = "".join(c if c.isalnum() or c in ("-", "_", ".") else "_" for c in name)
-    return safe_name[:max_length]
-
-
 def generate_session_filename(session: ChatSession) -> str:
     """Generate a filename for a session's markdown export.
 
@@ -425,35 +391,6 @@ def generate_session_filename(session: ChatSession) -> str:
         session: The ChatSession to generate a filename for.
 
     Returns:
-        A safe filename string.
+        A safe filename string with .md extension.
     """
-    # Use custom title, workspace name, or session ID prefix
-    if session.custom_title:
-        name = session.custom_title
-    elif session.workspace_name:
-        name = session.workspace_name
-    else:
-        name = session.session_id[:16]
-
-    # Add date if available
-    date_str = ""
-    if session.created_at:
-        try:
-            ts = session.created_at
-            if isinstance(ts, str):
-                ts = float(ts)
-            if ts > _MILLISECONDS_THRESHOLD:
-                ts = ts / 1000
-            date_str = datetime.fromtimestamp(ts, tz=UTC).strftime("%Y%m%d")
-        except (ValueError, TypeError, OSError):
-            pass
-
-    # Create safe filename
-    safe_name = _sanitize_filename(name)
-
-    if date_str:
-        filename = f"{date_str}_{safe_name}_{session.session_id[:8]}.md"
-    else:
-        filename = f"{safe_name}_{session.session_id[:8]}.md"
-
-    return filename
+    return _generate_session_filename(session, extension="md")

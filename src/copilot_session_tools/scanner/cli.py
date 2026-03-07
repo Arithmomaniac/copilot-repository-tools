@@ -216,7 +216,7 @@ class _CliSessionBuilder:
             return
 
         if tool_name == "ask_user":
-            question = arguments.get("question", "")
+            question = arguments.get("question") or arguments.get("message", "")
             choices = arguments.get("choices", [])
             if question:
                 content = f"❓ {question}"
@@ -822,8 +822,9 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                     parts.append(f"+{lines_added}/-{lines_removed} lines across {len(files_modified)} files")
                 model_metrics = event_data.get("modelMetrics") or {}
                 for model_name, metrics in model_metrics.items():
-                    requests = (metrics.get("requests") or {}).get("count", 0)
-                    cost = (metrics.get("requests") or {}).get("cost", 0)
+                    metric_obj = metrics or {}
+                    requests = (metric_obj.get("requests") or {}).get("count", 0)
+                    cost = (metric_obj.get("requests") or {}).get("cost", 0)
                     if requests:
                         parts.append(f"{model_name}: {requests} requests, cost {cost}")
                 builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=" · ".join(parts), description="shutdown"))

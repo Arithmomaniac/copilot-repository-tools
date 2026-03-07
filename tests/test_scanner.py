@@ -259,7 +259,7 @@ class TestResponseItemKinds:
             assert result is not None
             assert isinstance(result, expected_type)
             assert result.name == "run_command"
-            assert result.status == "completed"
+            assert result.status == "success"  # D1: normalised from "completed"
 
     def test_nested_uri_object_handling(self):
         """Test that nested URI objects (common in VS Code data) are correctly parsed."""
@@ -2281,3 +2281,212 @@ class TestCLIStructuredSubagentContent:
         assert len(block.content_blocks) > 0, "content_blocks should survive DB round-trip"
         assert len(block.tool_invocations) > 0, "tool_invocations should survive DB round-trip"
         assert block.tool_invocations[0].name == "grep"
+
+
+class TestSharedHelpers:
+    """Tests for the shared scanner helpers in scanner/shared.py."""
+
+    # --- normalize_tool_status ---
+
+    def test_completed_maps_to_success(self):
+        """VS Code 'completed' should normalise to 'success'."""
+        from copilot_session_tools.scanner.shared import normalize_tool_status
+
+        assert normalize_tool_status("completed") == "success"
+
+    def test_complete_maps_to_success(self):
+        """VS Code 'complete' (no -d) should also normalise to 'success'."""
+        from copilot_session_tools.scanner.shared import normalize_tool_status
+
+        assert normalize_tool_status("complete") == "success"
+
+    def test_is_complete_true(self):
+        """is_complete=True with no raw_status should return 'success'."""
+        from copilot_session_tools.scanner.shared import normalize_tool_status
+
+        assert normalize_tool_status(None, is_complete=True) == "success"
+
+    def test_is_complete_false(self):
+        """is_complete=False with no raw_status should return 'pending'."""
+        from copilot_session_tools.scanner.shared import normalize_tool_status
+
+        assert normalize_tool_status(None, is_complete=False) == "pending"
+
+    def test_has_error(self):
+        """has_error=True should always return 'error'."""
+        from copilot_session_tools.scanner.shared import normalize_tool_status
+
+        assert normalize_tool_status(None, has_error=True) == "error"
+
+    def test_error_overrides_is_complete(self):
+        """has_error should override is_complete=True."""
+        from copilot_session_tools.scanner.shared import normalize_tool_status
+
+        assert normalize_tool_status(None, is_complete=True, has_error=True) == "error"
+
+    def test_none_returns_none(self):
+        """No inputs at all should return None."""
+        from copilot_session_tools.scanner.shared import normalize_tool_status
+
+        assert normalize_tool_status(None) is None
+
+    def test_passthrough_unknown(self):
+        """Unknown status strings should be passed through unchanged."""
+        from copilot_session_tools.scanner.shared import normalize_tool_status
+
+        assert normalize_tool_status("custom_status") == "custom_status"
+
+    # --- extract_command_run ---
+
+    def test_shell_tool_creates_command_run(self):
+        """Shell tool names should create a CommandRun."""
+        from copilot_session_tools.scanner.shared import extract_command_run
+
+        result = extract_command_run("powershell", "ls")
+        assert result is not None
+        assert result.command == "ls"
+
+    def test_non_shell_returns_none(self):
+        """Non-shell tool names should return None."""
+        from copilot_session_tools.scanner.shared import extract_command_run
+
+        assert extract_command_run("read_file", "path") is None
+
+    def test_empty_command_returns_none(self):
+        """Empty command string should return None."""
+        from copilot_session_tools.scanner.shared import extract_command_run
+
+        assert extract_command_run("bash", "") is None
+
+    def test_all_shell_tools_recognized(self):
+        """Every member of SHELL_TOOL_NAMES should produce a CommandRun."""
+        from copilot_session_tools.scanner.shared import SHELL_TOOL_NAMES, extract_command_run
+
+        for name in SHELL_TOOL_NAMES:
+            result = extract_command_run(name, "echo hi")
+            assert result is not None, f"SHELL_TOOL_NAMES member '{name}' did not produce a CommandRun"
+            assert result.command == "echo hi"
+
+    # --- normalize_invocation_message ---
+
+    def test_generic_message_replaced(self):
+        """Generic 'Using \"Read File\"' message should be replaced with 'Viewing `filename`'."""
+        from copilot_session_tools.scanner.shared import normalize_invocation_message
+
+        tool_data = {"file": {"uri": {"fsPath": "/home/user/project/main.py", "path": "/home/user/project/main.py"}}}
+        result = normalize_invocation_message("copilot_readFile", tool_data, 'Using "Read File"')
+        assert result == "Viewing `main.py`"
+
+    def test_non_generic_message_preserved(self):
+        """Non-generic (custom) messages should be preserved as-is."""
+        from copilot_session_tools.scanner.shared import normalize_invocation_message
+
+        result = normalize_invocation_message("copilot_readFile", {"file": {"uri": {"fsPath": "/a/b.py"}}}, "Custom description for read")
+        assert result == "Custom description for read"
+
+    def test_unknown_tool_preserved(self):
+        """Unknown tool IDs should preserve the message unchanged."""
+        from copilot_session_tools.scanner.shared import normalize_invocation_message
+
+        result = normalize_invocation_message("unknown_tool", {}, 'Using "Unknown"')
+        assert result == 'Using "Unknown"'
+
+    def test_none_message_returns_none(self):
+        """None input message should return None."""
+        from copilot_session_tools.scanner.shared import normalize_invocation_message
+
+        assert normalize_invocation_message("copilot_readFile", {}, None) is None
+
+
+class TestVSCodeRenderingAlignment:
+    """Tests for VS Code rendering alignment changes D1-D6 through the scanner."""
+
+    def test_d1_status_success(self):
+        """D1: isComplete=True should produce status='success'."""
+        item = {
+            "kind": "toolInvocationSerialized",
+            "toolId": "run_command",
+            "invocationMessage": "Running command",
+            "isComplete": True,
+            "toolSpecificData": {"commandLine": "ls -la"},
+            "resultDetails": {},
+        }
+        inv = _parse_tool_invocation_serialized(item)
+        assert inv is not None
+        assert inv.status == "success"
+
+    def test_d1_status_pending(self):
+        """D1: isComplete=False (no error) should produce status='pending'."""
+        item = {
+            "kind": "toolInvocationSerialized",
+            "toolId": "run_command",
+            "invocationMessage": "Running command",
+            "isComplete": False,
+            "toolSpecificData": {"commandLine": "ls -la"},
+            "resultDetails": {},
+        }
+        inv = _parse_tool_invocation_serialized(item)
+        assert inv is not None
+        assert inv.status == "pending"
+
+    def test_d1_status_error(self):
+        """D1: isComplete=False with errorMessage should produce status='error'."""
+        item = {
+            "kind": "toolInvocationSerialized",
+            "toolId": "run_command",
+            "invocationMessage": "Running command",
+            "isComplete": False,
+            "toolSpecificData": {"commandLine": "ls -la"},
+            "resultDetails": {"errorMessage": "fail"},
+        }
+        inv = _parse_tool_invocation_serialized(item)
+        assert inv is not None
+        assert inv.status == "error"
+
+    def test_d4_readfile_invocation_normalized(self):
+        """D4: Generic 'Using \"Read File\"' message should be normalised for copilot_readFile."""
+        item = {
+            "kind": "toolInvocationSerialized",
+            "toolId": "copilot_readFile",
+            "invocationMessage": 'Using "Read File"',
+            "isComplete": True,
+            "toolSpecificData": {"file": {"uri": {"fsPath": "/home/user/project/main.py", "path": "/home/user/project/main.py"}}},
+            "resultDetails": {},
+        }
+        inv = _parse_tool_invocation_serialized(item)
+        assert inv is not None
+        assert inv.invocation_message == "Viewing `main.py`"
+
+    def test_d6_input_from_tool_specific_data(self):
+        """D6: toolSpecificData.input should be extracted when commandLine also exists."""
+        item = {
+            "kind": "toolInvocationSerialized",
+            "toolId": "run_command",
+            "invocationMessage": "Running command",
+            "isComplete": True,
+            "toolSpecificData": {
+                "commandLine": "npm test",
+                "input": "extra-input-data",
+            },
+            "resultDetails": {},
+        }
+        inv = _parse_tool_invocation_serialized(item)
+        assert inv is not None
+        # commandLine is the preferred input source
+        assert inv.input == "npm test"
+
+    def test_d6_input_fallback_from_tool_specific_data(self):
+        """D6: toolSpecificData.input used as fallback when commandLine is absent."""
+        item = {
+            "kind": "toolInvocationSerialized",
+            "toolId": "copilot_readFile",
+            "invocationMessage": "Reading file",
+            "isComplete": True,
+            "toolSpecificData": {
+                "input": "/path/to/file.py",
+            },
+            "resultDetails": {},
+        }
+        inv = _parse_tool_invocation_serialized(item)
+        assert inv is not None
+        assert inv.input == "/path/to/file.py"
