@@ -76,9 +76,37 @@ Before committing any changes:
 
 Linting, formatting, and type checks are also enforced by a sessionEnd hook. The full test suite is enforced in CI via GitHub Actions and must pass before merging.
 
+## Rendering Architecture
+
+The rendering pipeline is: **raw session files → scanner → database → renderers**.
+
+1. **Scanner** (`src/copilot_session_tools/scanner/`) parses CLI `.jsonl` and VS Code `.json`/`.jsonl` files into `ChatMessage` objects with parent/child nesting (e.g., agent tool invocations are children of the agent message).
+2. **Database** stores parsed messages with relationships intact.
+3. **Renderers** consume the stored data:
+   - **Web viewer** (`src/copilot_session_tools/web/`, `session.html` Jinja template) — Flask app at `http://127.0.0.1:5000/`
+   - **Markdown exporter** (`markdown_exporter.py`) — static `.md` export
+   - **HTML exporter** (`html_exporter.py`) — static `.html` export
+
+Key rendering rules:
+- Agent/subagent blocks nest inside assistant messages as `<details class="subagent-block">`
+- Tool invocations render **inline** within the message that triggered them, not in a trailing section
+- Both CLI and VS Code sessions should render identically for equivalent content
+
 ## Visual Self-Verification
 
-This project renders Copilot chat sessions as HTML (web viewer) and Markdown (export). Rendering changes are invisible to unit tests alone — you must verify them visually.
+This project renders Copilot chat sessions as HTML (web viewer) and Markdown (export). Rendering changes are invisible to unit tests alone — you **must** verify them visually.
+
+**IMPORTANT:** For any change to scanner, exporters, or web templates — you MUST visually verify BEFORE committing. Do not wait to be asked. This is a required step:
+1. Start the web server (`uv run copilot-session-tools web`)
+2. Capture Playwright screenshots of affected sessions
+3. View the screenshots yourself to verify correctness
+4. Present visual evidence to the user before committing
+
+For rendering changes, **do not commit until the user has seen and approved the visual result**. Present screenshots or a Showboat demo first, then ask if they want to commit.
+
+### Spot-checking with real sessions
+
+When verifying rendering changes, spot-check against **real archived sessions** via the web viewer, not just test fixtures. Use sessions that actually contain the feature being modified (e.g., sessions with real subagent events for agent rendering work, not sessions that merely mention "subagent" in text).
 
 ### Snapshot baselines (automated regression detection)
 
@@ -136,6 +164,19 @@ showboat image temp_export/demo.md "temp_export/expanded.png"
 ```
 
 Showboat demos are not committed — they live in `temp_export/` (gitignored) for session-scoped review.
+
+## PR Workflow ("Shepherd the PR")
+
+When asked to "shepherd the PR", "guide through the PR process", or similar:
+
+1. `git fetch origin && git merge origin/main` — always sync with main first
+2. Run `python scripts/bump_version.py <major|minor|patch>` if version hasn't been bumped yet (use minor for features, patch for fixes)
+3. Commit all changes with a descriptive message
+4. `git push origin HEAD`
+5. Create PR via `gh pr create --fill` (only if explicitly asked — "commit and push" means just push, no PR)
+6. Monitor CI until green
+
+**Do NOT create a PR unless explicitly asked.** "Commit and push" or "create a branch" does not imply creating a PR.
 
 ## Project Structure
 

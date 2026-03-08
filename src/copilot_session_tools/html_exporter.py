@@ -18,6 +18,7 @@ from .utils import (
     match_tool_for_block,
     parse_diff_stats,
     strip_ansi,
+    truncate_preview,
     urldecode,
 )
 from .utils import (
@@ -38,6 +39,7 @@ def _get_jinja_env() -> Environment:
     env.filters["parse_diff_stats"] = parse_diff_stats
     env.filters["extract_filename"] = extract_filename
     env.filters["strip_ansi"] = strip_ansi
+    env.filters["truncate_preview"] = truncate_preview
     env.globals["match_tool_for_block"] = match_tool_for_block
     env.globals["get_nested_meta"] = lambda block: getattr(block, "_nested_meta", {})
     return env
@@ -60,17 +62,42 @@ def _preprocess_messages(session: ChatSession) -> tuple[str | None, dict[int, di
     return first_user_prompt, message_metadata
 
 
-def session_to_html(session: ChatSession, include_agent_details: bool = True) -> str:
+def session_to_html(session: ChatSession, content_set: set[str] | None = None) -> str:
     """Convert a chat session to a self-contained static HTML string.
 
     Args:
         session: The ChatSession to convert.
-        include_agent_details: If True (default), render full agent content.
-                              If False, show only a summary line per agent.
+        content_set: Controls which content types to include.
+            If None, uses DEFAULT_INCLUDES from content_types module.
 
     Returns:
         Complete HTML document as a string.
     """
+    from .content_types import DEFAULT_INCLUDES
+
+    if content_set is None:
+        content_set = DEFAULT_INCLUDES.copy()
+
+    include_agent_details = "agent-details" in content_set
+    include_thinking = "thinking" in content_set
+
+    # Compute CSS hide classes for static export (no Alpine.js)
+    static_hide_classes_list: list[str] = []
+    if "thinking" not in content_set:
+        static_hide_classes_list.append("hide-thinking")
+    if "diffs" not in content_set:
+        static_hide_classes_list.append("hide-diffs")
+    if "tool-inputs" not in content_set:
+        static_hide_classes_list.append("hide-tool-inputs")
+    if "agent-details" not in content_set:
+        static_hide_classes_list.append("hide-agent-details")
+    if "tools" not in content_set:
+        static_hide_classes_list.append("hide-tools")
+    if "commands" not in content_set:
+        static_hide_classes_list.append("hide-commands")
+    if "file-changes" not in content_set:
+        static_hide_classes_list.append("hide-file-changes")
+
     first_user_prompt, message_metadata = _preprocess_messages(session)
     env = _get_jinja_env()
     template = env.get_template("session.html")
@@ -83,20 +110,25 @@ def session_to_html(session: ChatSession, include_agent_details: bool = True) ->
         static=True,
         is_enriched=True,
         include_agent_details=include_agent_details,
+        include_thinking=include_thinking,
+        static_hide_classes=" ".join(static_hide_classes_list),
     )
 
 
 def export_session_to_html_file(
     session: ChatSession,
     output_path: Path | str,
+    content_set: set[str] | None = None,
 ) -> None:
     """Export a single session to a static HTML file.
 
     Args:
         session: The ChatSession to export.
         output_path: Path to the output HTML file.
+        content_set: Controls which content types to include.
+            If None, uses DEFAULT_INCLUDES from content_types module.
     """
-    html = session_to_html(session)
+    html = session_to_html(session, content_set=content_set)
     Path(output_path).write_text(html, encoding="utf-8")
 
 

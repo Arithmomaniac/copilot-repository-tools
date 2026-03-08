@@ -152,48 +152,50 @@ class TestSessionToMarkdown:
         assert rule_count >= 2
 
     def test_thinking_blocks_omitted(self, session_with_thinking):
-        """Test that thinking block content is omitted but noted."""
+        """Test that thinking block content is completely omitted."""
         markdown = session_to_markdown(session_with_thinking)
 
         # Thinking content should be omitted
         assert "Let me think about this" not in markdown
 
-        # But there should be a notice
-        assert "*[Was thinking...]*" in markdown
+        # Should NOT have any trace of thinking
+        assert "*[Was thinking...]*" not in markdown
+        assert "💭" not in markdown
 
         # Non-thinking content should be present
         assert "Here's my answer after thinking." in markdown
 
     def test_thinking_blocks_included_when_requested(self, session_with_thinking):
         """Test that thinking blocks are included when include_thinking=True."""
-        markdown = session_to_markdown(session_with_thinking, include_thinking=True)
+        markdown = session_to_markdown(session_with_thinking, content_set={"thinking", "agent-details", "tools", "commands", "file-changes"})
 
         # Thinking content should be included
         assert "Let me think about this" in markdown
 
-        # Should be in a blockquote with "Thinking:" label
-        assert "> **Thinking:**" in markdown
+        # Should be in a collapsible details block
+        assert "<details>" in markdown
+        assert "💭 Thinking" in markdown
 
-        # Should NOT have the "[Was thinking...]" notice
-        assert "*[Was thinking...]*" not in markdown
+        # Should NOT have the old blockquote format
+        assert "> **Thinking:**" not in markdown
 
         # Non-thinking content should also be present
         assert "Here's my answer after thinking." in markdown
 
     def test_tool_summary_in_italics(self, session_with_tools):
-        """Test that tool summaries are in italics."""
+        """Test that tool summaries are in italics with emoji."""
         markdown = session_to_markdown(session_with_tools)
 
-        # Tool summary should be in italics
-        assert "*Used" in markdown
+        # Tool summary should have emoji prefix
+        assert "*🔧" in markdown
         assert "file_creator" in markdown
 
     def test_file_changes_summary(self, session_with_tools):
         """Test that file changes are summarized."""
         markdown = session_to_markdown(session_with_tools)
 
-        # File changes should be summarized in italics
-        assert "*Changed file:" in markdown
+        # File changes should be summarized with emoji prefix
+        assert "*📄 Changed:" in markdown
         assert "test.py" in markdown
 
     def test_custom_title_shown(self):
@@ -331,7 +333,7 @@ class TestFormatToolSummary:
             tool_invocations=[ToolInvocation(name="my_tool")],
         )
         result = _format_tool_summary(message)
-        assert "*Used tool: my_tool*" in result
+        assert "*🔧 Tool: my_tool*" in result
 
     def test_multiple_tools(self):
         """Test message with multiple tools."""
@@ -344,7 +346,7 @@ class TestFormatToolSummary:
             ],
         )
         result = _format_tool_summary(message)
-        assert "*Used tools:" in result
+        assert "*🔧 Tools:" in result
         assert "tool1" in result
         assert "tool2" in result
 
@@ -358,7 +360,7 @@ class TestFormatToolSummary:
             ],
         )
         result = _format_tool_summary(message, include_inputs=True)
-        assert "*Used tool: run_in_terminal*" in result
+        assert "*🔧 Tool: run_in_terminal*" in result
         assert "**run_in_terminal input:**" in result
         assert "```" in result
         assert "npm run test" in result
@@ -373,7 +375,7 @@ class TestFormatToolSummary:
             ],
         )
         result = _format_tool_summary(message, include_inputs=False)
-        assert "*Used tool: run_in_terminal*" in result
+        assert "*🔧 Tool: run_in_terminal*" in result
         assert "npm run test" not in result
         assert "```" not in result
 
@@ -400,7 +402,7 @@ class TestFormatFileChangesSummary:
             ],
         )
         result = _format_file_changes_summary(message, include_diffs=True)
-        assert "*Changed file: test.py*" in result
+        assert "*📄 Changed: test.py*" in result
         assert "**test.py:**" in result
         assert "```diff" in result
         assert "+ def test():" in result
@@ -417,7 +419,7 @@ class TestFormatFileChangesSummary:
             ],
         )
         result = _format_file_changes_summary(message, include_diffs=False)
-        assert "*Changed file: test.py*" in result
+        assert "*📄 Changed: test.py*" in result
         assert "```diff" not in result
         assert "def test():" not in result
 
@@ -442,7 +444,7 @@ class TestSessionToMarkdownWithOptions:
                 ),
             ],
         )
-        markdown = session_to_markdown(session, include_tool_inputs=True)
+        markdown = session_to_markdown(session, content_set={"tool-inputs", "tools", "commands", "file-changes", "agent-details"})
         assert "pytest" in markdown
         assert "```" in markdown
 
@@ -463,7 +465,7 @@ class TestSessionToMarkdownWithOptions:
                 ),
             ],
         )
-        markdown = session_to_markdown(session, include_diffs=True)
+        markdown = session_to_markdown(session, content_set={"diffs", "tools", "commands", "file-changes", "agent-details"})
         assert "```diff" in markdown
         assert "print('hello')" in markdown
 
@@ -487,12 +489,13 @@ class TestSessionToMarkdownWithOptions:
                 ),
             ],
         )
-        markdown = session_to_markdown(session, include_diffs=False, include_tool_inputs=False)
+        # Default content_set includes tools/file-changes but not diffs/tool-inputs
+        markdown = session_to_markdown(session)
         assert "ls -la" not in markdown
         assert "new content" not in markdown
         # But summaries should still be there
-        assert "*Used tool:" in markdown
-        assert "*Changed file:" in markdown
+        assert "*🔧 Tool:" in markdown
+        assert "*📄 Changed:" in markdown
 
 
 class TestSanitizeFilename:
@@ -709,3 +712,149 @@ class TestAgentBlockquotes:
         md = session_to_markdown(session)
         assert "Code Review Agent" in md
         assert "completed" in md
+
+
+# ── content_set tests ─────────────────────────────────────────────────
+
+
+def _rich_session() -> ChatSession:
+    """Session with all content types for content_set testing."""
+    return ChatSession(
+        session_id="content-set-test",
+        workspace_name="test-ws",
+        workspace_path="/test",
+        messages=[
+            ChatMessage(role="user", content="Do everything"),
+            ChatMessage(
+                role="assistant",
+                content="Done.",
+                content_blocks=[
+                    ContentBlock(kind="thinking", content="Reasoning about the task..."),
+                    ContentBlock(kind="text", content="Here is my answer."),
+                ],
+                tool_invocations=[
+                    ToolInvocation(name="grep", input="pattern", result="match"),
+                ],
+                command_runs=[
+                    CommandRun(command="npm test", title="Run tests", status="success"),
+                ],
+                file_changes=[
+                    FileChange(path="src/app.py", diff="+new line"),
+                ],
+            ),
+        ],
+        created_at="1704067200000",
+        vscode_edition="stable",
+    )
+
+
+class TestEmojiPrefixes:
+    """Emoji prefixes appear on tool, file, and command summary lines."""
+
+    def test_tool_summary_has_emoji(self):
+        """Tool summary lines include 🔧 emoji."""
+        msg = ChatMessage(
+            role="assistant",
+            content="Done.",
+            tool_invocations=[ToolInvocation(name="grep", input="x", result="y")],
+        )
+        result = _format_tool_summary(msg)
+        assert "🔧" in result
+
+    def test_file_summary_has_emoji(self):
+        """File change summary lines include 📄 emoji."""
+        session = _rich_session()
+        md = session_to_markdown(session, content_set={"file-changes"})
+        assert "📄" in md
+
+    def test_command_summary_has_emoji(self):
+        """Command run summary lines include ⚡ emoji."""
+        msg = ChatMessage(
+            role="assistant",
+            content="Running.",
+            command_runs=[CommandRun(command="npm test", title="Run tests", status="success")],
+        )
+        result = _format_command_runs_summary(msg)
+        assert "⚡" in result
+
+
+class TestThinkingBlocks:
+    """Thinking block inclusion/exclusion via content_set."""
+
+    def test_thinking_included_renders_as_details(self):
+        """When thinking is in content_set, renders as <details> block."""
+        session = _rich_session()
+        md = session_to_markdown(session, content_set={"thinking", "agent-details"})
+        assert "<details>" in md
+        assert "💭 Thinking" in md
+        assert "Reasoning about the task..." in md
+
+    def test_thinking_excluded_fully_omitted(self):
+        """When thinking is NOT in content_set, no trace in output."""
+        session = _rich_session()
+        md = session_to_markdown(session, content_set={"agent-details", "tools", "commands", "file-changes"})
+        assert "thinking" not in md.lower().replace("here's my answer after thinking.", "")
+        assert "[Was thinking]" not in md
+        assert "💭" not in md
+
+
+class TestContentSetSuppression:
+    """T5/T6/T7 suppression via content_set."""
+
+    def test_exclude_tools_omits_tool_lines(self):
+        """Excluding 'tools' removes all tool-related lines."""
+        session = _rich_session()
+        md = session_to_markdown(session, content_set={"commands", "file-changes"})
+        assert "🔧" not in md
+        assert "grep" not in md
+
+    def test_exclude_commands_omits_command_lines(self):
+        """Excluding 'commands' removes all command-related lines."""
+        session = _rich_session()
+        md = session_to_markdown(session, content_set={"tools", "file-changes"})
+        assert "⚡" not in md
+        assert "Run tests" not in md
+
+    def test_exclude_file_changes_omits_file_lines(self):
+        """Excluding 'file-changes' removes all file-related lines."""
+        session = _rich_session()
+        md = session_to_markdown(session, content_set={"tools", "commands"})
+        assert "📄" not in md
+        assert "src/app.py" not in md
+
+
+class TestContentSetEdgeCases:
+    """Edge cases for content_set handling."""
+
+    def test_all_content_excluded(self):
+        """When everything is excluded, only message headers and prose remain."""
+        session = _rich_session()
+        md = session_to_markdown(session, content_set=set())
+        # Header is still present
+        assert "## Message" in md
+        # Prose text from the text content block still renders
+        assert "Here is my answer." in md
+        # None of the optional content types appear
+        assert "🔧" not in md
+        assert "📄" not in md
+        assert "⚡" not in md
+        assert "💭" not in md
+
+    def test_all_content_included(self):
+        """When everything is included, all content renders."""
+        session = _rich_session()
+        full_set = {"thinking", "diffs", "tool-inputs", "agent-details", "tools", "commands", "file-changes"}
+        md = session_to_markdown(session, content_set=full_set)
+        assert "🔧" in md
+        assert "📄" in md
+        assert "⚡" in md
+        assert "💭" in md
+
+    def test_content_set_none_uses_defaults(self):
+        """content_set=None uses DEFAULT_INCLUDES (tools, commands, file-changes, agent-details)."""
+        from copilot_session_tools.content_types import DEFAULT_INCLUDES
+
+        session = _rich_session()
+        md_none = session_to_markdown(session, content_set=None)
+        md_explicit = session_to_markdown(session, content_set=DEFAULT_INCLUDES.copy())
+        assert md_none == md_explicit

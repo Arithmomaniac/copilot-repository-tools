@@ -57,7 +57,8 @@
 
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-    line-height: 1.6;
+    font-size: 14px;
+    line-height: 1.5;
     color: var(--text-primary);
     background-color: var(--bg-primary);
     margin: 0;
@@ -67,14 +68,13 @@ body {
 .container {
     max-width: var(--container-max-width);
     margin: 0 auto;
-    padding: 20px;
+    padding: 8px 16px;
 }
 
 header {
     background-color: var(--bg-secondary);
     border-bottom: 1px solid var(--border-color);
-    padding: 20px 0;
-    margin-bottom: 20px;
+    padding: 8px 0;
     position: sticky;
     top: 0;
     z-index: 100;
@@ -82,6 +82,98 @@ header {
 
 header h1 {
     margin: 0;
+    font-size: 1.1em;
+}
+
+/* Unified sticky toolbar for session page */
+.sticky-toolbar {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background-color: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+    padding: 6px 0;
+}
+
+.toolbar-content {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.toolbar-content .back-link {
+    font-size: 1.1em;
+    text-decoration: none;
+    color: var(--link-color);
+    padding: 2px 6px;
+    flex-shrink: 0;
+}
+
+.toolbar-title {
+    font-size: 1em;
+    font-weight: 600;
+    margin: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+    flex: 1;
+}
+
+.toolbar-meta {
+    font-size: 0.8em;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.toolbar-export {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.toolbar-export .range-input {
+    width: 48px;
+    padding: 2px 4px;
+    font-size: 0.8em;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    text-align: center;
+}
+
+.toolbar-export .range-separator {
+    font-size: 0.8em;
+    color: var(--text-secondary);
+}
+
+.toolbar-btn {
+    padding: 3px 8px;
+    font-size: 0.78em;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.toolbar-btn:hover {
+    background: var(--bg-tertiary);
+    border-color: var(--link-color);
+}
+
+.session-detail-meta {
+    font-size: 0.82em;
+    color: var(--text-secondary);
+    padding: 6px 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
 }
 
 .back-link {
@@ -302,8 +394,8 @@ header h1 {
 }
 
 .message {
-    padding: 16px;
-    margin-bottom: 16px;
+    padding: 9px 14px;
+    margin-bottom: 6px;
     border-radius: 8px;
     border: 1px solid var(--border-color);
 }
@@ -318,15 +410,19 @@ header h1 {
 
 .message-role {
     font-weight: 600;
-    font-size: 0.85em;
+    font-size: 0.8em;
     text-transform: uppercase;
-    margin-bottom: 8px;
+    letter-spacing: 0.3px;
     color: var(--text-secondary);
+    margin-bottom: 0;
 }
+
+.message.user .message-role { color: var(--link-color); }
 
 .message-content {
     word-wrap: break-word;
     overflow-wrap: break-word;
+    line-height: 1.45;
 }
 
 .message-content pre {
@@ -353,8 +449,14 @@ header h1 {
 .message-header {
     display: flex;
     align-items: center;
-    gap: 12px;
-    margin-bottom: 8px;
+    gap: 8px;
+    margin-bottom: 6px;
+    padding: 2px 0 4px 0;
+    border-bottom: 1px solid var(--border-color);
+    position: sticky;
+    top: 38px;
+    z-index: 10;
+    background-color: inherit;
 }
 
 .message-header .message-role {
@@ -366,7 +468,7 @@ header h1 {
     text-decoration: none;
     font-size: 0.8em;
     opacity: 0.5;
-    transition: opacity 0.2s;
+    transition: opacity 0.15s;
     margin-left: auto;
 }
 
@@ -377,7 +479,8 @@ header h1 {
 
 .message-timestamp {
     color: var(--text-secondary);
-    font-size: 0.8em;
+    font-size: 0.75em;
+    opacity: 0.6;
 }
 
 .message.highlighted {
@@ -398,10 +501,9 @@ header h1 {
 }
 
 .collapsible summary {
-    padding: 10px 14px;
+    padding: 6px 10px;
     cursor: pointer;
     font-weight: 500;
-    font-size: 0.9em;
     color: var(--text-secondary);
     display: flex;
     align-items: center;
@@ -419,7 +521,7 @@ header h1 {
 }
 
 .collapsible-content {
-    padding: 12px 14px;
+    padding: 8px 10px;
     border-top: 1px solid var(--border-color);
 }
 
@@ -617,8 +719,8 @@ header h1 {
     transform: rotate(90deg);
 }
 @media (prefers-color-scheme: dark) {
-    .task-complete-label { color: #4ade80; }
-    .task-complete-block { border-left-color: #4ade80; }
+    .task-complete-label { color: #3fb950; }
+    .task-complete-block { border-left-color: #3fb950; }
 }
 
 .thinking-block summary {
@@ -649,7 +751,10 @@ header h1 {
 
 @media (prefers-color-scheme: dark) {
     .thinking-icon, .thinking-label {
-        color: #bb8fce;
+        color: #c084fc;
+    }
+    .thinking-block {
+        border-left-color: #c084fc;
     }
 }
 
@@ -743,6 +848,9 @@ header h1 {
     .subagent-label {
         color: #a5b4fc;
     }
+    .subagent-block {
+        border-left-color: #818cf8;
+    }
 }
 
 .subagent-content {
@@ -752,7 +860,6 @@ header h1 {
 
 /* Compact tool-call lines inside subagent results */
 .subagent-content p em:only-child {
-    font-size: 0.9em;
     display: block;
     margin: 0;
     line-height: 1.25;
@@ -774,8 +881,7 @@ header h1 {
 
 /* Non-collapsible tool invocations: compact inline display */
 .content-block-toolInvocation {
-    font-size: 0.9em;
-    line-height: 1.25;
+    line-height: 1.3;
 }
 
 .content-block-toolInvocation p {
@@ -813,6 +919,25 @@ header h1 {
 .tool-invocation-inline .tool-invocation-wrapper {
     margin-top: 4px;
     margin-left: 0;
+}
+
+.tool-invocation-unmatched {
+    margin: 4px 0;
+}
+
+.tool-invocation-unmatched .tool-invocation-message {
+    color: var(--text-secondary);
+    font-style: italic;
+    font-size: 0.85em;
+    opacity: 0.95;
+}
+
+.tool-invocation-unmatched .tool-invocation-message p {
+    margin: 0;
+}
+
+.tool-invocation-unmatched .tool-invocation-message code {
+    font-size: inherit;
 }
 
 /* Tool invocations */
@@ -1234,27 +1359,6 @@ pre.command-output {
     font-size: 0.9em;
 }
 
-.toolbar-options {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    margin-left: 8px;
-    padding-left: 16px;
-    border-left: 1px solid var(--border-color);
-}
-
-.toolbar-options label {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    cursor: pointer;
-    font-size: 0.85em;
-}
-
-.toolbar-options input[type="checkbox"] {
-    accent-color: var(--link-color);
-}
-
 .copy-markdown-btn {
     background-color: var(--link-color);
     color: white;
@@ -1297,11 +1401,11 @@ pre.command-output {
     border: none;
     color: var(--text-secondary);
     cursor: pointer;
-    padding: 4px 8px;
-    font-size: 0.85em;
+    padding: 2px 6px;
+    font-size: 0.8em;
     opacity: 0.4;
-    transition: opacity 0.2s, color 0.2s;
-    margin-left: 8px;
+    transition: opacity 0.15s, color 0.2s;
+    margin-left: 4px;
 }
 
 .message-copy-btn:hover {
@@ -1312,6 +1416,15 @@ pre.command-output {
 .message-copy-btn.copied {
     color: #1a7f37;
     opacity: 1;
+}
+
+@media (prefers-color-scheme: dark) {
+    .copy-status.success {
+        color: #3fb950;
+    }
+    .message-copy-btn.copied {
+        color: #3fb950;
+    }
 }
 
 /* Tables */
@@ -1354,15 +1467,535 @@ footer a {
     color: var(--link-color);
     text-decoration: none;
 }
+
+/* Toggle hide rules — driven by Alpine settings panel */
+.hide-thinking .thinking-block { display: none !important; }
+.hide-diffs .file-change .diff { display: none !important; }
+.hide-tool-inputs .tool-section-input { display: none !important; }
+/* Tools OFF: hide collapsible wrappers + section header + summaries, show inline fallbacks */
+.hide-tools .tool-invocation-wrapper,
+.hide-tools .tool-invocations-header,
+.hide-tools .tool-summary-tools { display: none !important; }
+.hide-tools .tool-invocation-inline-fallback { display: block !important; }
+.hide-commands .command-runs,
+.hide-commands .tool-summary-commands { display: none !important; }
+.hide-file-changes .file-changes,
+.hide-file-changes .tool-summary-files { display: none !important; }
+.hide-agent-details .subagent-content { display: none !important; }
+
+/* Prevent hidden elements from being chosen as scroll anchors */
+.thinking-block,
+.tool-invocation-wrapper,
+.tool-section-input,
+.subagent-content,
+.command-runs,
+.file-changes,
+.diff {
+  overflow-anchor: none;
+}
+
+/* Inline fallback: hidden by default, styled like non-collapsible tool text */
+.tool-invocation-inline-fallback {
+    display: none;
+    font-size: 0.9em;
+    line-height: 1.25;
+    color: var(--text-secondary);
+    font-style: italic;
+    margin: 3px 0;
+}
+.tool-invocation-inline-fallback .status-badge {
+    font-style: normal;
+    margin-left: 4px;
+}
+
+/* Focus states */
+button:focus-visible,
+a:focus-visible,
+summary:focus-visible,
+input:focus-visible {
+    outline: 2px solid var(--link-color);
+    outline-offset: 2px;
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+    }
+}
+
+/* Tabular numerals for numeric elements */
+.message-header .message-anchor,
+.message-header .message-timestamp,
+.file-stat-add,
+.file-stat-del {
+    font-variant-numeric: tabular-nums;
+}
+
+/* Balanced text wrapping on headers */
+.message-header {
+    text-wrap: balance;
+}
+
+/* Touch interaction */
+button, a, summary, label, .settings-toggle {
+    touch-action: manipulation;
+}
+
+/* Text overflow on long tool paths */
+.tool-invocation-inline .tool-invocation-message {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: calc(100% - 120px);
+}
+
+/* === SETTINGS PANEL === */
+.settings-container { position: relative; display: inline-block; }
+
+.settings-btn {
+  width: 30px; height: 30px;
+  display: flex; align-items: center; justify-content: center;
+  background: none; border: 1px solid var(--border-color);
+  border-radius: 6px; cursor: pointer;
+  color: var(--text-secondary); font-size: 1.1em;
+  transition: all 0.15s;
+}
+.settings-btn:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border-color: var(--text-secondary);
+}
+.settings-btn.active {
+  background: var(--link-color);
+  color: white;
+  border-color: var(--link-color);
+}
+
+.settings-dropdown {
+  position: absolute; top: 100%; right: 0;
+  margin-top: 6px; width: 260px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+  z-index: 100; overflow: hidden;
+}
+@media (prefers-color-scheme: dark) {
+  .settings-dropdown { box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
+}
+
+.settings-dropdown-header {
+  padding: 8px 12px;
+  font-size: 0.75em; font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase; letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+}
+
+.settings-group {
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+.settings-group:last-child { border-bottom: none; }
+
+.settings-group-label {
+  padding: 3px 12px 1px;
+  font-size: 0.65em; font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+
+.settings-toggle {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 12px; cursor: pointer; font-size: 0.82em;
+  transition: background 0.1s;
+}
+.settings-toggle:hover { background: var(--bg-secondary); }
+.settings-toggle input { display: none; }
+
+.toggle-switch {
+  width: 32px; height: 17px; flex-shrink: 0;
+  background: var(--border-color);
+  border-radius: 9px; position: relative;
+  transition: background 0.2s;
+}
+.toggle-switch::after {
+  content: '';
+  width: 13px; height: 13px;
+  background: white;
+  border-radius: 50%;
+  position: absolute; top: 2px; left: 2px;
+  transition: transform 0.2s;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+}
+input:checked + .toggle-switch {
+  background: var(--link-color);
+}
+input:checked + .toggle-switch::after {
+  transform: translateX(15px);
+}
+
+.session-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.session-header-row h2 { flex: 1; min-width: 0; margin: 0; font-size: 1em; }
     </style>
-</head>
-<body>
     {% if not static %}
-    <header>
-        <div class="container">
-            <h1>{{ title }}{% if app_version %} <span style="font-size: 0.5em; opacity: 0.6;">v{{ app_version }}</span>{% endif %}</h1>
+    <script>
+    function sessionApp() {
+      return {
+        // Settings panel state
+        settingsOpen: false,
+        thinking: false,
+        diffs: true,
+        toolInputs: true,
+        agentDetails: true,
+        tools: true,
+        commands: true,
+        fileChanges: true,
+
+        // Toolbar state (range + status)
+        rangeStart: '',
+        rangeEnd: '',
+        copyStatusText: '',
+        copyStatusClass: '',
+        messageCount: {{ message_count | default(0) }},
+        sessionId: '{{ session.session_id }}',
+
+        // Scroll-position preservation helpers
+        getAnchorState() {
+          const messages = document.querySelectorAll('.message');
+          for (const msg of messages) {
+            const rect = msg.getBoundingClientRect();
+            if (rect.bottom > 0) return { el: msg, offset: rect.top };
+          }
+          return null;
+        },
+        restoreScroll(anchor) {
+          if (!anchor) return;
+          const newRect = anchor.el.getBoundingClientRect();
+          window.scrollBy(0, newRect.top - anchor.offset);
+        },
+
+        // Computed hide classes
+        get hideClasses() {
+          const classes = [];
+          if (!this.thinking) classes.push('hide-thinking');
+          if (!this.diffs) classes.push('hide-diffs');
+          if (!this.toolInputs) classes.push('hide-tool-inputs');
+          if (!this.agentDetails) classes.push('hide-agent-details');
+          if (!this.tools) classes.push('hide-tools');
+          if (!this.commands) classes.push('hide-commands');
+          if (!this.fileChanges) classes.push('hide-file-changes');
+          return classes.join(' ');
+        },
+
+        // localStorage persistence
+        init() {
+          try {
+            const saved = localStorage.getItem('cst-settings');
+            if (saved) {
+              const s = JSON.parse(saved);
+              Object.keys(s).forEach(k => { if (k in this) this[k] = s[k]; });
+            }
+          } catch(e) { /* localStorage unavailable */ }
+
+          this.$watch('thinking', () => {
+            const anchor = this.getAnchorState();
+            this.$nextTick(() => { this.restoreScroll(anchor); this.saveSettings(); });
+          });
+          this.$watch('diffs', () => {
+            const anchor = this.getAnchorState();
+            this.$nextTick(() => { this.restoreScroll(anchor); this.saveSettings(); });
+          });
+          this.$watch('toolInputs', () => {
+            const anchor = this.getAnchorState();
+            this.$nextTick(() => { this.restoreScroll(anchor); this.saveSettings(); });
+          });
+          this.$watch('agentDetails', () => {
+            const anchor = this.getAnchorState();
+            this.$nextTick(() => { this.restoreScroll(anchor); this.saveSettings(); });
+          });
+          this.$watch('tools', () => {
+            const anchor = this.getAnchorState();
+            this.$nextTick(() => { this.restoreScroll(anchor); this.saveSettings(); });
+          });
+          this.$watch('commands', () => {
+            const anchor = this.getAnchorState();
+            this.$nextTick(() => { this.restoreScroll(anchor); this.saveSettings(); });
+          });
+          this.$watch('fileChanges', () => {
+            const anchor = this.getAnchorState();
+            this.$nextTick(() => { this.restoreScroll(anchor); this.saveSettings(); });
+          });
+
+          // Anchor scrolling
+          if (window.location.hash) {
+            const target = document.querySelector(window.location.hash);
+            if (target) {
+              target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+              target.classList.add('highlighted');
+            }
+          }
+
+          // Toggle collapsible icon on details open/close
+          document.querySelectorAll('details.collapsible, details.tool-invocations-header, details.terminal-output-toggle, details.tool-invocation-wrapper, details.skill-block').forEach(details => {
+            details.addEventListener('toggle', function() {
+              const icon = this.querySelector(':scope > summary > .collapsible-icon');
+              if (icon) {
+                icon.textContent = this.open ? '\u25BC' : '\u25B6';
+              }
+            });
+          });
+
+          // Auto-collapse long code blocks
+          this.autoCollapseCodeBlocks();
+
+          // Per-message copy buttons
+          document.querySelectorAll('.message-copy-btn').forEach(btn => {
+            btn.addEventListener('click', async function() {
+              const sessionId = this.dataset.sessionId;
+              const messageIndex = this.dataset.messageIndex;
+              const icon = this.querySelector('i');
+              try {
+                const contentSet = Alpine.$data(document.querySelector('[x-data]')).buildContentSet();
+                const response = await fetch('/api/markdown/' + sessionId + '?start=' + messageIndex + '&end=' + messageIndex + '&content_set=' + contentSet);
+                const data = await response.json();
+                if (response.ok && data.markdown) {
+                  await navigator.clipboard.writeText(data.markdown);
+                  this.classList.add('copied');
+                  icon.classList.remove('fa-copy');
+                  icon.classList.add('fa-check');
+                  setTimeout(() => {
+                    this.classList.remove('copied');
+                    icon.classList.remove('fa-check');
+                    icon.classList.add('fa-copy');
+                  }, 2000);
+                }
+              } catch (err) {
+                console.error('Failed to copy message:', err);
+              }
+            });
+          });
+        },
+
+        saveSettings() {
+          try {
+            localStorage.setItem('cst-settings', JSON.stringify({
+              thinking: this.thinking, diffs: this.diffs, toolInputs: this.toolInputs,
+              agentDetails: this.agentDetails, tools: this.tools, commands: this.commands,
+              fileChanges: this.fileChanges
+            }));
+          } catch(e) {}
+        },
+
+        buildContentSet() {
+          const set = [];
+          if (this.thinking) set.push('thinking');
+          if (this.diffs) set.push('diffs');
+          if (this.toolInputs) set.push('tool-inputs');
+          if (this.agentDetails) set.push('agent-details');
+          if (this.tools) set.push('tools');
+          if (this.commands) set.push('commands');
+          if (this.fileChanges) set.push('file-changes');
+          return set.join(',');
+        },
+
+        buildMarkdownParams() {
+          const start = this.rangeStart ? parseInt(this.rangeStart, 10) : 1;
+          const end = this.rangeEnd ? parseInt(this.rangeEnd, 10) : this.messageCount;
+          if (start < 1 || start > this.messageCount || end < 1 || end > this.messageCount || start > end) {
+            return null;
+          }
+          const params = new URLSearchParams();
+          if (start !== 1 || end !== this.messageCount) {
+            params.set('start', start);
+            params.set('end', end);
+          }
+          params.set('content_set', this.buildContentSet());
+          return params;
+        },
+
+        showStatus(text, type) {
+          this.copyStatusText = text;
+          this.copyStatusClass = type ? 'copy-status ' + type : 'copy-status';
+          if (type === 'success') {
+            setTimeout(() => { this.copyStatusText = ''; }, 3000);
+          }
+        },
+
+        async copyMarkdown() {
+          const params = this.buildMarkdownParams();
+          if (!params) { this.showStatus('\u2717 Invalid range', 'error'); return; }
+          const qs = params.toString() ? '?' + params.toString() : '';
+          this.showStatus('Fetching…', '');
+          try {
+            const response = await fetch('/api/markdown/' + this.sessionId + qs);
+            const data = await response.json();
+            if (response.ok && data.markdown) {
+              await navigator.clipboard.writeText(data.markdown);
+              this.showStatus('\u2713 Copied to clipboard!', 'success');
+            } else {
+              this.showStatus('\u2717 ' + (data.error || 'Failed to get markdown'), 'error');
+            }
+          } catch (err) {
+            this.showStatus('\u2717 Error: ' + err.message, 'error');
+          }
+        },
+
+        downloadMarkdown() {
+          const params = this.buildMarkdownParams();
+          if (!params) { this.showStatus('\u2717 Invalid range', 'error'); return; }
+          const qs = params.toString() ? '?' + params.toString() : '';
+          const sep = qs ? '&' : '?';
+          window.location.href = '/api/markdown/' + this.sessionId + qs + sep + 'download=true';
+        },
+
+        downloadHtml() {
+          const params = new URLSearchParams();
+          params.set('content_set', this.buildContentSet());
+          if (this.rangeStart) params.set('start', this.rangeStart);
+          if (this.rangeEnd) params.set('end', this.rangeEnd);
+          window.location.href = '/api/html/' + this.sessionId + '?' + params.toString();
+        },
+
+        async copyUrl() {
+          const params = this.buildMarkdownParams();
+          if (!params) { this.showStatus('\u2717 Invalid range', 'error'); return; }
+          const qs = params.toString() ? '?' + params.toString() : '';
+          const url = window.location.origin + '/api/markdown/' + this.sessionId + qs;
+          try {
+            await navigator.clipboard.writeText(url);
+            this.showStatus('\u2713 URL copied!', 'success');
+          } catch (err) {
+            this.showStatus('\u2717 Error: ' + err.message, 'error');
+          }
+        },
+
+        autoCollapseCodeBlocks() {
+          const CODE_LINE_THRESHOLD = 20;
+          document.querySelectorAll('.message-content pre').forEach(function(pre) {
+            const code = pre.querySelector('code') || pre;
+            const text = code.textContent || '';
+            const lineCount = text.length === 0 ? 0 : (text.match(/\n/g) || []).length + 1;
+            if (lineCount > CODE_LINE_THRESHOLD) {
+              const wrapper = document.createElement('div');
+              wrapper.className = 'code-collapse-wrapper collapsed';
+              pre.parentNode.insertBefore(wrapper, pre);
+              wrapper.appendChild(pre);
+              const btn = document.createElement('button');
+              btn.className = 'code-toggle-btn';
+              btn.textContent = 'Show more (' + lineCount + ' lines)';
+              btn.setAttribute('type', 'button');
+              wrapper.appendChild(btn);
+              btn.addEventListener('click', function() {
+                const isCollapsed = wrapper.classList.toggle('collapsed');
+                btn.textContent = isCollapsed
+                  ? 'Show more (' + lineCount + ' lines)'
+                  : 'Show less';
+              });
+            }
+          });
+        }
+      };
+    }
+    </script>
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    {% endif %}
+</head>
+<body{% if not static %} x-data="sessionApp()" :class="hideClasses"{% elif static_hide_classes %} class="{{ static_hide_classes }}"{% endif %}>
+    {% if not static %}
+    <div class="sticky-toolbar">
+        <div class="container toolbar-content">
+            <a href="/" class="back-link" title="Back to all sessions">&larr;</a>
+            <h1 class="toolbar-title" id="session-title">
+                {% if session.custom_title %}
+                    {{ session.custom_title }}
+                {% elif session.workspace_name %}
+                    {{ session.workspace_name }}
+                {% elif first_user_prompt %}
+                    <em>{{ first_user_prompt | truncate(80, True) }}</em>
+                {% else %}
+                    Session {{ session.session_id[:8] }}…
+                {% endif %}
+            </h1>
+            <span class="toolbar-meta">{{ message_count }} msgs</span>
+            <span class="edition-badge {{ session.vscode_edition }}">{{ session.vscode_edition }}</span>
+            {% if is_enriched %}
+            <div class="toolbar-export">
+                <input type="number" id="range-start" min="1" max="{{ message_count }}" placeholder="1" title="Start message" x-model="rangeStart" class="range-input">
+                <span class="range-separator">–</span>
+                <input type="number" id="range-end" min="1" max="{{ message_count }}" placeholder="{{ message_count }}" title="End message" x-model="rangeEnd" class="range-input">
+                <button type="button" class="toolbar-btn" @click="copyMarkdown()" title="Copy Markdown">📋 MD</button>
+                <button type="button" class="toolbar-btn" @click="downloadMarkdown()" title="Download Markdown">⬇ MD</button>
+                <button type="button" class="toolbar-btn" @click="downloadHtml()" title="Download HTML">⬇ HTML</button>
+                <button type="button" class="toolbar-btn" @click="copyUrl()" title="Copy URL">🔗</button>
+                <span class="copy-status" id="copy-status" :class="copyStatusClass" x-text="copyStatusText"></span>
+            </div>
+            {% endif %}
+            <div class="settings-container" @keydown.escape.window="settingsOpen = false">
+              <button class="settings-btn" @click="settingsOpen = !settingsOpen"
+                      :class="{ active: settingsOpen }"
+                      aria-label="View settings" title="View settings">
+                ⚙
+              </button>
+              <div class="settings-dropdown" x-show="settingsOpen"
+                   @click.outside="settingsOpen = false"
+                   x-transition>
+                <div class="settings-dropdown-header">View Settings</div>
+
+                <div class="settings-group">
+                  <div class="settings-group-label">Content</div>
+                  <label class="settings-toggle">
+                    <input type="checkbox" x-model="thinking">
+                    <span class="toggle-switch"></span>
+                    <span>Thinking blocks</span>
+                  </label>
+                  <label class="settings-toggle">
+                    <input type="checkbox" x-model="toolInputs">
+                    <span class="toggle-switch"></span>
+                    <span>Tool inputs</span>
+                  </label>
+                  <label class="settings-toggle">
+                    <input type="checkbox" x-model="diffs">
+                    <span class="toggle-switch"></span>
+                    <span>File diffs</span>
+                  </label>
+                  <label class="settings-toggle">
+                    <input type="checkbox" x-model="agentDetails">
+                    <span class="toggle-switch"></span>
+                    <span>Agent details</span>
+                  </label>
+                </div>
+
+                <div class="settings-group">
+                  <div class="settings-group-label">Sections</div>
+                  <label class="settings-toggle">
+                    <input type="checkbox" x-model="tools">
+                    <span class="toggle-switch"></span>
+                    <span>Tool invocations</span>
+                  </label>
+                  <label class="settings-toggle">
+                    <input type="checkbox" x-model="commands">
+                    <span class="toggle-switch"></span>
+                    <span>Command runs</span>
+                  </label>
+                  <label class="settings-toggle">
+                    <input type="checkbox" x-model="fileChanges">
+                    <span class="toggle-switch"></span>
+                    <span>File changes</span>
+                  </label>
+                </div>
+              </div>
+            </div>
         </div>
-    </header>
+    </div>
     {% endif %}
 
     <main class="container">
@@ -1374,7 +2007,6 @@ footer a {
         {% endfor %}
         {% endif %}
         {% endwith %}
-        <a href="/" class="back-link">&larr; Back to all sessions</a>
         {% if needs_version_refresh %}
         <div class="version-refresh-banner">
             🔄 This session was enriched with v{{ enrichment_version or 'unknown' }}. A newer version (v{{ app_version }}) is available — re-enrich for improved parsing.
@@ -1385,78 +2017,20 @@ footer a {
         {% endif %}
         {% endif %}
 
-        <div class="session-header">
-            <h2 id="session-title">
-                {% if session.custom_title %}
-                    {{ session.custom_title }}
-                {% elif session.workspace_name %}
-                    {{ session.workspace_name }}
-                {% elif first_user_prompt %}
-                    <em>{{ first_user_prompt | truncate(100, True) }}</em>
-                {% else %}
-                    Session {{ session.session_id[:8] }}...
-                {% endif %}
-            </h2>
-            <div class="session-meta">
-                <span>{{ message_count }} messages</span>
-                {% if session.workspace_path %}
-                <span>Path: {{ session.workspace_path | urldecode }}</span>
-                {% endif %}
-                {% if session.created_at %}
-                <span>Created: {{ session.created_at | format_timestamp }}</span>
-                {% endif %}
-                <span class="edition-badge {{ session.vscode_edition }}">{{ session.vscode_edition }}</span>
-            </div>
-            <div class="session-id">
-                <small>Session ID: <code>{{ session.session_id }}</code></small>
-            </div>
+        <div class="session-detail-meta">
+            {% if session.workspace_path %}
+            <span>📁 {{ session.workspace_path | urldecode }}</span>
+            {% endif %}
+            {% if session.created_at %}
+            <span>Created: {{ session.created_at | format_timestamp }}</span>
+            {% endif %}
+            <small>ID: <code>{{ session.session_id }}</code></small>
             {% if session.source_file %}
-            <div class="source-file">
-                <small>Source: <code>{{ session.source_file }}</code></small>
-            </div>
+            <small>Source: <code>{{ session.source_file }}</code></small>
             {% endif %}
         </div>
 
         {% if is_enriched %}
-        {% if not static %}
-        <!-- Copy Markdown Toolbar -->
-        <div class="copy-markdown-toolbar">
-            <label>Messages:</label>
-            <input type="number" id="range-start" min="1" max="{{ message_count }}" placeholder="1" title="Start message (leave empty for first)">
-            <span class="range-separator">to</span>
-            <input type="number" id="range-end" min="1" max="{{ message_count }}" placeholder="{{ message_count }}" title="End message (leave empty for last)">
-            
-            <div class="toolbar-options">
-                <label title="Include file change diffs in the markdown">
-                    <input type="checkbox" id="include-diffs" checked>
-                    Diffs
-                </label>
-                <label title="Include tool inputs in the markdown">
-                    <input type="checkbox" id="include-tool-inputs" checked>
-                    Tool inputs
-                </label>
-                <label title="Include thinking/reasoning blocks in the markdown">
-                    <input type="checkbox" id="include-thinking">
-                    Thinking
-                </label>
-                <label title="Include full agent/subagent content in the markdown">
-                    <input type="checkbox" id="include-agent-details" checked>
-                    Agent details
-                </label>
-            </div>
-            
-            <button type="button" class="copy-markdown-btn" id="copy-markdown-btn" data-session-id="{{ session.session_id }}" data-message-count="{{ message_count }}">
-                <i class="fa-regular fa-copy"></i> Copy Markdown
-            </button>
-            <button type="button" class="copy-markdown-btn" id="download-markdown-btn" data-session-id="{{ session.session_id }}" data-message-count="{{ message_count }}">
-                <i class="fa-solid fa-download"></i> Download
-            </button>
-            <button type="button" class="copy-markdown-btn" id="copy-url-btn" data-session-id="{{ session.session_id }}" data-message-count="{{ message_count }}">
-                <i class="fa-solid fa-link"></i> Copy URL
-            </button>
-            <span class="copy-status" id="copy-status"></span>
-        </div>
-        {% endif %}
 
         {# ===== Macro: render_content_blocks ===== #}
         {# Renders content blocks, tool invocations, file changes, and command runs. #}
@@ -1535,7 +2109,7 @@ footer a {
                                     {% endif %}
                                 </div>
                             </details>
-                            {% elif block.kind == 'thinking' %}
+                            {% elif block.kind == 'thinking' and (include_thinking is not defined or include_thinking) %}
                             <details class="thinking-block">
                                 <summary>
                                     <span class="collapsible-icon" aria-hidden="true">▶</span>
@@ -1573,18 +2147,29 @@ footer a {
                                         {% endif %}
                                     </summary>
                                     <div class="tool-invocation-content">
-                                        <div class="tool-section">
+                                        <div class="tool-section tool-section-input">
                                             <span class="tool-label">Input:</span>
                                             <pre><code>{{ matched_cmd.command }}</code></pre>
                                         </div>
                                         {% if matched_cmd.output or matched_cmd.result %}
-                                        <div class="tool-section">
+                                        <div class="tool-section tool-section-output">
                                             <span class="tool-label">Output:</span>
                                             <pre><code>{{ (matched_cmd.output or matched_cmd.result) | strip_ansi }}</code></pre>
                                         </div>
                                         {% endif %}
                                     </div>
                                 </details>
+                                {# Inline fallback: shown when tools toggle hides the dropdown #}
+                                <div class="tool-invocation-inline-fallback">
+                                    {% if matched_cmd.title %}
+                                        {{ matched_cmd.title }}
+                                    {% else %}
+                                        <code>{{ matched_cmd.command | truncate(80, True) }}</code>
+                                    {% endif %}
+                                    {% if matched_cmd.status %}
+                                    <span class="status-badge {{ matched_cmd.status }}">{{ matched_cmd.status }}</span>
+                                    {% endif %}
+                                </div>
                             </div>
                             {% elif matched_tool %}
                             {# Show collapsible details for tools with input/output: #}
@@ -1610,35 +2195,42 @@ footer a {
                                         {% endif %}
                                     </summary>
                                     <div class="tool-invocation-content">
-                                        <div class="tool-section">
+                                        <div class="tool-section tool-section-meta">
                                             <span class="tool-label">Tool:</span>
                                             <code>{{ matched_tool.name }}</code>
                                         </div>
                                         {% if matched_tool.input %}
-                                        <div class="tool-section">
+                                        <div class="tool-section tool-section-input">
                                             <span class="tool-label">Input:</span>
                                             <pre><code>{{ matched_tool.input }}</code></pre>
                                         </div>
                                         {% endif %}
                                         {% if matched_tool.result %}
-                                        <div class="tool-section">
+                                        <div class="tool-section tool-section-output">
                                             <span class="tool-label">Output:</span>
                                             <pre><code>{{ matched_tool.result | strip_ansi }}</code></pre>
                                         </div>
                                         {% endif %}
                                     </div>
                                 </details>
+                                {# Inline fallback: shown when tools toggle hides the dropdown #}
+                                <div class="tool-invocation-inline-fallback">
+                                    {{ pretty_header | markdown | safe }}
+                                    {% if matched_tool.status %}
+                                    <span class="status-badge {{ matched_tool.status }}">{{ matched_tool.status }}</span>
+                                    {% endif %}
+                                </div>
                             </div>
                             {% else %}
-                            {# Tool without collapsible details - just show the pretty message #}
-                            <div class="content-block content-block-toolInvocation">
-                                {{ pretty_header | markdown | safe }}
+                            {# Tool without collapsible details - just show the pretty message, no badge #}
+                            <div class="content-block content-block-toolInvocation tool-invocation-unmatched">
+                                <div class="tool-invocation-message">{{ pretty_header | markdown | safe }}</div>
                             </div>
                             {% endif %}
                             {% else %}
                             {# Unmatched tool invocation - just show the content #}
-                            <div class="content-block content-block-toolInvocation">
-                                {{ block.content | markdown | safe }}
+                            <div class="content-block content-block-toolInvocation tool-invocation-unmatched">
+                                <div class="tool-invocation-message">{{ block.content | markdown | safe }}</div>
                             </div>
                             {% endif %}
                             {% elif block.kind == 'text' %}
@@ -1668,7 +2260,7 @@ footer a {
                 {% endfor %}
                 
                 {% if unmatched_tools %}
-                <p class="tool-summary"><em>Used {{ unmatched_tools | length }} tool{{ 's' if unmatched_tools | length > 1 else '' }}: {{ unmatched_tools | map(attribute='name') | list | join(', ') | truncate(100) }}</em></p>
+                <p class="tool-summary tool-summary-tools"><em>Used {{ unmatched_tools | length }} tool{{ 's' if unmatched_tools | length > 1 else '' }}: {{ unmatched_tools | map(attribute='name') | list | join(', ') | truncate(100) }}</em></p>
                 <details class="collapsible tool-invocations-header" open>
                     <summary aria-label="Toggle tool invocations section">
                         <span class="collapsible-icon" aria-hidden="true">▼</span>
@@ -1689,18 +2281,18 @@ footer a {
                                 {% endif %}
                             </summary>
                             <div class="tool-invocation-content">
-                                <div class="tool-section">
+                                <div class="tool-section tool-section-meta">
                                     <span class="tool-label">Tool:</span>
                                     <code>{{ tool.name }}</code>
                                 </div>
                                 {% if tool.input %}
-                                <div class="tool-section">
+                                <div class="tool-section tool-section-input">
                                     <span class="tool-label">Input:</span>
                                     <pre><code>{{ tool.input }}</code></pre>
                                 </div>
                                 {% endif %}
                                 {% if tool.result %}
-                                <div class="tool-section">
+                                <div class="tool-section tool-section-output">
                                     <span class="tool-label">Output:</span>
                                     <pre><code>{{ tool.result | strip_ansi }}</code></pre>
                                 </div>
@@ -1710,14 +2302,28 @@ footer a {
                         {% endfor %}
                     </div>
                 </details>
+                {# Inline fallbacks for unmatched tools: shown when tools toggle is OFF #}
+                {% for tool in unmatched_tools %}
+                <div class="content-block content-block-toolInvocation tool-invocation-inline-fallback">
+                    {% if tool.invocation_message %}
+                    {{ tool.invocation_message | markdown | safe }}
+                    {% else %}
+                    <em>{{ tool.name }}</em>
+                    {% endif %}
+                    {% if tool.status %}
+                    <span class="status-badge {{ tool.status }}">{{ tool.status }}</span>
+                    {% endif %}
+                </div>
+                {% endfor %}
                 {% endif %}
 
                 {% if file_changes %}
-                <p class="tool-summary"><em>Changed {{ file_changes | length }} file{{ 's' if file_changes | length > 1 else '' }}: {{ file_changes | map(attribute='path') | list | join(', ') | truncate(100) }}</em></p>
+                <p class="tool-summary tool-summary-files"><em>Changed {{ file_changes | length }} file{{ 's' if file_changes | length > 1 else '' }}: {{ file_changes | map(attribute='path') | list | join(', ') | truncate(100) }}</em></p>
                 <details class="collapsible file-changes">
                     <summary aria-label="Toggle file changes section">
                         <span class="collapsible-icon" aria-hidden="true">▶</span>
                         File Changes ({{ file_changes | length }})
+                        <span class="preview-text">{{ file_changes | map(attribute='path') | map('extract_filename') | join(', ') | truncate(80) }}</span>
                     </summary>
                     <div class="collapsible-content">
                         {% for change in file_changes %}
@@ -1750,11 +2356,12 @@ footer a {
                 {# Only show Command Runs section for commands not already rendered inline #}
                 {% set unmatched_cmd_count = (command_runs | length) - ((meta.get('matched_cmd_indices', []) if meta else []) | length) %}
                 {% if command_runs and unmatched_cmd_count > 0 %}
-                <p class="tool-summary"><em>Ran {{ unmatched_cmd_count }} command{{ 's' if unmatched_cmd_count > 1 else '' }}</em></p>
+                <p class="tool-summary tool-summary-commands"><em>Ran {{ unmatched_cmd_count }} command{{ 's' if unmatched_cmd_count > 1 else '' }}</em></p>
                 <details class="collapsible command-runs" open>
                     <summary aria-label="Toggle command runs section">
                         <span class="collapsible-icon" aria-hidden="true">▼</span>
                         Command Runs ({{ unmatched_cmd_count }})
+                        <span class="preview-text">{{ command_runs | map(attribute='command') | join(', ') | truncate(80) }}</span>
                     </summary>
                     <div class="collapsible-content">
                         {% for cmd in command_runs %}
@@ -1808,7 +2415,7 @@ footer a {
                     {% endif %}
                     <a href="#msg-{{ loop.index }}" class="message-anchor" title="Link to this message">#{{ loop.index }}</a>
                     {% if not static %}
-                    <button type="button" class="message-copy-btn" data-message-index="{{ loop.index }}" data-session-id="{{ session.session_id }}" title="Copy this message as markdown">
+                    <button type="button" class="message-copy-btn" data-message-index="{{ loop.index }}" data-session-id="{{ session.session_id }}" title="Copy this message as markdown" aria-label="Copy message as markdown">
                         <i class="fa-regular fa-copy"></i>
                     </button>
                     {% endif %}
@@ -1902,8 +2509,9 @@ footer a {
         </div>
     </footer>
 
+    {% if static %}
     <script>
-        // Handle anchor scrolling with smooth scroll
+        // Static mode: minimal vanilla JS for anchor scrolling, collapsible icons, and code collapse
         document.addEventListener('DOMContentLoaded', function() {
             if (window.location.hash) {
                 const target = document.querySelector(window.location.hash);
@@ -1913,192 +2521,40 @@ footer a {
                 }
             }
 
-            // Toggle collapsible icon on details open/close
             document.querySelectorAll('details.collapsible, details.tool-invocations-header, details.terminal-output-toggle, details.tool-invocation-wrapper, details.skill-block').forEach(details => {
                 details.addEventListener('toggle', function() {
                     const icon = this.querySelector(':scope > summary > .collapsible-icon');
                     if (icon) {
-                        icon.textContent = this.open ? '▼' : '▶';
+                        icon.textContent = this.open ? '\u25BC' : '\u25B6';
                     }
                 });
             });
 
-            // Auto-collapse long code blocks (more than 20 lines)
             const CODE_LINE_THRESHOLD = 20;
             document.querySelectorAll('.message-content pre').forEach(function(pre) {
                 const code = pre.querySelector('code') || pre;
                 const text = code.textContent || '';
-                // Count lines properly: empty string = 0 lines, otherwise count newlines + 1
                 const lineCount = text.length === 0 ? 0 : (text.match(/\n/g) || []).length + 1;
-
                 if (lineCount > CODE_LINE_THRESHOLD) {
-                    // Wrap the pre in a collapse wrapper
                     const wrapper = document.createElement('div');
                     wrapper.className = 'code-collapse-wrapper collapsed';
                     pre.parentNode.insertBefore(wrapper, pre);
                     wrapper.appendChild(pre);
-
-                    // Add toggle button
                     const btn = document.createElement('button');
                     btn.className = 'code-toggle-btn';
                     btn.textContent = 'Show more (' + lineCount + ' lines)';
                     btn.setAttribute('type', 'button');
                     wrapper.appendChild(btn);
-
                     btn.addEventListener('click', function() {
                         const isCollapsed = wrapper.classList.toggle('collapsed');
-                        btn.textContent = isCollapsed 
-                            ? 'Show more (' + lineCount + ' lines)' 
+                        btn.textContent = isCollapsed
+                            ? 'Show more (' + lineCount + ' lines)'
                             : 'Show less';
                     });
                 }
             });
-
-            {% if not static %}
-            // Shared helper to build query params from toolbar state
-            function buildMarkdownParams() {
-                const messageCount = parseInt(document.getElementById('copy-markdown-btn').dataset.messageCount, 10);
-                const rangeStart = document.getElementById('range-start');
-                const rangeEnd = document.getElementById('range-end');
-                const includeDiffs = document.getElementById('include-diffs');
-                const includeToolInputs = document.getElementById('include-tool-inputs');
-                const includeThinking = document.getElementById('include-thinking');
-                const includeAgentDetails = document.getElementById('include-agent-details');
-
-                const start = rangeStart.value ? parseInt(rangeStart.value, 10) : 1;
-                const end = rangeEnd.value ? parseInt(rangeEnd.value, 10) : messageCount;
-
-                // Validate range
-                if (start < 1 || start > messageCount || end < 1 || end > messageCount || start > end) {
-                    return null; // invalid range
-                }
-
-                const params = new URLSearchParams();
-                if (start !== 1 || end !== messageCount) {
-                    params.set('start', start);
-                    params.set('end', end);
-                }
-                params.set('include_diffs', includeDiffs.checked);
-                params.set('include_tool_inputs', includeToolInputs.checked);
-                params.set('include_thinking', includeThinking.checked);
-                params.set('include_agent_details', includeAgentDetails.checked);
-
-                return params;
-            }
-
-            const copyStatus = document.getElementById('copy-status');
-
-            function showStatus(text, type) {
-                copyStatus.textContent = text;
-                copyStatus.className = 'copy-status' + (type ? ' ' + type : '');
-                if (type === 'success') {
-                    setTimeout(() => { copyStatus.textContent = ''; }, 3000);
-                }
-            }
-
-            // Copy Markdown button
-            const copyBtn = document.getElementById('copy-markdown-btn');
-            if (copyBtn) {
-                copyBtn.addEventListener('click', async function() {
-                    const params = buildMarkdownParams();
-                    if (!params) {
-                        showStatus('✗ Invalid range', 'error');
-                        return;
-                    }
-                    const sessionId = this.dataset.sessionId;
-                    const queryString = params.toString() ? '?' + params.toString() : '';
-
-                    copyBtn.disabled = true;
-                    showStatus('Fetching...', '');
-
-                    try {
-                        const response = await fetch('/api/markdown/' + sessionId + queryString);
-                        const data = await response.json();
-                        if (response.ok && data.markdown) {
-                            await navigator.clipboard.writeText(data.markdown);
-                            showStatus('✓ Copied to clipboard!', 'success');
-                        } else {
-                            showStatus('✗ ' + (data.error || 'Failed to get markdown'), 'error');
-                        }
-                    } catch (err) {
-                        showStatus('✗ Error: ' + err.message, 'error');
-                    } finally {
-                        copyBtn.disabled = false;
-                    }
-                });
-            }
-
-            // Download Markdown button
-            const downloadBtn = document.getElementById('download-markdown-btn');
-            if (downloadBtn) {
-                downloadBtn.addEventListener('click', function() {
-                    const params = buildMarkdownParams();
-                    if (!params) {
-                        showStatus('✗ Invalid range', 'error');
-                        return;
-                    }
-                    const sessionId = this.dataset.sessionId;
-                    const queryString = params.toString() ? '?' + params.toString() : '';
-                    const sep = queryString ? '&' : '?';
-                    window.location.href = '/api/markdown/' + sessionId + queryString + sep + 'download=true';
-                });
-            }
-
-            // Copy URL button
-            const copyUrlBtn = document.getElementById('copy-url-btn');
-            if (copyUrlBtn) {
-                copyUrlBtn.addEventListener('click', async function() {
-                    const params = buildMarkdownParams();
-                    if (!params) {
-                        showStatus('✗ Invalid range', 'error');
-                        return;
-                    }
-                    const sessionId = this.dataset.sessionId;
-                    const queryString = params.toString() ? '?' + params.toString() : '';
-                    const url = window.location.origin + '/api/markdown/' + sessionId + queryString;
-
-                    try {
-                        await navigator.clipboard.writeText(url);
-                        showStatus('✓ URL copied!', 'success');
-                    } catch (err) {
-                        showStatus('✗ Error: ' + err.message, 'error');
-                    }
-                });
-            }
-
-            // Per-message copy buttons
-            document.querySelectorAll('.message-copy-btn').forEach(btn => {
-                btn.addEventListener('click', async function() {
-                    const sessionId = this.dataset.sessionId;
-                    const messageIndex = this.dataset.messageIndex;
-                    const icon = this.querySelector('i');
-                    
-                    try {
-                        const response = await fetch('/api/markdown/' + sessionId + '?start=' + messageIndex + '&end=' + messageIndex);
-                        const data = await response.json();
-                        
-                        if (response.ok && data.markdown) {
-                            await navigator.clipboard.writeText(data.markdown);
-                            
-                            // Show success feedback
-                            this.classList.add('copied');
-                            icon.classList.remove('fa-copy');
-                            icon.classList.add('fa-check');
-                            
-                            // Reset after 2 seconds
-                            setTimeout(() => {
-                                this.classList.remove('copied');
-                                icon.classList.remove('fa-check');
-                                icon.classList.add('fa-copy');
-                            }, 2000);
-                        }
-                    } catch (err) {
-                        console.error('Failed to copy message:', err);
-                    }
-                });
-            });
-            {% endif %}
         });
     </script>
+    {% endif %}
 </body>
 </html>

@@ -73,7 +73,9 @@ class TestRunRefreshReturnType:
         assert result.mode is RefreshMode.INCREMENTAL
 
     def test_full_mode_label(self, temp_db):
-        with patch("copilot_session_tools.refresh.scan_chat_sessions", return_value=iter([])):
+        with (
+            patch("copilot_session_tools.refresh.scan_session_files", return_value=iter([])),
+        ):
             result = run_refresh(temp_db, storage_paths=[], full=True)
         assert result.mode is RefreshMode.FULL
 
@@ -170,8 +172,29 @@ class TestRunRefreshIncrementalMode:
 class TestRunRefreshFullMode:
     """run_refresh() full path."""
 
+    @staticmethod
+    def _mock_full_scan(*sessions):
+        """Create mocks for scan_session_files + parse_session_file that return the given sessions."""
+        dummy_file = SessionFileInfo(
+            file_path=Path("/tmp/dummy.json"),
+            file_type="json",
+            session_type="vscode",
+            vscode_edition="stable",
+            mtime=0.0,
+            size=0,
+        )
+        # One dummy file per session batch
+        files = [dummy_file]
+        # parse_session_file returns all sessions for each file
+        parse_fn = lambda _fi: list(sessions)  # noqa: E731
+        return (
+            patch("copilot_session_tools.refresh.scan_session_files", return_value=iter(files)),
+            patch("copilot_session_tools.refresh.parse_session_file", side_effect=parse_fn),
+        )
+
     def test_new_session_is_added(self, temp_db, session_a):
-        with patch("copilot_session_tools.refresh.scan_chat_sessions", return_value=iter([session_a])):
+        mock_scan, mock_parse = self._mock_full_scan(session_a)
+        with mock_scan, mock_parse:
             result = run_refresh(temp_db, storage_paths=[], full=True)
 
         assert result.added == 1
@@ -180,7 +203,8 @@ class TestRunRefreshFullMode:
     def test_existing_session_is_updated(self, temp_db, session_a):
         temp_db.add_session(session_a)
 
-        with patch("copilot_session_tools.refresh.scan_chat_sessions", return_value=iter([session_a])):
+        mock_scan, mock_parse = self._mock_full_scan(session_a)
+        with mock_scan, mock_parse:
             result = run_refresh(temp_db, storage_paths=[], full=True)
 
         assert result.updated == 1
@@ -190,10 +214,8 @@ class TestRunRefreshFullMode:
         """Full mode with one new and one existing session."""
         temp_db.add_session(session_a)
 
-        with patch(
-            "copilot_session_tools.refresh.scan_chat_sessions",
-            return_value=iter([session_a, session_b]),
-        ):
+        mock_scan, mock_parse = self._mock_full_scan(session_a, session_b)
+        with mock_scan, mock_parse:
             result = run_refresh(temp_db, storage_paths=[], full=True)
 
         assert result.added == 1

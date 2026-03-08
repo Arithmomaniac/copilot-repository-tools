@@ -89,6 +89,28 @@ def strip_ansi(text: str | None) -> str:
     return _ANSI_ESCAPE_PATTERN.sub("", text)
 
 
+def truncate_preview(text: str, max_chars: int = 80) -> str:
+    """Extract first meaningful line and truncate for preview display."""
+    if not text:
+        return ""
+    lines = text.strip().split("\n")
+    first_line = next((line.strip() for line in lines if line.strip()), "")
+    # Strip HTML tags (before markdown, since markdown strip removes '>')
+    first_line = re.sub(r"<[^>]+>", "", first_line).strip()
+    # Strip markdown formatting
+    first_line = re.sub(r"[#*_`>]", "", first_line).strip()
+    if not first_line:
+        return ""
+    if len(first_line) > max_chars:
+        # Try to break at a word boundary
+        truncated = first_line[:max_chars]
+        space_idx = truncated.rfind(" ")
+        if space_idx > max_chars // 2:
+            truncated = truncated[:space_idx]
+        return truncated + "…"
+    return first_line
+
+
 def extract_filename(path: str | None) -> str:
     """Return the leaf filename from a Unix or Windows path."""
     if not path:

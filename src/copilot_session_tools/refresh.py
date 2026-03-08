@@ -13,7 +13,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from copilot_session_tools import Database, scan_chat_sessions
+from copilot_session_tools import Database
 from copilot_session_tools.scanner import PARSER_VERSION, SessionFileInfo, parse_session_file, scan_session_files
 from copilot_session_tools.scanner.cli import _parse_cli_jsonl_file
 
@@ -90,17 +90,38 @@ def run_refresh(
     skipped = 0
 
     if full:
-        # Full mode: parse every discovered session and upsert it.
-        for chat_session in scan_chat_sessions(storage_paths, include_cli=False):
-            if database.add_session(chat_session):
-                added += 1
+        # Full mode: parse every discovered session file and upsert.
+        # Use the same parallel parsing and batch DB ops as incremental mode.
+        all_files = list(scan_session_files(storage_paths, include_cli=False))
+
+        if all_files:
+            with ThreadPoolExecutor(max_workers=PARSE_WORKERS) as executor:
+                parse_results = list(executor.map(parse_session_file, all_files))
+
+            # Load existing session IDs upfront to avoid per-session DB lookups
+            existing_ids = set(database.get_all_session_ids())
+
+            sessions_to_add = []
+            sessions_to_update = []
+            for sessions in parse_results:
+                for chat_session in sessions:
+                    if chat_session.session_id in existing_ids:
+                        sessions_to_update.append(chat_session)
+                    else:
+                        sessions_to_add.append(chat_session)
+
+            if sessions_to_add:
+                batch_added, _batch_skipped = database.add_sessions_batch(sessions_to_add)
+                added += batch_added
                 if on_progress:
-                    on_progress("added", chat_session)
-            else:
-                database.update_session(chat_session)
-                updated += 1
+                    for s in sessions_to_add:
+                        on_progress("added", s)
+
+            if sessions_to_update:
+                updated += database.update_sessions_batch(sessions_to_update)
                 if on_progress:
-                    on_progress("updated", chat_session)
+                    for s in sessions_to_update:
+                        on_progress("updated", s)
     else:
         # Incremental mode: load all stored file metadata upfront so we can
         # skip unchanged files without hitting the DB once per file.
@@ -143,11 +164,11 @@ def run_refresh(
                     for chat_session in sessions_to_add:
                         on_progress("added", chat_session)
 
-            for chat_session in sessions_to_update:
-                database.update_session(chat_session)
-                updated += 1
+            if sessions_to_update:
+                updated += database.update_sessions_batch(sessions_to_update)
                 if on_progress:
-                    on_progress("updated", chat_session)
+                    for chat_session in sessions_to_update:
+                        on_progress("updated", chat_session)
 
     return RefreshResult(added=added, updated=updated, skipped=skipped, mode=RefreshMode.FULL if full else RefreshMode.INCREMENTAL)
 
@@ -177,6 +198,8 @@ def run_enrichment(
     reparsed = 0
     failed = 0
 
+    from copilot_session_tools import __version__
+
     # Discover sessions needing enrichment (new or stale)
     try:
         needing_enrichment = database.discover_sessions_needing_enrichment()
@@ -191,6 +214,9 @@ def run_enrichment(
             if on_progress:
                 on_progress("enriched", sid)
         else:
+            # Source file gone or unparseable — stamp version so session
+            # stops appearing in "needs enrichment" queries.
+            database.update_enrichment_version(sid, __version__)
             failed += 1
             if on_progress:
                 on_progress("enrich_failed", error)
@@ -209,12 +235,13 @@ def run_enrichment(
             if on_progress:
                 on_progress("reparsed", sid)
         else:
+            # Source gone — stamp version so it stops reappearing
+            database.update_enrichment_version(sid, __version__)
             failed += 1
             if on_progress:
                 on_progress("enrich_failed", error)
 
     # Re-enrich sessions with outdated enrichment_version
-    from copilot_session_tools import __version__
 
     try:
         needing_version_refresh = database.get_sessions_needing_version_refresh(__version__)
@@ -222,19 +249,37 @@ def run_enrichment(
         needing_version_refresh = []
 
     already_processed = {e["session_id"] for e in needing_enrichment} | {e["session_id"] for e in needing_reparse}
+    vscode_version_stale = 0
     for entry in needing_version_refresh:
         sid = entry["session_id"]
         if sid in already_processed:
             continue
-        error = enrich_single_session(database, sid, validate=False)
-        if error is None:
-            reparsed += 1
-            if on_progress:
-                on_progress("reparsed", sid)
+        session_type = entry.get("type", "")
+        if session_type == "cli":
+            # CLI sessions: re-enrich from events.jsonl (may extract more data)
+            error = enrich_single_session(database, sid, validate=False)
+            if error is None:
+                reparsed += 1
+                if on_progress:
+                    on_progress("reparsed", sid)
+            else:
+                # Source file gone or unparseable — stamp version anyway so
+                # the "needs refresh" banner clears. The session data is
+                # already in cst_* tables from the original enrichment.
+                database.update_enrichment_version(sid, __version__)
+                failed += 1
+                if on_progress:
+                    on_progress("enrich_failed", error)
         else:
-            failed += 1
-            if on_progress:
-                on_progress("enrich_failed", error)
+            # VS Code sessions: re-parsed via run_refresh(), which now stamps
+            # enrichment_version. Just stamp the version here so the banner
+            # clears. A full rebuild (run_refresh(full=True)) will re-parse
+            # source files if the parser actually changed.
+            database.update_enrichment_version(sid, __version__)
+            vscode_version_stale += 1
+
+    # vscode_version_stale are not truly reparsed — just version-stamped.
+    # Don't inflate reparsed count.
 
     # Cleanup orphaned cst_sessions
     try:

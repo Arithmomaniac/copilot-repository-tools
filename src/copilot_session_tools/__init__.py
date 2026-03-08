@@ -12,8 +12,16 @@ This project borrows patterns from several open-source projects:
 - tad-hq/universal-session-viewer: FTS5 full-text search design
 """
 
-__version__ = "0.4.4"
+__version__ = "0.5.0"
 
+from .content_types import (
+    CONTENT_TYPES,
+    DEFAULT_INCLUDES,
+    SEARCH_CONTENT_TYPES,
+    SEARCH_DEFAULT_INCLUDES,
+    resolve_content_set,
+    resolve_search_content_set,
+)
 from .database import Database, ParsedQuery, parse_search_query
 from .html_exporter import (
     export_session_to_html_file,
@@ -41,12 +49,16 @@ from .scanner import (
 )
 
 __all__ = [
+    # Content types
+    "CONTENT_TYPES",
+    "DEFAULT_INCLUDES",
+    "SEARCH_CONTENT_TYPES",
+    "SEARCH_DEFAULT_INCLUDES",
     # Scanner - Data models
     "ChatMessage",
     "ChatSession",
     "CommandRun",
     "ContentBlock",
-    # Database
     "Database",
     "FileChange",
     "ParsedQuery",
@@ -66,6 +78,8 @@ __all__ = [
     "get_vscode_storage_paths",
     "message_to_markdown",
     "parse_search_query",
+    "resolve_content_set",
+    "resolve_search_content_set",
     "scan_chat_sessions",
     "session_to_html",
     "session_to_markdown",

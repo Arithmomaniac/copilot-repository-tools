@@ -21,12 +21,11 @@ def runner():
 def mock_no_vscode_paths():
     """Mock storage paths to return empty for faster tests.
 
-    We patch at the refresh module level since that's where scan_chat_sessions
-    and scan_session_files are now called from.
+    We patch at the refresh module level since that's where scan_session_files
+    and parse_session_file are now called from.
     """
     with (
         patch("copilot_session_tools.cli.get_vscode_storage_paths", return_value=[]),
-        patch("copilot_session_tools.refresh.scan_chat_sessions", return_value=iter([])),
         patch("copilot_session_tools.refresh.scan_session_files", return_value=iter([])),
     ):
         yield
@@ -279,7 +278,7 @@ class TestCLI:
         assert len(html_files) == 1
 
         # Check content of the HTML file
-        content = html_files[0].read_text()
+        content = html_files[0].read_text(encoding="utf-8")
         assert "<!DOCTYPE html>" in content
         assert "cli-workspace" in content
         assert "cli-test-session" in content
@@ -332,7 +331,7 @@ class TestCLI:
         runner.invoke(app, ["export-html", "--db", str(temp_db_with_data), "--output-dir", str(output_dir)])
 
         html_files = list(output_dir.glob("*.html"))
-        content = html_files[0].read_text()
+        content = html_files[0].read_text(encoding="utf-8")
 
         # Should NOT contain interactive elements
         assert '<div class="copy-markdown-toolbar">' not in content
@@ -345,6 +344,110 @@ class TestCLI:
         assert "<!DOCTYPE html>" in content
         assert "message-content" in content
         assert "--container-max-width: none" in content
+
+
+class TestSearchIncludeExclude:
+    """Tests for --include / --exclude flags on the search command."""
+
+    def test_search_default_no_flags(self, runner, temp_db_with_data):
+        """Default search without --include/--exclude works (backward compat)."""
+        result = runner.invoke(app, ["search", "--db", str(temp_db_with_data), "Hello"])
+        assert result.exit_code == 0
+        assert "Result" in result.output or "result" in result.output.lower()
+
+    def test_search_include_tools(self, runner, temp_db_with_data):
+        """--include tools narrows search to tool invocations only."""
+        result = runner.invoke(app, ["search", "--db", str(temp_db_with_data), "Hello", "--include", "tools"])
+        assert result.exit_code == 0
+        # Expect no results — fixture has only plain messages, no tool invocations
+        assert "No results" in result.output
+
+    def test_search_include_file_changes(self, runner, temp_db_with_data):
+        """--include file-changes narrows search to file change content."""
+        result = runner.invoke(app, ["search", "--db", str(temp_db_with_data), "Hello", "--include", "file-changes"])
+        assert result.exit_code == 0
+        assert "No results" in result.output
+
+    def test_search_include_comma_separated(self, runner, temp_db_with_data):
+        """--include tools,file-changes accepts comma-separated tokens."""
+        result = runner.invoke(
+            app,
+            ["search", "--db", str(temp_db_with_data), "Hello", "--include", "tools,file-changes"],
+        )
+        assert result.exit_code == 0
+        # No tool or file-change content in fixture
+        assert "No results" in result.output
+
+    def test_search_include_messages_finds_content(self, runner, temp_db_with_data):
+        """--include messages still finds plain message content."""
+        result = runner.invoke(app, ["search", "--db", str(temp_db_with_data), "Hello", "--include", "messages"])
+        assert result.exit_code == 0
+        assert "Result" in result.output or "CLI test" in result.output
+
+    def test_search_include_repeated_flags(self, runner, temp_db_with_data):
+        """Repeated --include flags combine with OR semantics."""
+        result = runner.invoke(
+            app,
+            [
+                "search",
+                "--db",
+                str(temp_db_with_data),
+                "Hello",
+                "--include",
+                "messages",
+                "--include",
+                "tools",
+            ],
+        )
+        assert result.exit_code == 0
+        # messages included → finds the fixture message
+        assert "Result" in result.output or "CLI test" in result.output
+
+    def test_search_exclude_messages(self, runner, temp_db_with_data):
+        """--exclude messages removes message content from search."""
+        result = runner.invoke(app, ["search", "--db", str(temp_db_with_data), "Hello", "--exclude", "messages"])
+        assert result.exit_code == 0
+        # Fixture only has messages; excluding them yields no results
+        assert "No results" in result.output
+
+    def test_search_old_flags_rejected(self, runner, temp_db_with_data):
+        """Legacy --no-tools / --tools-only flags are rejected as unknown."""
+        for old_flag in ("--no-tools", "--tools-only", "--no-file-changes"):
+            result = runner.invoke(app, ["search", "--db", str(temp_db_with_data), "Hello", old_flag])
+            assert result.exit_code != 0, f"{old_flag} should be rejected"
+
+    def test_search_include_diffs_auto_includes_file_changes(self, runner, temp_db_with_data):
+        """--include diffs auto-includes file-changes parent (no error)."""
+        result = runner.invoke(app, ["search", "--db", str(temp_db_with_data), "Hello", "--include", "diffs"])
+        # Should succeed — file-changes is auto-added
+        assert result.exit_code == 0
+
+    def test_search_include_bogus_token(self, runner, temp_db_with_data):
+        """--include bogus warns and falls back to defaults."""
+        result = runner.invoke(app, ["search", "--db", str(temp_db_with_data), "Hello", "--include", "bogus"])
+        assert result.exit_code == 0
+        # Unknown token is warned on stderr; since all tokens were bogus,
+        # resolve falls back to defaults and still finds the message
+        assert "Result" in result.output or "CLI test" in result.output
+
+    def test_search_exclude_everything_errors(self, runner, temp_db_with_data):
+        """Excluding all content types raises an error (empty set)."""
+        all_types = "messages,thinking,diffs,tool-inputs,agent-details,tools,commands,file-changes"
+        result = runner.invoke(
+            app,
+            ["search", "--db", str(temp_db_with_data), "Hello", "--exclude", all_types],
+        )
+        assert result.exit_code != 0
+
+    def test_search_short_flags(self, runner, temp_db_with_data):
+        """-i and -x short forms work for --include and --exclude."""
+        result = runner.invoke(app, ["search", "--db", str(temp_db_with_data), "Hello", "-i", "messages"])
+        assert result.exit_code == 0
+        assert "Result" in result.output or "CLI test" in result.output
+
+        result = runner.invoke(app, ["search", "--db", str(temp_db_with_data), "Hello", "-x", "messages"])
+        assert result.exit_code == 0
+        assert "No results" in result.output
 
 
 class TestOptimizeCommand:

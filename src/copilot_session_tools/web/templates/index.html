@@ -41,7 +41,8 @@
 
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-    line-height: 1.6;
+    font-size: 14px;
+    line-height: 1.5;
     color: var(--text-primary);
     background-color: var(--bg-primary);
     margin: 0;
@@ -51,14 +52,13 @@ body {
 .container {
     max-width: 1200px;
     margin: 0 auto;
-    padding: 20px;
+    padding: 8px 16px;
 }
 
 header {
     background-color: var(--bg-secondary);
     border-bottom: 1px solid var(--border-color);
-    padding: 20px 0;
-    margin-bottom: 20px;
+    padding: 8px 0;
     position: sticky;
     top: 0;
     z-index: 100;
@@ -66,19 +66,20 @@ header {
 
 header h1 {
     margin: 0;
+    font-size: 1.1em;
 }
 
 header .stats {
     color: var(--text-secondary);
-    font-size: 0.9em;
-    margin-top: 10px;
+    font-size: 0.82em;
+    margin-top: 4px;
 }
 
 .search-box {
-    margin: 20px 0;
+    margin: 8px 0;
     display: flex;
     flex-wrap: wrap;
-    gap: 10px;
+    gap: 8px;
     align-items: center;
 }
 
@@ -90,8 +91,8 @@ header .stats {
 
 .search-box input[type="text"] {
     flex: 1;
-    padding: 12px 16px;
-    font-size: 16px;
+    padding: 7px 12px;
+    font-size: 14px;
     border: 1px solid var(--border-color);
     border-radius: 6px 0 0 6px;
     background-color: var(--bg-primary);
@@ -105,9 +106,9 @@ header .stats {
 }
 
 .search-box button {
-    width: 100px;
-    padding: 12px 16px;
-    font-size: 16px;
+    width: 80px;
+    padding: 7px 12px;
+    font-size: 14px;
     border: 1px solid var(--link-color);
     border-radius: 0 6px 6px 0;
     background-color: var(--link-color);
@@ -128,8 +129,8 @@ header .stats {
 }
 
 .search-box .sort-selector select {
-    padding: 8px 12px;
-    font-size: 14px;
+    padding: 5px 8px;
+    font-size: 13px;
     border: 1px solid var(--border-color);
     border-radius: 6px;
     background-color: var(--bg-primary);
@@ -143,9 +144,9 @@ header .stats {
 }
 
 .search-help {
-    font-size: 0.85em;
+    font-size: 0.8em;
     color: var(--text-secondary);
-    margin-top: 8px;
+    margin: 2px 0 10px 0;
 }
 
 .search-help code {
@@ -158,8 +159,8 @@ header .stats {
 .filters-section {
     display: flex;
     flex-wrap: wrap;
-    gap: 20px;
-    margin-bottom: 20px;
+    gap: 8px;
+    margin-bottom: 8px;
     align-items: flex-start;
 }
 
@@ -180,7 +181,7 @@ header .stats {
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    padding: 6px 12px;
+    padding: 3px 8px;
     border: 1px solid var(--border-color);
     border-radius: 6px;
     font-size: 0.85em;
@@ -315,54 +316,146 @@ header .stats {
     margin-left: 4px;
 }
 
-/* Repository filter pills */
-.repository-filters {
+/* Repository dropdown (mirrors workspace dropdown) */
+.repository-dropdown {
+    position: relative;
+    min-width: 250px;
+}
+
+.repository-dropdown-btn {
     display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
     align-items: center;
-}
-
-.repository-filters > label:first-child {
-    font-size: 0.85em;
-    color: var(--text-secondary);
-    margin-right: 4px;
-}
-
-.repository-filter {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 4px 10px;
+    justify-content: space-between;
+    width: 100%;
+    padding: 8px 12px;
     border: 1px solid var(--border-color);
-    border-radius: 16px;
-    font-size: 0.8em;
+    border-radius: 6px;
+    font-size: 0.9em;
     cursor: pointer;
-    transition: background-color 0.2s, border-color 0.2s;
+    background-color: var(--bg-primary);
+    color: var(--text-primary);
+}
+
+.repository-dropdown-btn:hover {
+    border-color: var(--link-color);
+}
+
+.repository-dropdown-btn .dropdown-arrow {
+    margin-left: 8px;
+    font-size: 0.7em;
+}
+
+.repository-dropdown-menu {
+    display: none;
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    max-height: 300px;
+    overflow-y: auto;
+    background-color: var(--bg-primary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    z-index: 50;
+    margin-top: 4px;
+}
+
+.repository-dropdown.open .repository-dropdown-menu {
+    display: block;
+}
+
+.repository-search {
+    padding: 8px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.repository-search input {
+    width: 100%;
+    padding: 6px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    font-size: 0.85em;
     background-color: var(--bg-secondary);
     color: var(--text-primary);
 }
 
-.repository-filter:hover {
+.repository-search input:focus {
+    outline: none;
+    border-color: var(--link-color);
+}
+
+.repository-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    cursor: pointer;
+    font-size: 0.85em;
+    color: var(--text-primary);
+}
+
+.repository-option:hover {
     background-color: var(--bg-tertiary);
 }
 
-.repository-filter input[type="checkbox"] {
+.repository-option.hidden {
     display: none;
 }
 
-.repository-filter.checked {
-    border-color: #238636;
-    background-color: rgba(35, 134, 54, 0.1);
-    color: #238636;
+.repository-option input[type="checkbox"] {
+    margin: 0;
+    cursor: pointer;
 }
 
-@media (prefers-color-scheme: dark) {
-    .repository-filter.checked {
-        border-color: #2ea043;
-        background-color: rgba(46, 160, 67, 0.2);
-        color: #2ea043;
-    }
+.repository-option.checked {
+    background-color: rgba(9, 105, 218, 0.1);
+}
+
+.content-type-filters {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.content-type-filters > label:first-child {
+    font-size: 0.85em;
+    color: var(--text-secondary);
+    margin-right: 4px;
+    white-space: nowrap;
+}
+
+.content-type-filter-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    font-size: 0.82em;
+    cursor: pointer;
+    transition: background-color 0.2s, border-color 0.2s;
+    background-color: var(--bg-secondary);
+    color: var(--text-primary);
+    user-select: none;
+}
+
+.content-type-filter-btn:hover {
+    background-color: var(--bg-tertiary);
+}
+
+.content-type-filter-btn input[type="checkbox"] {
+    display: none;
+}
+
+.content-type-filter-btn.checked {
+    border-color: var(--link-color);
+    background-color: rgba(9, 105, 218, 0.1);
+}
+
+.search-type-icon {
+    font-size: 0.9em;
 }
 
 .filter-actions {
@@ -372,8 +465,8 @@ header .stats {
 }
 
 .filter-actions button {
-    padding: 6px 16px;
-    font-size: 0.85em;
+    padding: 4px 12px;
+    font-size: 0.8em;
     border: 1px solid var(--border-color);
     border-radius: 6px;
     cursor: pointer;
@@ -408,8 +501,8 @@ header .stats {
 .session-item {
     border: 1px solid var(--border-color);
     border-radius: 6px;
-    margin-bottom: 10px;
-    padding: 16px;
+    margin-bottom: 8px;
+    padding: 9px 14px;
     background-color: var(--bg-secondary);
     transition: box-shadow 0.2s;
 }
@@ -430,19 +523,19 @@ header .stats {
 
 .session-meta {
     color: var(--text-secondary);
-    font-size: 0.85em;
-    margin-top: 8px;
+    font-size: 0.8em;
+    margin-top: 3px;
 }
 
 .session-meta span {
-    margin-right: 16px;
+    margin-right: 10px;
 }
 
 .edition-badge {
     display: inline-block;
     padding: 2px 8px;
     border-radius: 10px;
-    font-size: 0.75em;
+    font-size: 0.8em;
     font-weight: 500;
 }
 
@@ -505,8 +598,8 @@ header .stats {
 }
 
 footer {
-    margin-top: 40px;
-    padding: 20px 0;
+    margin-top: 20px;
+    padding: 10px 0;
     border-top: 1px solid var(--border-color);
     color: var(--text-secondary);
     font-size: 0.85em;
@@ -520,7 +613,8 @@ footer a {
 
 .search-info {
     color: var(--text-secondary);
-    margin-bottom: 20px;
+    margin-bottom: 6px;
+    font-size: 0.85em;
 }
 
 .search-info a {
@@ -585,8 +679,8 @@ footer a {
 }
 
 .refresh-actions button {
-    padding: 8px 16px;
-    font-size: 0.9em;
+    padding: 4px 10px;
+    font-size: 0.82em;
     border: 1px solid var(--border-color);
     border-radius: 6px;
     cursor: pointer;
@@ -841,6 +935,9 @@ footer a {
             {% for repo_url in selected_repositories or [] %}
             <input type="hidden" name="repository" value="{{ repo_url }}">
             {% endfor %}
+            {% for st in selected_search_types or [] %}
+            <input type="hidden" name="search_in" value="{{ st }}">
+            {% endfor %}
         </form>
         <div class="search-help">
             💡 Tips: Use <code>"exact phrase"</code> for exact match, <code>role:user</code> or <code>role:assistant</code> to filter by role, <code>workspace:name</code> to filter by workspace, <code>edition:cli</code> to filter by edition, <code>repo:name</code> to filter by repository, <code>start_date:2024-01-01</code> and <code>end_date:2024-12-31</code> to filter by date
@@ -903,6 +1000,21 @@ footer a {
             </div>
             {% endif %}
 
+            <!-- Content type filter pills -->
+            <div class="content-type-filters" id="content-type-filters">
+                <label>Search in:</label>
+                {% set search_type_icons = {'messages': '💬', 'thinking': '💭', 'tools': '🔧', 'tool-inputs': '📥', 'commands': '⚡', 'file-changes': '📄', 'diffs': '±', 'agent-details': '🤖'} %}
+                {% set search_type_labels = {'messages': 'Messages', 'thinking': 'Thinking', 'tools': 'Tools', 'tool-inputs': 'Tool Inputs', 'commands': 'Commands', 'file-changes': 'File Changes', 'diffs': 'Diffs', 'agent-details': 'Agents'} %}
+                {% for type_name in ['messages', 'thinking', 'tools', 'tool-inputs', 'commands', 'file-changes', 'diffs', 'agent-details'] %}
+                <label class="content-type-filter-btn{% if type_name in (selected_search_types or []) or not selected_search_types %} checked{% endif %}">
+                    <input type="checkbox" name="search_in" value="{{ type_name }}"
+                        {% if type_name in (selected_search_types or []) or not selected_search_types %}checked{% endif %}>
+                    <span class="search-type-icon">{{ search_type_icons[type_name] }}</span>
+                    {{ search_type_labels[type_name] }}
+                </label>
+                {% endfor %}
+            </div>
+
             <!-- Workspace multi-select dropdown -->
             {% if workspaces %}
             <div class="workspace-dropdown" id="workspace-dropdown">
@@ -932,17 +1044,31 @@ footer a {
             </div>
             {% endif %}
 
-            <!-- Repository filter pills -->
+            <!-- Repository multi-select dropdown -->
             {% if repositories %}
-            <div class="repository-filters" id="repository-filters">
-                <label>Repository:</label>
-                {% for repo in repositories %}
-                <label class="repository-filter{% if repo.repository_url in (selected_repositories or []) %} checked{% endif %}">
-                    <input type="checkbox" name="repository" value="{{ repo.repository_url }}"
-                        {% if repo.repository_url in (selected_repositories or []) %}checked{% endif %}>
-                    🔗 {{ repo.repository_url }} ({{ repo.session_count }})
-                </label>
-                {% endfor %}
+            <div class="repository-dropdown" id="repository-dropdown">
+                <button type="button" class="repository-dropdown-btn" id="repository-dropdown-btn">
+                    <span>
+                        {% if selected_repositories %}
+                            {{ selected_repositories | length }} repo{{ 's' if selected_repositories | length > 1 else '' }} selected
+                        {% else %}
+                            All repositories
+                        {% endif %}
+                    </span>
+                    <span class="dropdown-arrow">▼</span>
+                </button>
+                <div class="repository-dropdown-menu" id="repository-dropdown-menu">
+                    <div class="repository-search">
+                        <input type="text" id="repository-search-input" placeholder="Search repositories...">
+                    </div>
+                    {% for repo in repositories %}
+                    <label class="repository-option{% if repo.repository_url in (selected_repositories or []) %} checked{% endif %}" data-name="{{ repo.repository_url | lower }}">
+                        <input type="checkbox" name="repository" value="{{ repo.repository_url }}"
+                            {% if repo.repository_url in (selected_repositories or []) %}checked{% endif %}>
+                        🔗 {{ repo.repository_url }} ({{ repo.session_count }})
+                    </label>
+                    {% endfor %}
+                </div>
             </div>
             {% endif %}
 
@@ -952,6 +1078,7 @@ footer a {
             </div>
         </div>
 
+        <div id="session-list-section"></div>
         <ul class="session-list" id="session-list">
             {% for session in sessions %}
             <li class="session-item" data-workspace="{{ session.workspace_name or '' }}">
@@ -1008,8 +1135,8 @@ footer a {
             </span>
             <div class="pagination-controls">
                 {% if page > 1 %}
-                <a href="?page=1{% if query %}&q={{ query | urlencode }}{% endif %}{% if sort_by %}&sort={{ sort_by }}{% endif %}{% for ws in selected_workspaces %}&workspace={{ ws | urlencode }}{% endfor %}{% for repo in selected_repositories %}&repository={{ repo | urlencode }}{% endfor %}{% for ed in selected_editions %}&edition={{ ed }}{% endfor %}" class="pagination-btn" title="First page">&laquo;</a>
-                <a href="?page={{ page - 1 }}{% if query %}&q={{ query | urlencode }}{% endif %}{% if sort_by %}&sort={{ sort_by }}{% endif %}{% for ws in selected_workspaces %}&workspace={{ ws | urlencode }}{% endfor %}{% for repo in selected_repositories %}&repository={{ repo | urlencode }}{% endfor %}{% for ed in selected_editions %}&edition={{ ed }}{% endfor %}" class="pagination-btn" title="Previous page">&lsaquo;</a>
+                <a href="?page=1{% if query %}&q={{ query | urlencode }}{% endif %}{% if sort_by %}&sort={{ sort_by }}{% endif %}{% for ws in selected_workspaces %}&workspace={{ ws | urlencode }}{% endfor %}{% for repo in selected_repositories %}&repository={{ repo | urlencode }}{% endfor %}{% for ed in selected_editions %}&edition={{ ed }}{% endfor %}{% for st in selected_search_types %}&search_in={{ st }}{% endfor %}" class="pagination-btn" title="First page">&laquo;</a>
+                <a href="?page={{ page - 1 }}{% if query %}&q={{ query | urlencode }}{% endif %}{% if sort_by %}&sort={{ sort_by }}{% endif %}{% for ws in selected_workspaces %}&workspace={{ ws | urlencode }}{% endfor %}{% for repo in selected_repositories %}&repository={{ repo | urlencode }}{% endfor %}{% for ed in selected_editions %}&edition={{ ed }}{% endfor %}{% for st in selected_search_types %}&search_in={{ st }}{% endfor %}" class="pagination-btn" title="Previous page">&lsaquo;</a>
                 {% else %}
                 <span class="pagination-btn disabled">&laquo;</span>
                 <span class="pagination-btn disabled">&lsaquo;</span>
@@ -1026,7 +1153,7 @@ footer a {
                 {% if p == page %}
                 <span class="pagination-btn active">{{ p }}</span>
                 {% else %}
-                <a href="?page={{ p }}{% if query %}&q={{ query | urlencode }}{% endif %}{% if sort_by %}&sort={{ sort_by }}{% endif %}{% for ws in selected_workspaces %}&workspace={{ ws | urlencode }}{% endfor %}{% for repo in selected_repositories %}&repository={{ repo | urlencode }}{% endfor %}{% for ed in selected_editions %}&edition={{ ed }}{% endfor %}" class="pagination-btn">{{ p }}</a>
+                <a href="?page={{ p }}{% if query %}&q={{ query | urlencode }}{% endif %}{% if sort_by %}&sort={{ sort_by }}{% endif %}{% for ws in selected_workspaces %}&workspace={{ ws | urlencode }}{% endfor %}{% for repo in selected_repositories %}&repository={{ repo | urlencode }}{% endfor %}{% for ed in selected_editions %}&edition={{ ed }}{% endfor %}{% for st in selected_search_types %}&search_in={{ st }}{% endfor %}" class="pagination-btn">{{ p }}</a>
                 {% endif %}
                 {% endfor %}
 
@@ -1035,8 +1162,8 @@ footer a {
                 {% endif %}
 
                 {% if page < total_pages %}
-                <a href="?page={{ page + 1 }}{% if query %}&q={{ query | urlencode }}{% endif %}{% if sort_by %}&sort={{ sort_by }}{% endif %}{% for ws in selected_workspaces %}&workspace={{ ws | urlencode }}{% endfor %}{% for repo in selected_repositories %}&repository={{ repo | urlencode }}{% endfor %}{% for ed in selected_editions %}&edition={{ ed }}{% endfor %}" class="pagination-btn" title="Next page">&rsaquo;</a>
-                <a href="?page={{ total_pages }}{% if query %}&q={{ query | urlencode }}{% endif %}{% if sort_by %}&sort={{ sort_by }}{% endif %}{% for ws in selected_workspaces %}&workspace={{ ws | urlencode }}{% endfor %}{% for repo in selected_repositories %}&repository={{ repo | urlencode }}{% endfor %}{% for ed in selected_editions %}&edition={{ ed }}{% endfor %}" class="pagination-btn" title="Last page">&raquo;</a>
+                <a href="?page={{ page + 1 }}{% if query %}&q={{ query | urlencode }}{% endif %}{% if sort_by %}&sort={{ sort_by }}{% endif %}{% for ws in selected_workspaces %}&workspace={{ ws | urlencode }}{% endfor %}{% for repo in selected_repositories %}&repository={{ repo | urlencode }}{% endfor %}{% for ed in selected_editions %}&edition={{ ed }}{% endfor %}{% for st in selected_search_types %}&search_in={{ st }}{% endfor %}" class="pagination-btn" title="Next page">&rsaquo;</a>
+                <a href="?page={{ total_pages }}{% if query %}&q={{ query | urlencode }}{% endif %}{% if sort_by %}&sort={{ sort_by }}{% endif %}{% for ws in selected_workspaces %}&workspace={{ ws | urlencode }}{% endfor %}{% for repo in selected_repositories %}&repository={{ repo | urlencode }}{% endfor %}{% for ed in selected_editions %}&edition={{ ed }}{% endfor %}{% for st in selected_search_types %}&search_in={{ st }}{% endfor %}" class="pagination-btn" title="Last page">&raquo;</a>
                 {% else %}
                 <span class="pagination-btn disabled">&rsaquo;</span>
                 <span class="pagination-btn disabled">&raquo;</span>
@@ -1062,7 +1189,11 @@ footer a {
             const workspaceDropdownMenu = document.getElementById('workspace-dropdown-menu');
             const workspaceSearchInput = document.getElementById('workspace-search-input');
             const editionFilters = document.getElementById('edition-filters');
-            const repositoryFilters = document.getElementById('repository-filters');
+            const repositoryDropdown = document.getElementById('repository-dropdown');
+            const repositoryDropdownBtn = document.getElementById('repository-dropdown-btn');
+            const repositoryDropdownMenu = document.getElementById('repository-dropdown-menu');
+            const repositorySearchInput = document.getElementById('repository-search-input');
+            const contentTypeFilters = document.getElementById('content-type-filters');
 
             // Workspace dropdown toggle
             if (workspaceDropdownBtn) {
@@ -1075,10 +1206,13 @@ footer a {
                 });
             }
 
-            // Close dropdown when clicking outside
+            // Close dropdowns when clicking outside
             document.addEventListener('click', function(e) {
                 if (workspaceDropdown && !workspaceDropdown.contains(e.target)) {
                     workspaceDropdown.classList.remove('open');
+                }
+                if (repositoryDropdown && !repositoryDropdown.contains(e.target)) {
+                    repositoryDropdown.classList.remove('open');
                 }
             });
 
@@ -1118,11 +1252,49 @@ footer a {
                 });
             }
 
-            // Toggle checked class on repository filter pills
-            if (repositoryFilters) {
-                repositoryFilters.querySelectorAll('input[type="checkbox"]').forEach(function(checkbox) {
+            // Repository dropdown toggle
+            if (repositoryDropdownBtn) {
+                repositoryDropdownBtn.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    repositoryDropdown.classList.toggle('open');
+                    if (repositoryDropdown.classList.contains('open') && repositorySearchInput) {
+                        repositorySearchInput.focus();
+                    }
+                });
+            }
+
+            // Repository search filtering
+            if (repositorySearchInput) {
+                repositorySearchInput.addEventListener('input', function() {
+                    const searchTerm = this.value.toLowerCase();
+                    const options = repositoryDropdownMenu.querySelectorAll('.repository-option');
+                    options.forEach(function(option) {
+                        const name = option.dataset.name || '';
+                        if (name.includes(searchTerm)) {
+                            option.classList.remove('hidden');
+                        } else {
+                            option.classList.add('hidden');
+                        }
+                    });
+                });
+            }
+
+            // Toggle checked class on repository options
+            if (repositoryDropdownMenu) {
+                repositoryDropdownMenu.querySelectorAll('input[type="checkbox"]').forEach(function(checkbox) {
+                    checkbox.addEventListener('change', function(e) {
+                        e.stopPropagation();
+                        this.closest('.repository-option').classList.toggle('checked', this.checked);
+                        updateRepositoryButtonText();
+                    });
+                });
+            }
+
+            // Toggle checked class on content type filter buttons
+            if (contentTypeFilters) {
+                contentTypeFilters.querySelectorAll('input[type="checkbox"]').forEach(function(checkbox) {
                     checkbox.addEventListener('change', function() {
-                        this.closest('.repository-filter').classList.toggle('checked', this.checked);
+                        this.closest('.content-type-filter-btn').classList.toggle('checked', this.checked);
                     });
                 });
             }
@@ -1138,6 +1310,20 @@ footer a {
                     textSpan.textContent = '1 workspace selected';
                 } else {
                     textSpan.textContent = count + ' workspaces selected';
+                }
+            }
+
+            function updateRepositoryButtonText() {
+                if (!repositoryDropdownBtn) return;
+                const checked = repositoryDropdownMenu.querySelectorAll('input[type="checkbox"]:checked');
+                const count = checked.length;
+                const textSpan = repositoryDropdownBtn.querySelector('span:first-child');
+                if (count === 0) {
+                    textSpan.textContent = 'All repositories';
+                } else if (count === 1) {
+                    textSpan.textContent = '1 repo selected';
+                } else {
+                    textSpan.textContent = count + ' repos selected';
                 }
             }
 
@@ -1161,11 +1347,22 @@ footer a {
                     
                     // Get selected repositories
                     url.searchParams.delete('repository');
-                    if (repositoryFilters) {
-                        const repoCheckboxes = repositoryFilters.querySelectorAll('input[type="checkbox"]:checked');
+                    if (repositoryDropdownMenu) {
+                        const repoCheckboxes = repositoryDropdownMenu.querySelectorAll('input[type="checkbox"]:checked');
                         repoCheckboxes.forEach(cb => url.searchParams.append('repository', cb.value));
                     }
                     
+                    // Get selected content types (omit if all checked for clean URLs)
+                    url.searchParams.delete('search_in');
+                    if (contentTypeFilters) {
+                        const ctChecked = contentTypeFilters.querySelectorAll('input[type="checkbox"]:checked');
+                        const ctTotal = contentTypeFilters.querySelectorAll('input[type="checkbox"]').length;
+                        if (ctChecked.length < ctTotal) {
+                            ctChecked.forEach(cb => url.searchParams.append('search_in', cb.value));
+                        }
+                    }
+                    
+                    url.hash = 'session-list-section';
                     window.location.href = url.toString();
                 });
             }
@@ -1190,10 +1387,19 @@ footer a {
                     }
                     
                     // Clear all repository checkboxes
-                    if (repositoryFilters) {
-                        repositoryFilters.querySelectorAll('input[type="checkbox"]').forEach(function(checkbox) {
+                    if (repositoryDropdownMenu) {
+                        repositoryDropdownMenu.querySelectorAll('input[type="checkbox"]').forEach(function(checkbox) {
                             checkbox.checked = false;
-                            checkbox.closest('.repository-filter').classList.remove('checked');
+                            checkbox.closest('.repository-option').classList.remove('checked');
+                        });
+                        updateRepositoryButtonText();
+                    }
+                    
+                    // Clear all content type checkboxes (re-check all = default)
+                    if (contentTypeFilters) {
+                        contentTypeFilters.querySelectorAll('input[type="checkbox"]').forEach(function(checkbox) {
+                            checkbox.checked = true;
+                            checkbox.closest('.content-type-filter-btn').classList.add('checked');
                         });
                     }
                     
@@ -1202,6 +1408,8 @@ footer a {
                     url.searchParams.delete('workspace');
                     url.searchParams.delete('edition');
                     url.searchParams.delete('repository');
+                    url.searchParams.delete('search_in');
+                    url.hash = 'session-list-section';
                     window.location.href = url.toString();
                 });
             }

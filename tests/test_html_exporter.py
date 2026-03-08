@@ -63,6 +63,51 @@ def session_with_tools():
     )
 
 
+@pytest.fixture
+def session_with_thinking():
+    """Create a session with thinking blocks and subagent content."""
+    return ChatSession(
+        session_id="thinking-test-session",
+        workspace_name="thinking-project",
+        workspace_path="/home/user/thinking-project",
+        messages=[
+            ChatMessage(role="user", content="Fix the bug"),
+            ChatMessage(
+                role="assistant",
+                content="I'll investigate the issue.",
+                content_blocks=[
+                    ContentBlock(kind="thinking", content="Let me analyze the error carefully."),
+                    ContentBlock(kind="text", content="I'll investigate the issue."),
+                    ContentBlock(
+                        kind="subagent",
+                        content="Agent explored the codebase.",
+                        description="explorer agent",
+                        content_blocks=[
+                            ContentBlock(kind="text", content="Found the root cause in the parser."),
+                            ContentBlock(kind="toolInvocation", content="Reading file"),
+                        ],
+                        tool_invocations=[
+                            ToolInvocation(
+                                name="readFile",
+                                input='{"path": "bug.py"}',
+                                result="buggy code",
+                            ),
+                        ],
+                    ),
+                ],
+                tool_invocations=[
+                    ToolInvocation(
+                        name="readFile",
+                        input='{"path": "main.py"}',
+                        result="def main(): pass",
+                    ),
+                ],
+            ),
+        ],
+        vscode_edition="stable",
+    )
+
+
 class TestSessionToHtml:
     """Tests for session_to_html function."""
 
@@ -73,7 +118,7 @@ class TestSessionToHtml:
         assert "<html lang=" in html
         assert "</html>" in html
         assert "<head>" in html
-        assert "<body>" in html
+        assert "<body" in html
 
     def test_contains_session_metadata(self, sample_session):
         """Test that session metadata is included."""
@@ -151,6 +196,51 @@ class TestSessionToHtml:
         html = session_to_html(sample_session)
         assert 'id="msg-1"' in html
         assert 'id="msg-2"' in html
+
+    def test_session_to_html_with_content_set(self, session_with_thinking):
+        """content_set parameter controls which content types appear in HTML."""
+        html = session_to_html(session_with_thinking, content_set={"agent-details"})
+        # Agent details should be included (full subagent content)
+        assert "Found the root cause" in html
+        # Thinking blocks should NOT be rendered (not in content_set)
+        assert '<details class="thinking-block">' not in html
+
+    def test_session_to_html_content_set_none_uses_defaults(self, session_with_thinking):
+        """content_set=None uses default includes."""
+        html = session_to_html(session_with_thinking, content_set=None)
+        assert "<!DOCTYPE html>" in html
+        # Default includes agent-details, so subagent content should be present
+        assert "Found the root cause" in html
+        # Default does NOT include 'thinking', so thinking elements not rendered
+        assert '<details class="thinking-block">' not in html
+
+    def test_session_to_html_excludes_thinking(self, session_with_thinking):
+        """Thinking blocks excluded when 'thinking' not in content_set."""
+        html = session_to_html(session_with_thinking, content_set={"agent-details"})
+        assert '<details class="thinking-block">' not in html
+        # But message text should still be present
+        assert "investigate the issue" in html
+
+    def test_session_to_html_includes_thinking_when_requested(self, session_with_thinking):
+        """Thinking blocks included when 'thinking' IS in content_set."""
+        html = session_to_html(session_with_thinking, content_set={"agent-details", "thinking"})
+        assert '<details class="thinking-block">' in html
+        assert "analyze the error" in html
+
+    def test_session_to_html_excludes_agent_details(self, session_with_thinking):
+        """Agent content stripped when 'agent-details' not in content_set."""
+        html = session_to_html(session_with_thinking, content_set={"thinking"})
+        # Without agent-details, subagent shows result-only mode
+        assert "result-block" in html
+        # Text result from subagent should still appear
+        assert "Found the root cause" in html
+
+    def test_session_to_html_static_has_no_alpine(self, sample_session):
+        """Static HTML export does not include Alpine.js."""
+        html = session_to_html(sample_session)
+        assert "alpinejs" not in html
+        assert 'x-data="' not in html
+        assert '<button class="settings-btn"' not in html
 
 
 class TestExportSessionToHtmlFile:

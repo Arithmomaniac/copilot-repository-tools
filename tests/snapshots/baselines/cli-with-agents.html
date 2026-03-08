@@ -54,7 +54,8 @@
 
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-    line-height: 1.6;
+    font-size: 14px;
+    line-height: 1.5;
     color: var(--text-primary);
     background-color: var(--bg-primary);
     margin: 0;
@@ -64,14 +65,13 @@ body {
 .container {
     max-width: var(--container-max-width);
     margin: 0 auto;
-    padding: 20px;
+    padding: 8px 16px;
 }
 
 header {
     background-color: var(--bg-secondary);
     border-bottom: 1px solid var(--border-color);
-    padding: 20px 0;
-    margin-bottom: 20px;
+    padding: 8px 0;
     position: sticky;
     top: 0;
     z-index: 100;
@@ -79,6 +79,98 @@ header {
 
 header h1 {
     margin: 0;
+    font-size: 1.1em;
+}
+
+/* Unified sticky toolbar for session page */
+.sticky-toolbar {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background-color: var(--bg-secondary);
+    border-bottom: 1px solid var(--border-color);
+    padding: 6px 0;
+}
+
+.toolbar-content {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.toolbar-content .back-link {
+    font-size: 1.1em;
+    text-decoration: none;
+    color: var(--link-color);
+    padding: 2px 6px;
+    flex-shrink: 0;
+}
+
+.toolbar-title {
+    font-size: 1em;
+    font-weight: 600;
+    margin: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+    flex: 1;
+}
+
+.toolbar-meta {
+    font-size: 0.8em;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.toolbar-export {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.toolbar-export .range-input {
+    width: 48px;
+    padding: 2px 4px;
+    font-size: 0.8em;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    text-align: center;
+}
+
+.toolbar-export .range-separator {
+    font-size: 0.8em;
+    color: var(--text-secondary);
+}
+
+.toolbar-btn {
+    padding: 3px 8px;
+    font-size: 0.78em;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.toolbar-btn:hover {
+    background: var(--bg-tertiary);
+    border-color: var(--link-color);
+}
+
+.session-detail-meta {
+    font-size: 0.82em;
+    color: var(--text-secondary);
+    padding: 6px 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
 }
 
 .back-link {
@@ -277,8 +369,8 @@ header h1 {
 }
 
 .message {
-    padding: 16px;
-    margin-bottom: 16px;
+    padding: 9px 14px;
+    margin-bottom: 6px;
     border-radius: 8px;
     border: 1px solid var(--border-color);
 }
@@ -293,15 +385,19 @@ header h1 {
 
 .message-role {
     font-weight: 600;
-    font-size: 0.85em;
+    font-size: 0.8em;
     text-transform: uppercase;
-    margin-bottom: 8px;
+    letter-spacing: 0.3px;
     color: var(--text-secondary);
+    margin-bottom: 0;
 }
+
+.message.user .message-role { color: var(--link-color); }
 
 .message-content {
     word-wrap: break-word;
     overflow-wrap: break-word;
+    line-height: 1.45;
 }
 
 .message-content pre {
@@ -328,8 +424,14 @@ header h1 {
 .message-header {
     display: flex;
     align-items: center;
-    gap: 12px;
-    margin-bottom: 8px;
+    gap: 8px;
+    margin-bottom: 6px;
+    padding: 2px 0 4px 0;
+    border-bottom: 1px solid var(--border-color);
+    position: sticky;
+    top: 38px;
+    z-index: 10;
+    background-color: inherit;
 }
 
 .message-header .message-role {
@@ -341,7 +443,7 @@ header h1 {
     text-decoration: none;
     font-size: 0.8em;
     opacity: 0.5;
-    transition: opacity 0.2s;
+    transition: opacity 0.15s;
     margin-left: auto;
 }
 
@@ -352,7 +454,8 @@ header h1 {
 
 .message-timestamp {
     color: var(--text-secondary);
-    font-size: 0.8em;
+    font-size: 0.75em;
+    opacity: 0.6;
 }
 
 .message.highlighted {
@@ -373,10 +476,9 @@ header h1 {
 }
 
 .collapsible summary {
-    padding: 10px 14px;
+    padding: 6px 10px;
     cursor: pointer;
     font-weight: 500;
-    font-size: 0.9em;
     color: var(--text-secondary);
     display: flex;
     align-items: center;
@@ -394,7 +496,7 @@ header h1 {
 }
 
 .collapsible-content {
-    padding: 12px 14px;
+    padding: 8px 10px;
     border-top: 1px solid var(--border-color);
 }
 
@@ -592,8 +694,8 @@ header h1 {
     transform: rotate(90deg);
 }
 @media (prefers-color-scheme: dark) {
-    .task-complete-label { color: #4ade80; }
-    .task-complete-block { border-left-color: #4ade80; }
+    .task-complete-label { color: #3fb950; }
+    .task-complete-block { border-left-color: #3fb950; }
 }
 
 .thinking-block summary {
@@ -624,7 +726,10 @@ header h1 {
 
 @media (prefers-color-scheme: dark) {
     .thinking-icon, .thinking-label {
-        color: #bb8fce;
+        color: #c084fc;
+    }
+    .thinking-block {
+        border-left-color: #c084fc;
     }
 }
 
@@ -718,6 +823,9 @@ header h1 {
     .subagent-label {
         color: #a5b4fc;
     }
+    .subagent-block {
+        border-left-color: #818cf8;
+    }
 }
 
 .subagent-content {
@@ -727,7 +835,6 @@ header h1 {
 
 /* Compact tool-call lines inside subagent results */
 .subagent-content p em:only-child {
-    font-size: 0.9em;
     display: block;
     margin: 0;
     line-height: 1.25;
@@ -749,8 +856,7 @@ header h1 {
 
 /* Non-collapsible tool invocations: compact inline display */
 .content-block-toolInvocation {
-    font-size: 0.9em;
-    line-height: 1.25;
+    line-height: 1.3;
 }
 
 .content-block-toolInvocation p {
@@ -788,6 +894,25 @@ header h1 {
 .tool-invocation-inline .tool-invocation-wrapper {
     margin-top: 4px;
     margin-left: 0;
+}
+
+.tool-invocation-unmatched {
+    margin: 4px 0;
+}
+
+.tool-invocation-unmatched .tool-invocation-message {
+    color: var(--text-secondary);
+    font-style: italic;
+    font-size: 0.85em;
+    opacity: 0.95;
+}
+
+.tool-invocation-unmatched .tool-invocation-message p {
+    margin: 0;
+}
+
+.tool-invocation-unmatched .tool-invocation-message code {
+    font-size: inherit;
 }
 
 /* Tool invocations */
@@ -1209,27 +1334,6 @@ pre.command-output {
     font-size: 0.9em;
 }
 
-.toolbar-options {
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    margin-left: 8px;
-    padding-left: 16px;
-    border-left: 1px solid var(--border-color);
-}
-
-.toolbar-options label {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    cursor: pointer;
-    font-size: 0.85em;
-}
-
-.toolbar-options input[type="checkbox"] {
-    accent-color: var(--link-color);
-}
-
 .copy-markdown-btn {
     background-color: var(--link-color);
     color: white;
@@ -1272,11 +1376,11 @@ pre.command-output {
     border: none;
     color: var(--text-secondary);
     cursor: pointer;
-    padding: 4px 8px;
-    font-size: 0.85em;
+    padding: 2px 6px;
+    font-size: 0.8em;
     opacity: 0.4;
-    transition: opacity 0.2s, color 0.2s;
-    margin-left: 8px;
+    transition: opacity 0.15s, color 0.2s;
+    margin-left: 4px;
 }
 
 .message-copy-btn:hover {
@@ -1287,6 +1391,15 @@ pre.command-output {
 .message-copy-btn.copied {
     color: #1a7f37;
     opacity: 1;
+}
+
+@media (prefers-color-scheme: dark) {
+    .copy-status.success {
+        color: #3fb950;
+    }
+    .message-copy-btn.copied {
+        color: #3fb950;
+    }
 }
 
 /* Tables */
@@ -1329,39 +1442,204 @@ footer a {
     color: var(--link-color);
     text-decoration: none;
 }
+
+/* Toggle hide rules — driven by Alpine settings panel */
+.hide-thinking .thinking-block { display: none !important; }
+.hide-diffs .file-change .diff { display: none !important; }
+.hide-tool-inputs .tool-section-input { display: none !important; }
+/* Tools OFF: hide collapsible wrappers + section header + summaries, show inline fallbacks */
+.hide-tools .tool-invocation-wrapper,
+.hide-tools .tool-invocations-header,
+.hide-tools .tool-summary-tools { display: none !important; }
+.hide-tools .tool-invocation-inline-fallback { display: block !important; }
+.hide-commands .command-runs,
+.hide-commands .tool-summary-commands { display: none !important; }
+.hide-file-changes .file-changes,
+.hide-file-changes .tool-summary-files { display: none !important; }
+.hide-agent-details .subagent-content { display: none !important; }
+
+/* Prevent hidden elements from being chosen as scroll anchors */
+.thinking-block,
+.tool-invocation-wrapper,
+.tool-section-input,
+.subagent-content,
+.command-runs,
+.file-changes,
+.diff {
+  overflow-anchor: none;
+}
+
+/* Inline fallback: hidden by default, styled like non-collapsible tool text */
+.tool-invocation-inline-fallback {
+    display: none;
+    font-size: 0.9em;
+    line-height: 1.25;
+    color: var(--text-secondary);
+    font-style: italic;
+    margin: 3px 0;
+}
+.tool-invocation-inline-fallback .status-badge {
+    font-style: normal;
+    margin-left: 4px;
+}
+
+/* Focus states */
+button:focus-visible,
+a:focus-visible,
+summary:focus-visible,
+input:focus-visible {
+    outline: 2px solid var(--link-color);
+    outline-offset: 2px;
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        transition-duration: 0.01ms !important;
+        animation-duration: 0.01ms !important;
+    }
+}
+
+/* Tabular numerals for numeric elements */
+.message-header .message-anchor,
+.message-header .message-timestamp,
+.file-stat-add,
+.file-stat-del {
+    font-variant-numeric: tabular-nums;
+}
+
+/* Balanced text wrapping on headers */
+.message-header {
+    text-wrap: balance;
+}
+
+/* Touch interaction */
+button, a, summary, label, .settings-toggle {
+    touch-action: manipulation;
+}
+
+/* Text overflow on long tool paths */
+.tool-invocation-inline .tool-invocation-message {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: calc(100% - 120px);
+}
+
+/* === SETTINGS PANEL === */
+.settings-container { position: relative; display: inline-block; }
+
+.settings-btn {
+  width: 30px; height: 30px;
+  display: flex; align-items: center; justify-content: center;
+  background: none; border: 1px solid var(--border-color);
+  border-radius: 6px; cursor: pointer;
+  color: var(--text-secondary); font-size: 1.1em;
+  transition: all 0.15s;
+}
+.settings-btn:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border-color: var(--text-secondary);
+}
+.settings-btn.active {
+  background: var(--link-color);
+  color: white;
+  border-color: var(--link-color);
+}
+
+.settings-dropdown {
+  position: absolute; top: 100%; right: 0;
+  margin-top: 6px; width: 260px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+  z-index: 100; overflow: hidden;
+}
+@media (prefers-color-scheme: dark) {
+  .settings-dropdown { box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
+}
+
+.settings-dropdown-header {
+  padding: 8px 12px;
+  font-size: 0.75em; font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase; letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+}
+
+.settings-group {
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border-color);
+}
+.settings-group:last-child { border-bottom: none; }
+
+.settings-group-label {
+  padding: 3px 12px 1px;
+  font-size: 0.65em; font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+
+.settings-toggle {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 12px; cursor: pointer; font-size: 0.82em;
+  transition: background 0.1s;
+}
+.settings-toggle:hover { background: var(--bg-secondary); }
+.settings-toggle input { display: none; }
+
+.toggle-switch {
+  width: 32px; height: 17px; flex-shrink: 0;
+  background: var(--border-color);
+  border-radius: 9px; position: relative;
+  transition: background 0.2s;
+}
+.toggle-switch::after {
+  content: '';
+  width: 13px; height: 13px;
+  background: white;
+  border-radius: 50%;
+  position: absolute; top: 2px; left: 2px;
+  transition: transform 0.2s;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.2);
+}
+input:checked + .toggle-switch {
+  background: var(--link-color);
+}
+input:checked + .toggle-switch::after {
+  transform: translateX(15px);
+}
+
+.session-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.session-header-row h2 { flex: 1; min-width: 0; margin: 0; font-size: 1em; }
     </style>
+    
 </head>
-<body>
+<body class="hide-thinking hide-diffs hide-tool-inputs">
     
 
     <main class="container">
         
 
-        <div class="session-header">
-            <h2 id="session-title">
-                
-                    Fix authentication bug using agents
-                
-            </h2>
-            <div class="session-meta">
-                <span>2 messages</span>
-                
-                
-                <span>Created: 2026-01-31T12:00:00Z</span>
-                
-                <span class="edition-badge cli">cli</span>
-            </div>
-            <div class="session-id">
-                <small>Session ID: <code>cli-agent-test-session</code></small>
-            </div>
+        <div class="session-detail-meta">
             
-            <div class="source-file">
-                <small>Source: <code>cli-with-agents</code></small>
-            </div>
+            
+            <span>Created: 2026-01-31T12:00:00Z</span>
+            
+            <small>ID: <code>cli-agent-test-session</code></small>
+            
+            <small>Source: <code>cli-with-agents</code></small>
             
         </div>
 
-        
         
 
         
@@ -1483,8 +1761,8 @@ footer a {
                             
                             
                             
-                            <div class="content-block content-block-toolInvocation">
-                                <p>Searching for <code>jwt.decode</code> in ``</p>
+                            <div class="content-block content-block-toolInvocation tool-invocation-unmatched">
+                                <div class="tool-invocation-message"><p>Searching for <code>jwt.decode</code> in ``</p></div>
                             </div>
                             
                             
@@ -1512,8 +1790,8 @@ footer a {
                             
                             
                             
-                            <div class="content-block content-block-toolInvocation">
-                                <p>Viewing <code>jwt.py</code></p>
+                            <div class="content-block content-block-toolInvocation tool-invocation-unmatched">
+                                <div class="tool-invocation-message"><p>Viewing <code>jwt.py</code></p></div>
                             </div>
                             
                             
@@ -1541,8 +1819,8 @@ footer a {
                             
                             
                             
-                            <div class="content-block content-block-toolInvocation">
-                                <p>Edited <code>jwt.py</code></p>
+                            <div class="content-block content-block-toolInvocation tool-invocation-unmatched">
+                                <div class="tool-invocation-message"><p>Edited <code>jwt.py</code></p></div>
                             </div>
                             
                             
@@ -1571,12 +1849,12 @@ footer a {
                                         
                                     </summary>
                                     <div class="tool-invocation-content">
-                                        <div class="tool-section">
+                                        <div class="tool-section tool-section-input">
                                             <span class="tool-label">Input:</span>
                                             <pre><code>uv run pytest tests/test_auth.py -v</code></pre>
                                         </div>
                                         
-                                        <div class="tool-section">
+                                        <div class="tool-section tool-section-output">
                                             <span class="tool-label">Output:</span>
                                             <pre><code>tests/test_auth.py::test_refresh PASSED
 tests/test_auth.py::test_expired PASSED
@@ -1585,6 +1863,15 @@ tests/test_auth.py::test_expired PASSED
                                         
                                     </div>
                                 </details>
+                                
+                                <div class="tool-invocation-inline-fallback">
+                                    
+                                        Run auth tests
+                                    
+                                    
+                                    <span class="status-badge success">success</span>
+                                    
+                                </div>
                             </div>
                             
                             
@@ -1681,8 +1968,8 @@ tests/test_auth.py::test_expired PASSED
                             
                             
                             
-                            <div class="content-block content-block-toolInvocation">
-                                <p>Searching for <code>jwt.decode</code> in ``</p>
+                            <div class="content-block content-block-toolInvocation tool-invocation-unmatched">
+                                <div class="tool-invocation-message"><p>Searching for <code>jwt.decode</code> in ``</p></div>
                             </div>
                             
                             
@@ -1766,8 +2053,9 @@ tests/test_auth.py::test_expired PASSED
         </div>
     </footer>
 
+    
     <script>
-        // Handle anchor scrolling with smooth scroll
+        // Static mode: minimal vanilla JS for anchor scrolling, collapsible icons, and code collapse
         document.addEventListener('DOMContentLoaded', function() {
             if (window.location.hash) {
                 const target = document.querySelector(window.location.hash);
@@ -1777,49 +2065,40 @@ tests/test_auth.py::test_expired PASSED
                 }
             }
 
-            // Toggle collapsible icon on details open/close
             document.querySelectorAll('details.collapsible, details.tool-invocations-header, details.terminal-output-toggle, details.tool-invocation-wrapper, details.skill-block').forEach(details => {
                 details.addEventListener('toggle', function() {
                     const icon = this.querySelector(':scope > summary > .collapsible-icon');
                     if (icon) {
-                        icon.textContent = this.open ? '▼' : '▶';
+                        icon.textContent = this.open ? '\u25BC' : '\u25B6';
                     }
                 });
             });
 
-            // Auto-collapse long code blocks (more than 20 lines)
             const CODE_LINE_THRESHOLD = 20;
             document.querySelectorAll('.message-content pre').forEach(function(pre) {
                 const code = pre.querySelector('code') || pre;
                 const text = code.textContent || '';
-                // Count lines properly: empty string = 0 lines, otherwise count newlines + 1
                 const lineCount = text.length === 0 ? 0 : (text.match(/\n/g) || []).length + 1;
-
                 if (lineCount > CODE_LINE_THRESHOLD) {
-                    // Wrap the pre in a collapse wrapper
                     const wrapper = document.createElement('div');
                     wrapper.className = 'code-collapse-wrapper collapsed';
                     pre.parentNode.insertBefore(wrapper, pre);
                     wrapper.appendChild(pre);
-
-                    // Add toggle button
                     const btn = document.createElement('button');
                     btn.className = 'code-toggle-btn';
                     btn.textContent = 'Show more (' + lineCount + ' lines)';
                     btn.setAttribute('type', 'button');
                     wrapper.appendChild(btn);
-
                     btn.addEventListener('click', function() {
                         const isCollapsed = wrapper.classList.toggle('collapsed');
-                        btn.textContent = isCollapsed 
-                            ? 'Show more (' + lineCount + ' lines)' 
+                        btn.textContent = isCollapsed
+                            ? 'Show more (' + lineCount + ' lines)'
                             : 'Show less';
                     });
                 }
             });
-
-            
         });
     </script>
+    
 </body>
 </html>

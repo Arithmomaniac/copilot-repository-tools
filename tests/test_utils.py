@@ -19,6 +19,7 @@ from copilot_session_tools.utils import (
     parse_diff_stats,
     sanitize_filename,
     strip_ansi,
+    truncate_preview,
     urldecode,
 )
 
@@ -487,3 +488,51 @@ class TestGenerateSessionFilename:
         result = generate_session_filename(s)
         assert ":" not in result
         assert "/" not in result
+
+
+# ---------------------------------------------------------------------------
+# truncate_preview
+# ---------------------------------------------------------------------------
+
+
+class TestTruncatePreview:
+    """Tests for truncate_preview()."""
+
+    def test_empty_string(self):
+        assert truncate_preview("") == ""
+
+    def test_none_input(self):
+        assert truncate_preview("") == ""
+
+    def test_short_text_unchanged(self):
+        assert truncate_preview("Hello world") == "Hello world"
+
+    def test_long_text_truncated_with_ellipsis(self):
+        long_text = "This is a very long sentence that exceeds the maximum character limit for preview display purposes"
+        result = truncate_preview(long_text, max_chars=40)
+        assert result.endswith("…")
+        assert len(result) <= 42  # 40 + ellipsis char + tolerance for word boundary
+
+    def test_markdown_formatting_stripped(self):
+        assert truncate_preview("## Hello **world**") == "Hello world"
+
+    def test_html_tags_stripped(self):
+        assert truncate_preview("<b>Hello</b> <em>world</em>") == "Hello world"
+
+    def test_multiline_uses_first_nonempty_line(self):
+        text = "\n\n  First real line\nSecond line\nThird line"
+        assert truncate_preview(text) == "First real line"
+
+    def test_blank_lines_only(self):
+        assert truncate_preview("\n\n   \n") == ""
+
+    def test_word_boundary_truncation(self):
+        text = "word1 word2 word3 word4 word5 word6 word7 word8 word9 word10 word11 word12 word13 word14 word15"
+        result = truncate_preview(text, max_chars=30)
+        assert result.endswith("…")
+        # Should break at a word boundary, not mid-word
+        assert not result[-2].isalpha() or result.rstrip("…").endswith(" ") is False
+
+    def test_custom_max_chars(self):
+        result = truncate_preview("Short", max_chars=3)
+        assert result.endswith("…")

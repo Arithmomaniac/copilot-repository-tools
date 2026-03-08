@@ -22,6 +22,12 @@ from copilot_session_tools import (
     generate_session_html_filename,
     get_vscode_storage_paths,
 )
+from copilot_session_tools.content_types import (
+    CONTENT_TYPES,
+    SEARCH_CONTENT_TYPES,
+    resolve_content_set,
+    resolve_search_content_set,
+)
 from copilot_session_tools.refresh import enrich_single_session, run_enrichment, run_refresh
 
 # On Windows, reconfigure stdout/stderr to UTF-8 when piped to prevent
@@ -270,6 +276,10 @@ def enrich(
     console.print(f"[green]Successfully enriched session {session_id}[/green]")
 
 
+_CONTENT_TYPES_HELP = "Available types: " + ", ".join(sorted(CONTENT_TYPES))
+_SEARCH_CONTENT_TYPES_HELP = "Available types: " + ", ".join(sorted(SEARCH_CONTENT_TYPES))
+
+
 @app.command()
 def search(
     query: Annotated[str, typer.Argument(help="Search query.")],
@@ -321,34 +331,22 @@ def search(
             help="Filter by repository URL (e.g., github.com/owner/repo).",
         ),
     ] = None,
-    no_tools: Annotated[
-        bool,
+    include: Annotated[
+        list[str] | None,
         typer.Option(
-            "--no-tools",
-            help="Exclude tool invocations from search results.",
+            "--include",
+            "-i",
+            help=f"Content types to search in (exclusive — replaces defaults). Comma-separated or repeated. {_SEARCH_CONTENT_TYPES_HELP}",
         ),
-    ] = False,
-    no_files: Annotated[
-        bool,
+    ] = None,
+    exclude: Annotated[
+        list[str] | None,
         typer.Option(
-            "--no-files",
-            help="Exclude file changes from search results.",
+            "--exclude",
+            "-x",
+            help=f"Content types to exclude from search. Comma-separated or repeated. {_SEARCH_CONTENT_TYPES_HELP}",
         ),
-    ] = False,
-    tools_only: Annotated[
-        bool,
-        typer.Option(
-            "--tools-only",
-            help="Only search in tool invocations.",
-        ),
-    ] = False,
-    files_only: Annotated[
-        bool,
-        typer.Option(
-            "--files-only",
-            help="Only search in file changes.",
-        ),
-    ] = False,
+    ] = None,
     full_content: Annotated[
         bool,
         typer.Option(
@@ -390,8 +388,7 @@ def search(
     Use --title to filter by session/workspace name.
     Use --repository to filter by git repository URL.
     Use --skip and --limit/--top for pagination.
-    Use --no-tools or --no-files to exclude specific content types.
-    Use --tools-only or --files-only to search only specific content types.
+    Use --include / --exclude to control which content types are searched.
     Use --full to show complete content instead of truncated snippets.
     Use --sort to sort by relevance (default) or date.
     """
@@ -404,19 +401,7 @@ def search(
         console.print("[red]Error: sort must be 'relevance' or 'date'[/red]")
         raise typer.Exit(1)
 
-    # Handle search mode options
-    include_messages = True
-    include_tool_calls = not no_tools
-    include_file_changes = not no_files
-
-    if tools_only:
-        include_messages = False
-        include_file_changes = False
-        include_tool_calls = True
-    elif files_only:
-        include_messages = False
-        include_tool_calls = False
-        include_file_changes = True
+    search_content_set = resolve_search_content_set(include, exclude)
 
     database = Database(db, unenriched_only=_unenriched_only)
     results = database.search(
@@ -424,9 +409,7 @@ def search(
         limit=limit,
         skip=skip,
         role=role,
-        include_messages=include_messages,
-        include_tool_calls=include_tool_calls,
-        include_file_changes=include_file_changes,
+        search_content_set=search_content_set,
         session_title=title_filter,
         sort_by=sort_by,
         repository=repository_filter,
@@ -576,34 +559,22 @@ def export_markdown(
             help="Show verbose output.",
         ),
     ] = False,
-    include_diffs: Annotated[
-        bool,
+    include: Annotated[
+        list[str] | None,
         typer.Option(
-            "--include-diffs/--no-diffs",
-            help="Include file diffs as code blocks in the markdown output.",
+            "--include",
+            "-i",
+            help=f"Content types to include (comma-separated or repeated). {_CONTENT_TYPES_HELP}",
         ),
-    ] = False,
-    include_tool_inputs: Annotated[
-        bool,
+    ] = None,
+    exclude: Annotated[
+        list[str] | None,
         typer.Option(
-            "--include-tool-inputs/--no-tool-inputs",
-            help="Include tool inputs as code blocks in the markdown output.",
+            "--exclude",
+            "-x",
+            help=f"Content types to exclude (comma-separated or repeated). {_CONTENT_TYPES_HELP}",
         ),
-    ] = False,
-    include_thinking: Annotated[
-        bool,
-        typer.Option(
-            "--include-thinking/--no-thinking",
-            help="Include thinking/reasoning block content in the markdown output.",
-        ),
-    ] = False,
-    include_agent_details: Annotated[
-        bool,
-        typer.Option(
-            "--include-agent-details/--no-agent-details",
-            help="Include full agent/subagent content. If disabled, shows only a summary line per agent.",
-        ),
-    ] = True,
+    ] = None,
 ):
     """Export sessions as markdown files.
 
@@ -613,9 +584,14 @@ def export_markdown(
     - Message numbers and roles as bold headers
     - Tool call summaries in italics
     - Thinking block notices in italics (content omitted)
+
+    Use --include / --exclude to control which content types appear.
+    Default includes: agent-details.
     """
     _ensure_db_exists(db)
     database = Database(db, unenriched_only=_unenriched_only)
+
+    content_set = resolve_content_set(include, exclude)
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -627,14 +603,7 @@ def export_markdown(
 
         filename = generate_session_filename(session)
         file_path = output_dir / filename
-        export_session_to_file(
-            session,
-            file_path,
-            include_diffs=include_diffs,
-            include_tool_inputs=include_tool_inputs,
-            include_thinking=include_thinking,
-            include_agent_details=include_agent_details,
-        )
+        export_session_to_file(session, file_path, content_set=content_set)
         console.print(f"[green]Exported: {file_path}[/green]")
     else:
         sessions = database.list_sessions()
@@ -645,14 +614,7 @@ def export_markdown(
             if session:
                 filename = generate_session_filename(session)
                 file_path = output_dir / filename
-                export_session_to_file(
-                    session,
-                    file_path,
-                    include_diffs=include_diffs,
-                    include_tool_inputs=include_tool_inputs,
-                    include_thinking=include_thinking,
-                    include_agent_details=include_agent_details,
-                )
+                export_session_to_file(session, file_path, content_set=content_set)
                 exported += 1
                 if verbose:
                     console.print(f"  Exported: {file_path}")
@@ -694,6 +656,22 @@ def export_html(
             help="Show verbose output.",
         ),
     ] = False,
+    include: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--include",
+            "-i",
+            help=f"Content types to include (comma-separated or repeated). {_CONTENT_TYPES_HELP}",
+        ),
+    ] = None,
+    exclude: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--exclude",
+            "-x",
+            help=f"Content types to exclude (comma-separated or repeated). {_CONTENT_TYPES_HELP}",
+        ),
+    ] = None,
 ):
     """Export sessions as self-contained static HTML files.
 
@@ -701,9 +679,14 @@ def export_html(
     rendering as the web viewer, but without interactive elements (toolbar,
     copy buttons, AJAX). The HTML is self-contained with no external
     dependencies.
+
+    Use --include / --exclude to control which content types appear.
+    Default includes: agent-details.
     """
     _ensure_db_exists(db)
     database = Database(db, unenriched_only=_unenriched_only)
+
+    content_set = resolve_content_set(include, exclude)
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -715,7 +698,7 @@ def export_html(
 
         filename = generate_session_html_filename(session)
         file_path = output_dir / filename
-        export_session_to_html_file(session, file_path)
+        export_session_to_html_file(session, file_path, content_set=content_set)
         console.print(f"[green]Exported: {file_path}[/green]")
     else:
         sessions = database.list_sessions()
@@ -726,7 +709,7 @@ def export_html(
             if session:
                 filename = generate_session_html_filename(session)
                 file_path = output_dir / filename
-                export_session_to_html_file(session, file_path)
+                export_session_to_html_file(session, file_path, content_set=content_set)
                 exported += 1
                 if verbose:
                     console.print(f"  Exported: {file_path}")
