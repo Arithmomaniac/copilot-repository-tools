@@ -282,7 +282,7 @@ from .scanner import (
     ToolInvocation,
 )
 
-CST_SCHEMA_VERSION = 4
+CST_SCHEMA_VERSION = 5
 
 
 def _serialize_nested_data(block: ContentBlock) -> str | None:
@@ -368,7 +368,9 @@ CREATE TABLE IF NOT EXISTS cst_messages (
     cached_markdown TEXT,
     agent_id TEXT,
     agent_display_name TEXT,
-    agent_nesting_level INTEGER DEFAULT 0
+    agent_nesting_level INTEGER DEFAULT 0,
+    original_content TEXT,
+    cleanup_model TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_cst_messages_session ON cst_messages(session_id);
 
@@ -554,6 +556,12 @@ class Database:
                         cursor.execute("ALTER TABLE cst_content_blocks ADD COLUMN nested_data TEXT")
                     with contextlib.suppress(Exception):
                         cursor.execute("ALTER TABLE cst_sessions ADD COLUMN enrichment_version TEXT")
+                if current_version < 5:
+                    # v5: transcript cleanup columns for voice-dictated message cleanup
+                    with contextlib.suppress(Exception):
+                        cursor.execute("ALTER TABLE cst_messages ADD COLUMN original_content TEXT")
+                    with contextlib.suppress(Exception):
+                        cursor.execute("ALTER TABLE cst_messages ADD COLUMN cleanup_model TEXT")
                 if current_version < CST_SCHEMA_VERSION:
                     cursor.execute(
                         "UPDATE cst_schema_version SET version = ?",
@@ -1125,6 +1133,8 @@ class Database:
             agent_id=msg_row["agent_id"] if "agent_id" in msg_row.keys() else None,  # noqa: SIM118
             agent_display_name=msg_row["agent_display_name"] if "agent_display_name" in msg_row.keys() else None,  # noqa: SIM118
             agent_nesting_level=msg_row["agent_nesting_level"] if "agent_nesting_level" in msg_row.keys() else 0,  # noqa: SIM118
+            original_content=msg_row["original_content"] if "original_content" in msg_row.keys() else None,  # noqa: SIM118
+            cleanup_model=msg_row["cleanup_model"] if "cleanup_model" in msg_row.keys() else None,  # noqa: SIM118
         )
 
     def get_session(self, session_id: str) -> ChatSession | None:
@@ -1215,7 +1225,8 @@ class Database:
             cursor.execute(
                 """
                 SELECT id, role, content, timestamp, cached_markdown,
-                       agent_id, agent_display_name, agent_nesting_level
+                       agent_id, agent_display_name, agent_nesting_level,
+                       original_content, cleanup_model
                 FROM cst_messages 
                 WHERE session_id = ? 
                 ORDER BY message_index

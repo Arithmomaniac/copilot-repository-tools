@@ -936,6 +936,203 @@ def web(
     )
 
 
+@app.command()
+def cleanup(
+    session_id: str = typer.Argument(None, help="Session ID to clean up. If omitted, lists sessions with potential voice-dictated messages."),
+    db: Annotated[
+        Path,
+        typer.Option(
+            "--db",
+            "-d",
+            help="Path to SQLite database file.",
+        ),
+    ] = _DEFAULT_DB,
+    model: Annotated[
+        str,
+        typer.Option(
+            "--model",
+            "-m",
+            help="LiteLLM model for cleanup (e.g., github_copilot/gpt-4o-mini).",
+        ),
+    ] = "github_copilot/gpt-4o-mini",
+    dry_run: Annotated[
+        bool,
+        typer.Option(
+            "--dry-run",
+            help="Preview changes without writing to the database.",
+        ),
+    ] = False,
+    all_messages: Annotated[
+        bool,
+        typer.Option(
+            "--all",
+            help="Clean all user messages (skip heuristic auto-detection).",
+        ),
+    ] = False,
+    message: Annotated[
+        int | None,
+        typer.Option(
+            "--message",
+            help="Clean only this specific message index.",
+        ),
+    ] = None,
+    force: Annotated[
+        bool,
+        typer.Option(
+            "--force",
+            help="Re-clean already-cleaned messages.",
+        ),
+    ] = False,
+    threshold: Annotated[
+        float,
+        typer.Option(
+            "--threshold",
+            help="Voice detection threshold (0.0-1.0). Lower = more sensitive.",
+        ),
+    ] = 0.3,
+):
+    """Clean up voice-dictated user messages using an LLM.
+
+    Uses heuristics to auto-detect garbled messages, then sends them to an LLM
+    (via LiteLLM) for cleanup. Original content is preserved for revert.
+
+    Requires the [llm] extra: pip install copilot-session-tools[llm]
+    """
+    try:
+        from copilot_session_tools.transcript_cleanup import cleanup_session
+    except ImportError:
+        console.print("[red]Error: litellm is required for transcript cleanup.[/red]")
+        console.print("Install with: [bold]pip install copilot-session-tools\\[llm][/bold]")
+        raise typer.Exit(1)  # noqa: B904
+
+    if session_id is None:
+        _ensure_db_exists(db)
+        database = Database(db, unenriched_only=_unenriched_only)
+        _list_cleanup_candidates(database, threshold)
+        return
+
+    _ensure_db_exists(db)
+    database = Database(db, unenriched_only=_unenriched_only)
+
+    if dry_run:
+        console.print("[yellow]DRY RUN — no changes will be written[/yellow]\n")
+
+    try:
+        result = cleanup_session(
+            db=database,
+            session_id=session_id,
+            model=model,
+            all_messages=all_messages,
+            message_index=message,
+            force=force,
+            threshold=threshold,
+            dry_run=dry_run,
+        )
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)  # noqa: B904
+
+    console.print(f"\n[bold]Session:[/bold] {result.session_id}")
+    console.print(f"[bold]User messages:[/bold] {result.total_user_messages}")
+    console.print(f"[bold]Voice-detected:[/bold] {result.detected_voice}")
+    console.print(f"[bold]Cleaned:[/bold] {result.cleaned}")
+    console.print(f"[bold]Skipped (already clean):[/bold] {result.skipped_clean}")
+    if result.failed:
+        console.print(f"[bold red]Failed:[/bold red] {result.failed}")
+
+    for r in result.results:
+        if r.is_voice and r.cleaned != r.original:
+            console.print(f"\n[dim]Message {r.message_index}:[/dim]")
+            console.print(f"  [red]- {r.original[:150]}{'...' if len(r.original) > 150 else ''}[/red]")
+            console.print(f"  [green]+ {r.cleaned[:150]}{'...' if len(r.cleaned) > 150 else ''}[/green]")
+
+
+def _list_cleanup_candidates(database: Database, threshold: float) -> None:
+    """List sessions that may contain voice-dictated messages."""
+    from copilot_session_tools.transcript_cleanup import compute_voice_score
+
+    with database._get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            SELECT s.session_id, s.title, m.message_index, m.content, m.original_content
+            FROM cst_messages m
+            JOIN cst_sessions s ON m.session_id = s.session_id
+            WHERE m.role = 'user' AND m.content IS NOT NULL AND m.agent_nesting_level = 0
+            ORDER BY s.created_at DESC
+            """
+        )
+        rows = cursor.fetchall()
+
+    candidates: dict[str, list[tuple[int, float, str, bool]]] = {}
+    for row in rows:
+        sid, title, idx, content, original = row
+        score = compute_voice_score(content)
+        already_cleaned = original is not None
+        if score >= threshold or already_cleaned:
+            if sid not in candidates:
+                candidates[sid] = []
+            candidates[sid].append((idx, score, title or sid[:12], already_cleaned))
+
+    if not candidates:
+        console.print("[dim]No sessions with likely voice-dictated messages found.[/dim]")
+        return
+
+    console.print(f"[bold]Sessions with potential voice-dictated messages (threshold={threshold}):[/bold]\n")
+    for sid, msgs in list(candidates.items())[:20]:
+        title = msgs[0][2]
+        cleaned_count = sum(1 for _, _, _, cleaned in msgs if cleaned)
+        uncleaned = [m for m in msgs if not m[3]]
+        console.print(f"  [bold]{sid[:12]}…[/bold] — {title}")
+        if cleaned_count:
+            console.print(f"    [green]✓ {cleaned_count} already cleaned[/green]")
+        if uncleaned:
+            console.print(f"    [yellow]⚠ {len(uncleaned)} candidates[/yellow] (max score: {max(s for _, s, _, _ in uncleaned):.2f})")
+
+
+@app.command(name="cleanup-revert")
+def cleanup_revert(
+    session_id: str = typer.Argument(..., help="Session ID to revert"),
+    db: Annotated[
+        Path,
+        typer.Option(
+            "--db",
+            "-d",
+            help="Path to SQLite database file.",
+        ),
+    ] = _DEFAULT_DB,
+    message: Annotated[
+        int | None,
+        typer.Option(
+            "--message",
+            help="Revert only this specific message index (otherwise reverts all).",
+        ),
+    ] = None,
+):
+    """Revert cleaned messages back to their original voice-dictated content."""
+    from copilot_session_tools.transcript_cleanup import revert_message, revert_session
+
+    _ensure_db_exists(db)
+    database = Database(db, unenriched_only=_unenriched_only)
+
+    try:
+        if message is not None:
+            reverted = revert_message(database, session_id, message)
+            if reverted:
+                console.print(f"[green]Reverted message {message} in session {session_id}[/green]")
+            else:
+                console.print(f"[yellow]Message {message} has no original content to revert[/yellow]")
+        else:
+            count = revert_session(database, session_id)
+            if count:
+                console.print(f"[green]Reverted {count} message(s) in session {session_id}[/green]")
+            else:
+                console.print(f"[yellow]No cleaned messages found in session {session_id}[/yellow]")
+    except ValueError as e:
+        console.print(f"[red]Error: {e}[/red]")
+        raise typer.Exit(1)  # noqa: B904
+
+
 def run():
     """Entry point for the CLI."""
     app()

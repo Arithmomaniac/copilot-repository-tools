@@ -1427,6 +1427,76 @@ pre.command-output {
     }
 }
 
+/* Cleanup / Revert buttons */
+.message-cleanup-btn,
+.message-revert-btn,
+.message-toggle-raw-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 0.85em;
+    padding: 2px 4px;
+    margin-left: 4px;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+    vertical-align: middle;
+}
+.message:hover .message-cleanup-btn,
+.message:hover .message-revert-btn,
+.message:hover .message-toggle-raw-btn {
+    opacity: 0.6;
+}
+.message-cleanup-btn:hover {
+    opacity: 1 !important;
+    color: #d97706;
+}
+.message-revert-btn:hover {
+    opacity: 1 !important;
+    color: #2563eb;
+}
+.message-toggle-raw-btn:hover {
+    opacity: 1 !important;
+    color: #6b7280;
+}
+@media (prefers-color-scheme: dark) {
+    .message-cleanup-btn:hover { color: #fbbf24; }
+    .message-revert-btn:hover { color: #60a5fa; }
+    .message-toggle-raw-btn:hover { color: #9ca3af; }
+}
+
+.cleanup-badge {
+    display: inline-block;
+    font-size: 0.7em;
+    padding: 1px 6px;
+    margin-left: 6px;
+    border-radius: 9999px;
+    background: #fef3c7;
+    color: #92400e;
+    vertical-align: middle;
+    font-weight: 500;
+}
+@media (prefers-color-scheme: dark) {
+    .cleanup-badge {
+        background: #451a03;
+        color: #fde68a;
+    }
+}
+
+.message-original-content {
+    display: none;
+}
+
+.toolbar-cleanup-btn {
+    color: #d97706 !important;
+}
+.toolbar-cleanup-btn:hover {
+    background: rgba(217, 119, 6, 0.1) !important;
+}
+@media (prefers-color-scheme: dark) {
+    .toolbar-cleanup-btn { color: #fbbf24 !important; }
+    .toolbar-cleanup-btn:hover { background: rgba(251, 191, 36, 0.15) !important; }
+}
+
 /* Tables */
 .message-content table {
     border-collapse: collapse;
@@ -1667,6 +1737,7 @@ input:checked + .toggle-switch::after {
         copyStatusClass: '',
         messageCount: {{ message_count | default(0) }},
         sessionId: '{{ session.session_id }}',
+        cleanupInProgress: false,
 
         // Scroll-position preservation helpers
         getAnchorState() {
@@ -1783,9 +1854,68 @@ input:checked + .toggle-switch::after {
               }
             });
           });
-        },
 
-        saveSettings() {
+          // Per-message cleanup buttons
+          document.querySelectorAll('.message-cleanup-btn').forEach(btn => {
+            btn.addEventListener('click', async function() {
+              const sessionId = this.dataset.sessionId;
+              const messageIndex = parseInt(this.dataset.messageIndex);
+              if (!confirm('Clean up this message?')) return;
+              try {
+                const response = await fetch('/api/cleanup/' + sessionId, {
+                  method: 'POST',
+                  headers: {'Content-Type': 'application/json'},
+                  body: JSON.stringify({message_index: messageIndex})
+                });
+                const data = await response.json();
+                if (data.success && data.cleaned > 0) {
+                  location.reload();
+                } else if (!data.success) {
+                  alert('Error: ' + data.error);
+                }
+              } catch (err) {
+                alert('Cleanup failed: ' + err.message);
+              }
+            });
+          });
+
+          // Per-message revert buttons
+          document.querySelectorAll('.message-revert-btn').forEach(btn => {
+            btn.addEventListener('click', async function() {
+              const sessionId = this.dataset.sessionId;
+              const messageIndex = parseInt(this.dataset.messageIndex);
+              try {
+                const response = await fetch('/api/cleanup-revert/' + sessionId, {
+                  method: 'POST',
+                  headers: {'Content-Type': 'application/json'},
+                  body: JSON.stringify({message_index: messageIndex})
+                });
+                const data = await response.json();
+                if (data.success && data.reverted_count > 0) {
+                  location.reload();
+                }
+              } catch (err) {
+                alert('Revert failed: ' + err.message);
+              }
+            });
+          });
+
+          // Toggle raw/cleaned view per message
+          document.querySelectorAll('.message-toggle-raw-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+              const msgIndex = this.dataset.messageIndex;
+              const originalDiv = document.querySelector(`.message-original-content[data-msg-index="${msgIndex}"]`);
+              const contentDiv = originalDiv?.parentElement?.querySelector('.message-content-inner');
+              if (originalDiv && contentDiv) {
+                const showingOriginal = originalDiv.style.display !== 'none';
+                originalDiv.style.display = showingOriginal ? 'none' : 'block';
+                contentDiv.style.display = showingOriginal ? 'block' : 'none';
+                this.textContent = showingOriginal ? '👁️' : '👁️‍🗨️';
+                this.title = showingOriginal ? 'Show original (raw) text' : 'Show cleaned text';
+              }
+            });
+          });
+        },
           try {
             localStorage.setItem('cst-settings', JSON.stringify({
               thinking: this.thinking, diffs: this.diffs, toolInputs: this.toolInputs,
@@ -1878,6 +2008,59 @@ input:checked + .toggle-switch::after {
           }
         },
 
+        async cleanupSession() {
+          if (this.cleanupInProgress) return;
+          if (!confirm('Clean up voice-dictated messages in this session?')) return;
+          this.cleanupInProgress = true;
+          this.copyStatusText = 'Cleaning...';
+          this.copyStatusClass = '';
+          try {
+            const response = await fetch('/api/cleanup/' + this.sessionId, {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+            });
+            const data = await response.json();
+            if (data.success) {
+              this.copyStatusText = `Cleaned ${data.cleaned} message(s)`;
+              this.copyStatusClass = 'success';
+              if (data.cleaned > 0) setTimeout(() => location.reload(), 1500);
+            } else {
+              this.copyStatusText = 'Error: ' + data.error;
+              this.copyStatusClass = 'error';
+            }
+          } catch (err) {
+            this.copyStatusText = 'Cleanup failed';
+            this.copyStatusClass = 'error';
+          } finally {
+            this.cleanupInProgress = false;
+            setTimeout(() => { this.copyStatusText = ''; this.copyStatusClass = ''; }, 5000);
+          }
+        },
+
+        async revertAllSession() {
+          if (!confirm('Revert ALL cleaned messages to their originals?')) return;
+          try {
+            const response = await fetch('/api/cleanup-revert/' + this.sessionId, {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+            });
+            const data = await response.json();
+            if (data.success) {
+              this.copyStatusText = `Reverted ${data.reverted_count} message(s)`;
+              this.copyStatusClass = 'success';
+              if (data.reverted_count > 0) setTimeout(() => location.reload(), 1500);
+            } else {
+              this.copyStatusText = 'Error: ' + data.error;
+              this.copyStatusClass = 'error';
+            }
+          } catch (err) {
+            this.copyStatusText = 'Revert failed';
+            this.copyStatusClass = 'error';
+          } finally {
+            setTimeout(() => { this.copyStatusText = ''; this.copyStatusClass = ''; }, 5000);
+          }
+        },
+
         autoCollapseCodeBlocks() {
           const CODE_LINE_THRESHOLD = 20;
           document.querySelectorAll('.message-content pre').forEach(function(pre) {
@@ -1936,6 +2119,10 @@ input:checked + .toggle-switch::after {
                 <button type="button" class="toolbar-btn" @click="downloadMarkdown()" title="Download Markdown">⬇ MD</button>
                 <button type="button" class="toolbar-btn" @click="downloadHtml()" title="Download HTML">⬇ HTML</button>
                 <button type="button" class="toolbar-btn" @click="copyUrl()" title="Copy URL">🔗</button>
+                <button type="button" class="toolbar-btn toolbar-cleanup-btn" @click="cleanupSession()" title="Clean up voice-dictated messages">🧹 Cleanup</button>
+                {% if has_cleanup_data %}
+                <button type="button" class="toolbar-btn toolbar-cleanup-btn" @click="revertAllSession()" title="Revert all cleaned messages to originals">↩️ Revert All</button>
+                {% endif %}
                 <span class="copy-status" id="copy-status" :class="copyStatusClass" x-text="copyStatusText"></span>
             </div>
             {% endif %}
@@ -2419,9 +2606,31 @@ input:checked + .toggle-switch::after {
                         <i class="fa-regular fa-copy"></i>
                     </button>
                     {% endif %}
+                    {% if message.role == 'user' and not static %}
+                      {% if message.original_content is none %}
+                      <button type="button" class="message-cleanup-btn" data-message-index="{{ loop.index0 }}" data-session-id="{{ session.session_id }}" title="Clean up this message" aria-label="Clean message">
+                        🧹
+                      </button>
+                      {% else %}
+                      <button type="button" class="message-revert-btn" data-message-index="{{ loop.index0 }}" data-session-id="{{ session.session_id }}" title="Revert to original" aria-label="Revert message">
+                        ↩️
+                      </button>
+                      <button type="button" class="message-toggle-raw-btn" data-message-index="{{ loop.index0 }}" title="Toggle raw/cleaned view" aria-label="Toggle raw/cleaned">
+                        👁️
+                      </button>
+                      <span class="cleanup-badge" title="Cleaned by {{ message.cleanup_model }}">✨ cleaned</span>
+                      {% endif %}
+                    {% endif %}
                 </div>
                 <div class="message-content">
+                    {% if message.original_content is not none %}
+                    <div class="message-original-content" data-msg-index="{{ loop.index0 }}">
+                      {{ message.original_content | markdown }}
+                    </div>
+                    {% endif %}
+                    <div class="message-content-inner">
                     {{ render_content_blocks(message.content_blocks, message.tool_invocations, message.file_changes, message.command_runs, msg_meta, message.content) }}
+                    </div>
                 </div>
             </div>
             {% endfor %}

@@ -37,8 +37,11 @@ cli = [
 web = [
     "flask>=3.0.0",
 ]
+llm = [
+    "litellm>=1.50.0",
+]
 all = [
-    "copilot-session-tools[cli,web]",
+    "copilot-session-tools[cli,web,llm]",
 ]
 
 [project.scripts]
