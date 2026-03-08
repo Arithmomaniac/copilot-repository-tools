@@ -209,10 +209,14 @@ class TestCLIIncludeExcludeFlags:
 
         result = runner.invoke(app, ["export-markdown", "--help"])
         assert result.exit_code == 0
-        assert "--include" in result.output
-        assert "--exclude" in result.output
+        # Strip ANSI escape codes for cross-platform assertion
+        import re
+
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        assert "--include" in clean
+        assert "--exclude" in clean
         # old boolean flags should be gone
-        assert "--include-thinking" not in result.output
+        assert "--include-thinking" not in clean
 
     def test_export_html_help_shows_include_exclude(self, runner):
         """--include and --exclude appear in export-html help text."""
@@ -220,6 +224,9 @@ class TestCLIIncludeExcludeFlags:
 
         result = runner.invoke(app, ["export-html", "--help"])
         assert result.exit_code == 0
-        assert "--include" in result.output
-        assert "--exclude" in result.output
-        assert "--include-thinking" not in result.output
+        import re
+
+        clean = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+        assert "--include" in clean
+        assert "--exclude" in clean
+        assert "--include-thinking" not in clean
