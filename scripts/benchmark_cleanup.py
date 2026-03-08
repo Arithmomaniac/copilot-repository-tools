@@ -167,9 +167,9 @@ def compute_voice_score_with_textstat(text: str) -> float:
 # ---------------------------------------------------------------------------
 
 TRI_REVIEW_MODELS = [
-    "github_copilot/claude-sonnet-4",
-    "github_copilot/gpt-4o",
-    "github_copilot/gemini-2.5-pro",
+    "github_copilot/claude-sonnet-4.6",
+    "github_copilot/gpt-5.4",
+    "github_copilot/gemini-3-pro-preview",
 ]
 
 LABELING_PROMPT = """You are a text analysis expert. For each user message below, determine whether it was:
@@ -219,13 +219,20 @@ def label_messages_with_model(messages: list[str], model: str) -> list[dict]:
     for i, msg in enumerate(messages):
         prompt += f"\n[{i}]: {msg!r}\n"
 
+    prompt += '\nRespond with JSON only: {"results": [{"index": N, "label": "voice"|"typed", "confidence": 0.0-1.0}, ...]}'
+
     response = litellm.completion(
         model=model,
         messages=[{"role": "user", "content": prompt}],
-        response_format=LABELING_RESPONSE_SCHEMA,
         temperature=0.0,
     )
     content = response.choices[0].message.content
+    # Strip markdown code fences if present
+    content = content.strip()
+    if content.startswith("```"):
+        content = content.split("\n", 1)[1] if "\n" in content else content[3:]
+        content = content.removesuffix("```")
+        content = content.strip()
     parsed = json.loads(content)
     return parsed["results"]
 
@@ -269,8 +276,8 @@ def get_consensus_labels(messages: list[str]) -> list[dict]:
 
 CLEANUP_MODELS = [
     "github_copilot/gpt-4o-mini",
-    "github_copilot/gemini-3-flash",
     "github_copilot/claude-haiku-4.5",
+    "github_copilot/gpt-5-mini",
 ]
 
 CLEANUP_SYSTEM_PROMPT = """You are a transcript cleanup assistant. You receive voice-dictated text \
@@ -341,7 +348,9 @@ class PrefilterMetrics:
 
 def cleanup_single(garbled: str, context: str, model: str) -> CleanupBenchmarkResult:
     """Run a single cleanup through a model and measure results."""
-    user_content = f"User message to clean:\n{garbled}\n\nContext — what the AI understood:\n{context}"
+    user_content = (
+        f'User message to clean:\n{garbled}\n\nContext -- what the AI understood:\n{context}\n\nRespond with JSON only: {{"is_voice": true/false, "cleaned": "cleaned text"}}'
+    )
 
     start = time.perf_counter()
     try:
@@ -351,11 +360,16 @@ def cleanup_single(garbled: str, context: str, model: str) -> CleanupBenchmarkRe
                 {"role": "system", "content": CLEANUP_SYSTEM_PROMPT},
                 {"role": "user", "content": user_content},
             ],
-            response_format=CLEANUP_RESPONSE_SCHEMA,
             temperature=0.0,
         )
         elapsed = time.perf_counter() - start
         content = response.choices[0].message.content
+        # Strip markdown code fences if present
+        content = content.strip()
+        if content.startswith("```"):
+            content = content.split("\n", 1)[1] if "\n" in content else content[3:]
+            content = content.removesuffix("```")
+            content = content.strip()
         parsed = json.loads(content)
         usage = response.usage
         return CleanupBenchmarkResult(
@@ -483,7 +497,7 @@ def run_prefilter_benchmark(messages: list[str]) -> None:
         all_metrics.append(metrics)
 
     # Print results table
-    print(f"{'Strategy':<25s} {'TP':>4s} {'FP':>4s} {'TN':>4s} {'FN':>4s} {'Prec':>6s} {'Recall':>6s} {'F1':>6s} {'→LLM':>5s}")
+    print(f"{'Strategy':<25s} {'TP':>4s} {'FP':>4s} {'TN':>4s} {'FN':>4s} {'Prec':>6s} {'Recall':>6s} {'F1':>6s} {'->LLM':>6s}")
     print("-" * 75)
     for m in all_metrics:
         print(
