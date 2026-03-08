@@ -287,6 +287,9 @@ accurately reflect the user's intended meaning.
 Rules:
 - Preserve the user's intent and technical meaning exactly
 - Fix speech-to-text artifacts: repeated words, homophones, filler words, broken sentence structure
+- Add paragraph breaks where the user shifts topic or makes a distinct point
+- Use bullet points or numbered lists when the user is clearly enumerating items,
+  but be conservative — only use lists when the structure is unambiguous
 - Maintain the user's natural voice and style — don't make it overly formal
 - Do NOT add information that wasn't in the original message
 - If the text appears already clean, return it unchanged"""
