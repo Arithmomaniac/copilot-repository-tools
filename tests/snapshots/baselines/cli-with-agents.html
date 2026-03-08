@@ -1402,6 +1402,76 @@ pre.command-output {
     }
 }
 
+/* Cleanup / Revert buttons */
+.message-cleanup-btn,
+.message-revert-btn,
+.message-toggle-raw-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 0.85em;
+    padding: 2px 4px;
+    margin-left: 4px;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+    vertical-align: middle;
+}
+.message:hover .message-cleanup-btn,
+.message:hover .message-revert-btn,
+.message:hover .message-toggle-raw-btn {
+    opacity: 0.6;
+}
+.message-cleanup-btn:hover {
+    opacity: 1 !important;
+    color: #d97706;
+}
+.message-revert-btn:hover {
+    opacity: 1 !important;
+    color: #2563eb;
+}
+.message-toggle-raw-btn:hover {
+    opacity: 1 !important;
+    color: #6b7280;
+}
+@media (prefers-color-scheme: dark) {
+    .message-cleanup-btn:hover { color: #fbbf24; }
+    .message-revert-btn:hover { color: #60a5fa; }
+    .message-toggle-raw-btn:hover { color: #9ca3af; }
+}
+
+.cleanup-badge {
+    display: inline-block;
+    font-size: 0.7em;
+    padding: 1px 6px;
+    margin-left: 6px;
+    border-radius: 9999px;
+    background: #fef3c7;
+    color: #92400e;
+    vertical-align: middle;
+    font-weight: 500;
+}
+@media (prefers-color-scheme: dark) {
+    .cleanup-badge {
+        background: #451a03;
+        color: #fde68a;
+    }
+}
+
+.message-original-content {
+    display: none;
+}
+
+.toolbar-cleanup-btn {
+    color: #d97706 !important;
+}
+.toolbar-cleanup-btn:hover {
+    background: rgba(217, 119, 6, 0.1) !important;
+}
+@media (prefers-color-scheme: dark) {
+    .toolbar-cleanup-btn { color: #fbbf24 !important; }
+    .toolbar-cleanup-btn:hover { background: rgba(251, 191, 36, 0.15) !important; }
+}
+
 /* Tables */
 .message-content table {
     border-collapse: collapse;
@@ -1658,8 +1728,11 @@ input:checked + .toggle-switch::after {
                     
                     <a href="#msg-1" class="message-anchor" title="Link to this message">#1</a>
                     
+                    
                 </div>
                 <div class="message-content">
+                    
+                    <div class="message-content-inner">
                     
                     
                         
@@ -1678,6 +1751,7 @@ input:checked + .toggle-switch::after {
                 
                 
         
+                    </div>
                 </div>
             </div>
             
@@ -1690,8 +1764,11 @@ input:checked + .toggle-switch::after {
                     
                     <a href="#msg-2" class="message-anchor" title="Link to this message">#2</a>
                     
+                    
                 </div>
                 <div class="message-content">
+                    
+                    <div class="message-content-inner">
                     
                     
                         
@@ -2040,6 +2117,7 @@ tests/test_auth.py::test_expired PASSED
                 
                 
         
+                    </div>
                 </div>
             </div>
             
