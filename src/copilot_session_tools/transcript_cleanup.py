@@ -350,28 +350,22 @@ def cleanup_session(
             results=[],
         )
 
-    # Build batch prompt and call LLM
-    prompt = build_batch_prompt(session, target_indices)
-    try:
-        llm_results = call_cleanup_llm(prompt, model, len(target_indices))
-    except Exception as e:
-        return SessionCleanupResult(
-            session_id=session_id,
-            total_user_messages=total_user,
-            detected_voice=len(target_indices),
-            cleaned=0,
-            skipped_clean=0,
-            failed=len(target_indices),
-            results=[
-                MessageCleanupResult(
-                    message_index=i,
-                    is_voice=True,
-                    original=session.messages[i].content,
-                    cleaned=f"ERROR: {e}",
-                )
-                for i in target_indices
-            ],
-        )
+    # Build batch prompt and call LLM, chunking if needed to stay within token limits
+    CHUNK_SIZE = 10  # Max messages per LLM call
+    all_llm_results = []
+    failed_count = 0
+
+    for chunk_start in range(0, len(target_indices), CHUNK_SIZE):
+        chunk_indices = target_indices[chunk_start : chunk_start + CHUNK_SIZE]
+        prompt = build_batch_prompt(session, chunk_indices)
+        try:
+            chunk_results = call_cleanup_llm(prompt, model, len(chunk_indices))
+            all_llm_results.extend(chunk_results)
+        except Exception as e:
+            failed_count += len(chunk_indices)
+            all_llm_results.extend({"index": i, "is_voice": True, "cleaned": f"ERROR: {e}"} for i in chunk_indices)
+
+    llm_results = all_llm_results
 
     # Process results
     cleaned_count = 0
@@ -383,6 +377,18 @@ def cleanup_session(
         is_voice = llm_result["is_voice"]
         cleaned_text = llm_result["cleaned"]
         original_msg = session.messages[msg_idx]
+
+        # Skip error results from failed chunks
+        if isinstance(cleaned_text, str) and cleaned_text.startswith("ERROR:"):
+            message_results.append(
+                MessageCleanupResult(
+                    message_index=msg_idx,
+                    is_voice=is_voice,
+                    original=original_msg.content,
+                    cleaned=cleaned_text,
+                )
+            )
+            continue
 
         result = MessageCleanupResult(
             message_index=msg_idx,

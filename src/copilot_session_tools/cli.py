@@ -1055,7 +1055,7 @@ def _list_cleanup_candidates(database: Database, threshold: float) -> None:
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT s.session_id, s.title, m.message_index, m.content, m.original_content
+            SELECT s.session_id, s.custom_title, m.message_index, m.content, m.original_content
             FROM cst_messages m
             JOIN cst_sessions s ON m.session_id = s.session_id
             WHERE m.role = 'user' AND m.content IS NOT NULL AND m.agent_nesting_level = 0

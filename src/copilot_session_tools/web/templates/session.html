@@ -1907,15 +1907,16 @@ input:checked + .toggle-switch::after {
               const originalDiv = document.querySelector(`.message-original-content[data-msg-index="${msgIndex}"]`);
               const contentDiv = originalDiv?.parentElement?.querySelector('.message-content-inner');
               if (originalDiv && contentDiv) {
-                const showingOriginal = originalDiv.style.display !== 'none';
-                originalDiv.style.display = showingOriginal ? 'none' : 'block';
-                contentDiv.style.display = showingOriginal ? 'block' : 'none';
-                this.textContent = showingOriginal ? '👁️' : '👁️‍🗨️';
-                this.title = showingOriginal ? 'Show original (raw) text' : 'Show cleaned text';
+                const isOriginalVisible = getComputedStyle(originalDiv).display !== 'none';
+                originalDiv.style.display = isOriginalVisible ? 'none' : 'block';
+                contentDiv.style.display = isOriginalVisible ? 'block' : 'none';
+                this.textContent = isOriginalVisible ? '👁️' : '👁️‍🗨️';
+                this.title = isOriginalVisible ? 'Show original (raw) text' : 'Show cleaned text';
               }
             });
           });
         },
+        saveSettings() {
           try {
             localStorage.setItem('cst-settings', JSON.stringify({
               thinking: this.thinking, diffs: this.diffs, toolInputs: this.toolInputs,

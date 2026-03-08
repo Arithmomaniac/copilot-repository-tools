@@ -562,6 +562,11 @@ class Database:
                         cursor.execute("ALTER TABLE cst_messages ADD COLUMN original_content TEXT")
                     with contextlib.suppress(Exception):
                         cursor.execute("ALTER TABLE cst_messages ADD COLUMN cleanup_model TEXT")
+                # v5 catch-up: ensure columns exist even if version was already bumped
+                with contextlib.suppress(Exception):
+                    cursor.execute("ALTER TABLE cst_messages ADD COLUMN original_content TEXT")
+                with contextlib.suppress(Exception):
+                    cursor.execute("ALTER TABLE cst_messages ADD COLUMN cleanup_model TEXT")
                 if current_version < CST_SCHEMA_VERSION:
                     cursor.execute(
                         "UPDATE cst_schema_version SET version = ?",
