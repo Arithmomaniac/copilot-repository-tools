@@ -578,7 +578,6 @@ def main():
     args = parser.parse_args()
 
     print("Transcript Cleanup Benchmark")
-    print(f"LiteLLM version: {litellm.__version__}")
 
     if args.part in ("prefilter", "all"):
         messages = load_messages_from_db(args.db, args.count)
