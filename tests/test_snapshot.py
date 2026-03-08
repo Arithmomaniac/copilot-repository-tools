@@ -53,9 +53,7 @@ class TestCLISessionSnapshot:
     def test_markdown_export(self, file_regression):
         md = session_to_markdown(
             self.session,
-            include_diffs=True,
-            include_tool_inputs=True,
-            include_thinking=True,
+            content_set={"diffs", "tool-inputs", "thinking", "agent-details", "tools", "commands", "file-changes"},
         )
         file_regression.check(md, fullpath=BASELINES_DIR / "cli.md", encoding="utf-8")
 
@@ -86,9 +84,7 @@ class TestCLIAgentSessionSnapshot:
     def test_markdown_export(self, file_regression):
         md = session_to_markdown(
             self.session,
-            include_diffs=True,
-            include_tool_inputs=True,
-            include_thinking=True,
+            content_set={"diffs", "tool-inputs", "thinking", "agent-details", "tools", "commands", "file-changes"},
         )
         file_regression.check(md, fullpath=BASELINES_DIR / "cli-with-agents.md", encoding="utf-8")
 
@@ -236,9 +232,7 @@ class TestVSCodeSessionSnapshot:
     def test_markdown_export(self, file_regression):
         md = session_to_markdown(
             self.session,
-            include_diffs=True,
-            include_tool_inputs=True,
-            include_thinking=True,
+            content_set={"diffs", "tool-inputs", "thinking", "agent-details", "tools", "commands", "file-changes"},
         )
         file_regression.check(md, fullpath=BASELINES_DIR / f"{self.fixture_name}.md", encoding="utf-8")
 

@@ -4,8 +4,8 @@ Exports chat sessions to markdown format with:
 - Header block with metadata (session ID, workspace, dates)
 - Messages separated by horizontal rules
 - Message numbers and roles as bold headers
-- Tool call summaries in italics
-- Thinking block notices in italics (without the full content)
+- Tool call summaries with emoji prefixes
+- Thinking blocks in collapsible details (when included)
 """
 
 from pathlib import Path
@@ -41,11 +41,11 @@ def _format_tool_summary(message: ChatMessage, include_inputs: bool = False) -> 
     count = len(tool_names)
 
     if count == 1:
-        summary = f"\n\n*Used tool: {tool_names[0]}*"
+        summary = f"\n\n*🔧 Tool: {tool_names[0]}*"
     elif count <= 3:
-        summary = f"\n\n*Used tools: {', '.join(tool_names)}*"
+        summary = f"\n\n*🔧 Tools: {', '.join(tool_names)}*"
     else:
-        summary = f"\n\n*Used {count} tools: {', '.join(tool_names[:3])}, ...*"
+        summary = f"\n\n*🔧 Tools ({count}): {', '.join(tool_names[:3])}, ...*"
 
     if include_inputs:
         for tool in message.tool_invocations:
@@ -69,11 +69,11 @@ def _format_file_changes_summary(message: ChatMessage, include_diffs: bool = Fal
     count = len(paths)
 
     if count == 1:
-        summary = f"\n\n*Changed file: {paths[0]}*"
+        summary = f"\n\n*📄 Changed: {paths[0]}*"
     elif count <= 3:
-        summary = f"\n\n*Changed files: {', '.join(paths)}*"
+        summary = f"\n\n*📄 Changed: {', '.join(paths)}*"
     else:
-        summary = f"\n\n*Changed {count} files: {', '.join(paths[:3])}, ...*"
+        summary = f"\n\n*📄 Changed ({count}): {', '.join(paths[:3])}, ...*"
 
     if include_diffs:
         for change in message.file_changes:
@@ -96,9 +96,16 @@ def _format_command_runs_summary(message: ChatMessage) -> str:
             cmd_display = cmd.title
         else:
             cmd_display = cmd.command[:50] + "..." if len(cmd.command) > 50 else cmd.command
-        return f"\n\n*Ran command: `{cmd_display}`*"
+        return f"\n\n*⚡ Command: `{cmd_display}`*"
     else:
-        return f"\n\n*Ran {count} commands*"
+        cmd_names = []
+        for cmd in message.command_runs:
+            if cmd.title:
+                cmd_names.append(f"`{cmd.title}`")
+            else:
+                truncated = cmd.command[:50] + "..." if len(cmd.command) > 50 else cmd.command
+                cmd_names.append(f"`{truncated}`")
+        return f"\n\n*⚡ Commands ({count}): {', '.join(cmd_names)}*"
 
 
 def _had_thinking_content(message: ChatMessage) -> bool:
@@ -123,32 +130,31 @@ def _format_message_content(
     message: ChatMessage,
     include_thinking: bool = False,
     include_agent_details: bool = True,
+    include_tools: bool = True,
 ) -> str:
     """Format message content, optionally including thinking blocks and agent details.
 
     Args:
         message: The ChatMessage to format.
-        include_thinking: If True, include thinking block content. If False, show
-                         a notice that thinking occurred but omit the content.
+        include_thinking: If True, include thinking block content in collapsible blocks.
+                         If False, completely omit thinking blocks.
         include_agent_details: If True, include full agent content in collapsible blocks.
                               If False, show only a summary line for each agent.
+        include_tools: If True, include inline tool invocation blocks.
 
     Returns:
         Formatted message content as a string.
     """
     parts = []
 
-    # Check if there was thinking content
-    had_thinking = _had_thinking_content(message)
-
     if message.content_blocks:
         # Use structured content blocks
         for block in message.content_blocks:
             if block.kind == "thinking":
                 if include_thinking:
-                    # Include the actual thinking content in a blockquote
-                    parts.append(f"> **Thinking:**\n> {block.content.replace(chr(10), chr(10) + '> ')}")
-                # If not including, we'll add a notice at the start
+                    # Include the actual thinking content in a collapsible block
+                    parts.append(f"<details>\n<summary>💭 Thinking</summary>\n\n{block.content}\n\n</details>")
+                # When not including, completely omit — no trace of thinking
                 continue
             elif block.kind in ("subagent", "subagent_failed", "subagent_incomplete"):
                 agent_name = block.description or "Agent"
@@ -166,6 +172,8 @@ def _format_message_content(
                 parts.append(f"<details>\n<summary>✅ Task complete</summary>\n\n> {tc_content}\n\n</details>")
                 continue
             elif block.kind == "toolInvocation":
+                if not include_tools:
+                    continue
                 # For command runs, description holds the human-readable title
                 # (content starts with "$ " and is the raw command)
                 # For regular tools, content is already the pretty invocation message
@@ -174,7 +182,7 @@ def _format_message_content(
                 else:
                     display = block.content.strip()
                 if display:
-                    parts.append(f"*{display}*")
+                    parts.append(f"*🔧 {display}*")
             else:
                 # Only add non-empty text blocks
                 if block.content.strip():
@@ -198,34 +206,37 @@ def _format_message_content(
     # "*Edited `filename`*" -> "*Edited filename*" (remove backticks within italics)
     content = re.sub(r"\*Edited `([^`]+)`\*", r"*Edited \1*", content)
 
-    # Add thinking notice if there was thinking content (and not already included)
-    if had_thinking and not include_thinking:
-        content = "*[Was thinking...]*\n\n" + content
-
     return content
 
 
 def session_to_markdown(
     session: ChatSession,
-    include_diffs: bool = False,
-    include_tool_inputs: bool = False,
-    include_thinking: bool = False,
-    include_agent_details: bool = True,
+    content_set: set[str] | None = None,
 ) -> str:
     """Convert a chat session to markdown format.
 
     Args:
         session: The ChatSession to convert.
-        include_diffs: If True, include file diffs as code blocks.
-        include_tool_inputs: If True, include tool inputs as code blocks.
-        include_thinking: If True, include thinking block content. If False (default),
-                         show a notice that thinking occurred but omit the content.
-        include_agent_details: If True (default), include full agent content in
-                              collapsible blocks. If False, show only a summary line.
+        content_set: Controls which content types to include.
+            Supported keys: "diffs", "tool-inputs", "thinking", "agent-details",
+            "tools", "commands", "file-changes".
+            If None, uses DEFAULT_INCLUDES from content_types module.
 
     Returns:
         Markdown string representation of the session.
     """
+    from .content_types import DEFAULT_INCLUDES
+
+    if content_set is None:
+        content_set = DEFAULT_INCLUDES.copy()
+
+    include_diffs = "diffs" in content_set
+    include_tool_inputs = "tool-inputs" in content_set
+    include_thinking = "thinking" in content_set
+    include_agent_details = "agent-details" in content_set
+    include_tools = "tools" in content_set
+    include_commands = "commands" in content_set
+    include_file_changes = "file-changes" in content_set
     lines = []
 
     # Header block with metadata
@@ -282,6 +293,9 @@ def session_to_markdown(
             include_tool_inputs=include_tool_inputs,
             include_thinking=include_thinking,
             include_agent_details=include_agent_details,
+            include_tools=include_tools,
+            include_commands=include_commands,
+            include_file_changes=include_file_changes,
         )
         lines.append(msg_md)
 
@@ -295,6 +309,9 @@ def message_to_markdown(
     include_tool_inputs: bool = False,
     include_thinking: bool = False,
     include_agent_details: bool = True,
+    include_tools: bool = True,
+    include_commands: bool = True,
+    include_file_changes: bool = True,
 ) -> str:
     """Convert a single message to markdown format.
 
@@ -304,6 +321,9 @@ def message_to_markdown(
         include_diffs: If True, include file diffs as code blocks.
         include_tool_inputs: If True, include tool inputs as code blocks.
         include_thinking: If True, include thinking block content.
+        include_tools: If True, include tool summaries and inline tool invocations.
+        include_commands: If True, include command run summaries.
+        include_file_changes: If True, include file change summaries.
 
     Returns:
         Markdown string representation of the message.
@@ -321,11 +341,12 @@ def message_to_markdown(
         lines.append(f"*{_format_timestamp(message.timestamp)}*")
         lines.append("")
 
-    # Content (optionally including thinking blocks)
+    # Content (optionally including thinking blocks and inline tools)
     content = _format_message_content(
         message,
         include_thinking=include_thinking,
         include_agent_details=include_agent_details,
+        include_tools=include_tools,
     )
     lines.append(content)
 
@@ -335,19 +356,22 @@ def message_to_markdown(
 
     if not has_inline_tools:
         # Tool invocations summary (in italics, with optional inputs)
-        tool_summary = _format_tool_summary(message, include_inputs=include_tool_inputs)
-        if tool_summary:
-            lines.append(tool_summary)
+        if include_tools:
+            tool_summary = _format_tool_summary(message, include_inputs=include_tool_inputs)
+            if tool_summary:
+                lines.append(tool_summary)
 
         # Command runs summary (in italics)
-        cmd_summary = _format_command_runs_summary(message)
-        if cmd_summary:
-            lines.append(cmd_summary)
+        if include_commands:
+            cmd_summary = _format_command_runs_summary(message)
+            if cmd_summary:
+                lines.append(cmd_summary)
 
-    # File changes summary (in italics, with optional diffs) - always include
-    file_summary = _format_file_changes_summary(message, include_diffs=include_diffs)
-    if file_summary:
-        lines.append(file_summary)
+    # File changes summary (in italics, with optional diffs)
+    if include_file_changes:
+        file_summary = _format_file_changes_summary(message, include_diffs=include_diffs)
+        if file_summary:
+            lines.append(file_summary)
 
     lines.append("")
     lines.append("---")
@@ -359,27 +383,19 @@ def message_to_markdown(
 def export_session_to_file(
     session: ChatSession,
     output_path: Path | str,
-    include_diffs: bool = False,
-    include_tool_inputs: bool = False,
-    include_thinking: bool = False,
-    include_agent_details: bool = True,
+    content_set: set[str] | None = None,
 ) -> None:
     """Export a single session to a markdown file.
 
     Args:
         session: The ChatSession to export.
         output_path: Path to the output markdown file.
-        include_diffs: If True, include file diffs as code blocks.
-        include_tool_inputs: If True, include tool inputs as code blocks.
-        include_thinking: If True, include thinking block content in the export.
-        include_agent_details: If True (default), include full agent content.
+        content_set: Controls which content types to include.
+            If None, uses DEFAULT_INCLUDES from content_types module.
     """
     markdown = session_to_markdown(
         session,
-        include_diffs=include_diffs,
-        include_tool_inputs=include_tool_inputs,
-        include_thinking=include_thinking,
-        include_agent_details=include_agent_details,
+        content_set=content_set,
     )
     Path(output_path).write_text(markdown, encoding="utf-8")
 

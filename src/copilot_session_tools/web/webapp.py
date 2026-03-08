@@ -5,6 +5,8 @@ import re
 from flask import Flask, flash, jsonify, make_response, redirect, render_template, request, session, url_for
 
 from copilot_session_tools import Database, __version__, generate_session_filename, get_vscode_storage_paths
+from copilot_session_tools.content_types import SEARCH_CONTENT_TYPES, resolve_search_content_set
+from copilot_session_tools.html_exporter import generate_session_html_filename, session_to_html
 from copilot_session_tools.refresh import enrich_single_session, run_enrichment, run_refresh
 from copilot_session_tools.utils import (
     build_block_metadata,
@@ -14,6 +16,7 @@ from copilot_session_tools.utils import (
     match_tool_for_block,
     parse_diff_stats,
     strip_ansi,
+    truncate_preview,
     urldecode,
 )
 
@@ -53,6 +56,7 @@ def create_app(
     app.jinja_env.filters["parse_diff_stats"] = parse_diff_stats
     app.jinja_env.filters["extract_filename"] = extract_filename
     app.jinja_env.filters["strip_ansi"] = strip_ansi
+    app.jinja_env.filters["truncate_preview"] = truncate_preview
 
     # Register global function for tool matching
     app.jinja_env.globals["match_tool_for_block"] = match_tool_for_block
@@ -90,6 +94,7 @@ def create_app(
         selected_workspaces = request.args.getlist("workspace")
         selected_repositories = request.args.getlist("repository")
         selected_editions = request.args.getlist("edition")
+        selected_search_types = request.args.getlist("search_in")
         sort_by = request.args.get("sort", "relevance")  # 'relevance' or 'date'
 
         # Pagination parameters
@@ -105,10 +110,23 @@ def create_app(
 
         search_snippets = {}  # session_id -> list of snippets with message links
 
+        # Build content type filter from search_in params
+        # Use resolve_search_content_set for parent-child auto-inclusion
+        # (e.g., selecting only "diffs" must auto-include "file-changes")
+        search_content_set = None  # None = search everything (default)
+        if selected_search_types:
+            valid_types = set(SEARCH_CONTENT_TYPES.keys())
+            validated = [t for t in selected_search_types if t in valid_types]
+            if validated:
+                try:
+                    search_content_set = resolve_search_content_set(include=validated)
+                except Exception:
+                    search_content_set = None  # Fallback to defaults on error
+
         if query:
             # Use FTS search with sort option
             # The db.search() returns results in the correct order based on sort_by
-            search_results = db.search(query, limit=100, sort_by=sort_by)
+            search_results = db.search(query, limit=100, sort_by=sort_by, search_content_set=search_content_set)
 
             # Group results by session and collect snippets
             # session_ids preserves the order from search results (for relevance sorting)
@@ -177,6 +195,7 @@ def create_app(
             selected_workspaces=selected_workspaces,
             selected_repositories=selected_repositories,
             selected_editions=selected_editions,
+            selected_search_types=selected_search_types,
             refresh_result=refresh_result,
             sort_by=sort_by,
             has_cst_tables=cst_tables_exist,
@@ -304,25 +323,39 @@ def create_app(
         Query parameters:
         - start: Start message number (1-based, optional, defaults to 1)
         - end: End message number (1-based, optional, defaults to last message)
-        - include_diffs: Whether to include file diffs (default: true)
-        - include_tool_inputs: Whether to include tool inputs (default: true)
-        - include_thinking: Whether to include thinking blocks (default: false)
+        - content_set: Comma-separated content types to include (e.g. "diffs,thinking")
         - download: If true, return as a file attachment instead of JSON (default: false)
+
+        Legacy query parameters (used if content_set is absent):
+        - include_diffs, include_tool_inputs, include_thinking, include_agent_details
 
         Returns:
             JSON with 'markdown' field, or a .md file download if download=true.
         """
+        from copilot_session_tools.content_types import DEFAULT_INCLUDES
+
         db = Database(app.config["DB_PATH"])
 
         # Parse range parameters
         start_param = request.args.get("start", "").strip()
         end_param = request.args.get("end", "").strip()
 
-        # Parse boolean options
-        include_diffs = request.args.get("include_diffs", "true").lower() == "true"
-        include_tool_inputs = request.args.get("include_tool_inputs", "true").lower() == "true"
-        include_thinking = request.args.get("include_thinking", "false").lower() == "true"
-        include_agent_details = request.args.get("include_agent_details", "true").lower() == "true"
+        # Build content_set — prefer explicit param, fall back to legacy booleans
+        if "content_set" in request.args:
+            content_set_param = request.args.get("content_set", "").strip()
+            content_set = {t.strip() for t in content_set_param.split(",") if t.strip()} if content_set_param else set()
+        else:
+            # Backward compat: build content_set from legacy boolean params
+            content_set = set(DEFAULT_INCLUDES)
+            if request.args.get("include_diffs", "true").lower() == "true":
+                content_set.add("diffs")
+            if request.args.get("include_tool_inputs", "true").lower() == "true":
+                content_set.add("tool-inputs")
+            if request.args.get("include_thinking", "false").lower() == "true":
+                content_set.add("thinking")
+            if request.args.get("include_agent_details", "true").lower() != "true":
+                content_set.discard("agent-details")
+
         download = request.args.get("download", "false").lower() == "true"
 
         start = None
@@ -340,6 +373,13 @@ def create_app(
             except ValueError:
                 return jsonify({"error": "Invalid end value"}), 400
 
+        if start is not None and start < 1:
+            return jsonify({"error": "start must be >= 1"}), 400
+        if end is not None and end < 1:
+            return jsonify({"error": "end must be >= 1"}), 400
+        if start is not None and end is not None and start > end:
+            return jsonify({"error": "start must be <= end"}), 400
+
         # For download mode, we need the session object for filename generation
         chat_session = None
         if download:
@@ -351,10 +391,7 @@ def create_app(
             session_id,
             start=start,
             end=end,
-            include_diffs=include_diffs,
-            include_tool_inputs=include_tool_inputs,
-            include_thinking=include_thinking,
-            include_agent_details=include_agent_details,
+            content_set=content_set,
         )
 
         if not markdown_content:
@@ -368,6 +405,73 @@ def create_app(
             return response
 
         return jsonify({"markdown": markdown_content})
+
+    @app.route("/api/html/<session_id>", methods=["GET"])
+    def api_html(session_id: str):
+        """Export session as self-contained static HTML file.
+
+        Query parameters:
+        - start: Start message number (1-based, optional)
+        - end: End message number (1-based, optional)
+        - content_set: Comma-separated content types to include (e.g. "diffs,thinking")
+
+        Returns:
+            HTML file download.
+        """
+        db = Database(app.config["DB_PATH"])
+
+        # Parse content_set
+        if "content_set" in request.args:
+            content_set_param = request.args.get("content_set", "").strip()
+            content_set: set[str] | None = {t.strip() for t in content_set_param.split(",") if t.strip()} if content_set_param else set()
+        else:
+            content_set = None  # Use defaults
+
+        # Parse message range
+        start_param = request.args.get("start", "").strip()
+        end_param = request.args.get("end", "").strip()
+
+        start = None
+        end = None
+
+        if start_param:
+            try:
+                start = int(start_param)
+            except ValueError:
+                return jsonify({"error": "Invalid start value"}), 400
+
+        if end_param:
+            try:
+                end = int(end_param)
+            except ValueError:
+                return jsonify({"error": "Invalid end value"}), 400
+
+        if start is not None and start < 1:
+            return jsonify({"error": "start must be >= 1"}), 400
+        if end is not None and end < 1:
+            return jsonify({"error": "end must be >= 1"}), 400
+        if start is not None and end is not None and start > end:
+            return jsonify({"error": "start must be <= end"}), 400
+
+        # Get session from database
+        chat_session = db.get_session(session_id)
+        if chat_session is None:
+            return jsonify({"error": "Session not found"}), 404
+
+        # Apply message range if specified
+        if start is not None or end is not None:
+            messages = chat_session.messages
+            start_idx = (start - 1) if start else 0
+            end_idx = end if end else len(messages)
+            chat_session.messages = messages[start_idx:end_idx]
+
+        html_content = session_to_html(chat_session, content_set=content_set)
+        filename = generate_session_html_filename(chat_session)
+
+        response = make_response(html_content)
+        response.headers["Content-Type"] = "text/html; charset=utf-8"
+        response.headers["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return response
 
     return app
 

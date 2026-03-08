@@ -690,14 +690,17 @@ class Database:
 
         Used by add_sessions_batch for efficient batch inserts.
         """
+        from copilot_session_tools import __version__
+
         # Insert into cst_sessions table
         cursor.execute(
             """
             INSERT INTO cst_sessions 
             (session_id, workspace_name, workspace_path, created_at, updated_at, 
              source_file, vscode_edition, custom_title, requester_username, responder_username,
-             source_file_mtime, source_file_size, type, repository_url)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             source_file_mtime, source_file_size, type, repository_url,
+             parser_version, source_format, enrichment_version)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session.session_id,
@@ -714,6 +717,9 @@ class Database:
                 session.source_file_size,
                 session.type,
                 session.repository_url,
+                session.parser_version,
+                session.source_format,
+                __version__,
             ),
         )
 
@@ -843,6 +849,28 @@ class Database:
             # Re-insert in the same transaction
             self._add_session_impl(cursor, session)
 
+    def update_sessions_batch(self, sessions: list[ChatSession]) -> int:
+        """Update multiple sessions in a single transaction.
+
+        Much faster than calling update_session() repeatedly.
+
+        Args:
+            sessions: List of ChatSession objects to update.
+
+        Returns:
+            Number of sessions updated.
+        """
+        if not sessions:
+            return 0
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            for session in sessions:
+                cursor.execute("DELETE FROM cst_messages_fts WHERE session_id = ?", (session.session_id,))
+                cursor.execute("DELETE FROM cst_messages WHERE session_id = ?", (session.session_id,))
+                cursor.execute("DELETE FROM cst_sessions WHERE session_id = ?", (session.session_id,))
+                self._add_session_impl(cursor, session)
+        return len(sessions)
+
     def get_sessions_needing_reparse(self, current_parser_version: int) -> list[dict]:
         """Find cst_sessions with parser_version < current_parser_version."""
         with self._get_connection() as conn:
@@ -885,7 +913,8 @@ class Database:
                 conditions.append(f"enrichment_version IN ({placeholders})")
                 params.extend(v for v in stale_versions if v is not None)
             row = conn.execute(
-                f"SELECT COUNT(*) FROM cst_sessions WHERE {' OR '.join(conditions)}",  # noqa: S608
+                f"SELECT COUNT(*) FROM cst_sessions WHERE ({' OR '.join(conditions)}) "  # noqa: S608
+                "AND EXISTS (SELECT 1 FROM cst_messages m WHERE m.session_id = cst_sessions.session_id)",
                 params,
             ).fetchone()
             return row[0] if row else 0
@@ -917,6 +946,25 @@ class Database:
                 (session_id,),
             ).fetchone()
             return row[0] if row else None
+
+    def update_enrichment_version(self, session_id: str, version: str) -> None:
+        """Stamp a session's enrichment_version and parser_version, creating a stub row if needed."""
+        from copilot_session_tools.scanner import PARSER_VERSION
+
+        with self._get_connection() as conn:
+            updated = conn.execute(
+                "UPDATE cst_sessions SET enrichment_version = ?, parser_version = ? WHERE session_id = ?",
+                (version, PARSER_VERSION, session_id),
+            ).rowcount
+            if not updated:
+                # No cst_sessions row exists — create a minimal stub so the
+                # session stops appearing in "needs enrichment" queries.
+                conn.execute(
+                    """INSERT OR IGNORE INTO cst_sessions 
+                       (session_id, type, enrichment_version, parser_version)
+                       VALUES (?, 'cli', ?, ?)""",
+                    (session_id, version, PARSER_VERSION),
+                )
 
     def delete_cst_session(self, session_id: str) -> bool:
         """Delete all cst_* data for a session. Returns True if session existed."""
@@ -1097,6 +1145,18 @@ class Database:
         # Fall back to built-in (unenriched)
         return self._get_builtin_session_as_chat_session(session_id)
 
+    def get_all_session_ids(self) -> list[str]:
+        """Get all session IDs from cst_sessions.
+
+        Returns:
+            List of session ID strings.
+        """
+        if not self.has_cst_tables():
+            return []
+        with self._get_connection() as conn:
+            rows = conn.execute("SELECT session_id FROM cst_sessions").fetchall()
+            return [r[0] for r in rows]
+
     def _get_builtin_session_as_chat_session(self, session_id: str) -> ChatSession | None:
         """Convert built-in session/turns data to a ChatSession.
 
@@ -1199,10 +1259,7 @@ class Database:
         session_id: str,
         start: int | None = None,
         end: int | None = None,
-        include_diffs: bool = True,
-        include_tool_inputs: bool = True,
-        include_thinking: bool = False,
-        include_agent_details: bool = True,
+        content_set: set[str] | None = None,
     ) -> str:
         """Get markdown for specific messages or all messages in a session.
 
@@ -1210,15 +1267,17 @@ class Database:
             session_id: The session ID to get messages from.
             start: Optional 1-based start message index (inclusive).
             end: Optional 1-based end message index (inclusive).
-            include_diffs: Whether to include file diffs in the markdown.
-            include_tool_inputs: Whether to include tool inputs in the markdown.
-            include_thinking: Whether to include thinking/reasoning blocks.
-            include_agent_details: Whether to include full agent/subagent content.
+            content_set: Controls which content types to include.
+                If None, uses DEFAULT_INCLUDES from content_types module.
 
         Returns:
             Combined markdown string for the selected messages.
         """
+        from .content_types import DEFAULT_INCLUDES
         from .markdown_exporter import message_to_markdown
+
+        if content_set is None:
+            content_set = DEFAULT_INCLUDES.copy()
 
         with self._get_connection() as conn:
             cursor = conn.cursor()
@@ -1252,8 +1311,10 @@ class Database:
             rows = cursor.fetchall()
             markdown_parts = []
 
-            # If all default options, use cached markdown
-            if include_diffs and include_tool_inputs and not include_thinking and include_agent_details:
+            # Cached markdown was generated with diffs+tool-inputs ON, thinking OFF,
+            # agent-details+tools+commands+file-changes ON.  Use it when the requested content_set matches.
+            cache_set = {"diffs", "tool-inputs", "agent-details", "tools", "commands", "file-changes"}
+            if content_set == cache_set:
                 for row in rows:
                     md = row["cached_markdown"]
                     if md:
@@ -1267,6 +1328,14 @@ class Database:
                     # Create message object
                     message = self._reconstruct_message(cursor, message_id, row)
 
+                    include_diffs = "diffs" in content_set
+                    include_tool_inputs = "tool-inputs" in content_set
+                    include_thinking = "thinking" in content_set
+                    include_agent_details = "agent-details" in content_set
+                    include_tools = "tools" in content_set
+                    include_commands = "commands" in content_set
+                    include_file_changes = "file-changes" in content_set
+
                     # Generate markdown with specified options
                     md = message_to_markdown(
                         message,
@@ -1275,6 +1344,9 @@ class Database:
                         include_tool_inputs=include_tool_inputs,
                         include_thinking=include_thinking,
                         include_agent_details=include_agent_details,
+                        include_tools=include_tools,
+                        include_commands=include_commands,
+                        include_file_changes=include_file_changes,
                     )
                     markdown_parts.append(md)
 
@@ -1345,7 +1417,7 @@ class Database:
                 if conditions:
                     query += " WHERE " + " AND ".join(conditions)
 
-                query += " GROUP BY s.session_id ORDER BY last_message_at DESC, s.created_at DESC"
+                query += " GROUP BY s.session_id HAVING COUNT(m.id) > 0 ORDER BY last_message_at DESC, s.created_at DESC"
 
                 cursor.execute(query, params)
                 for row in cursor.fetchall():
@@ -1380,6 +1452,8 @@ class Database:
                 sid = row["id"]
                 if sid not in results:  # cst_sessions takes precedence
                     tc = turn_counts.get(sid, 0)
+                    if tc == 0:
+                        continue  # Skip empty sessions
                     results[sid] = {
                         "session_id": sid,
                         "title": row.get("summary"),
@@ -1411,9 +1485,10 @@ class Database:
         limit: int = 50,
         skip: int = 0,
         role: str | None = None,
-        include_messages: bool = True,
-        include_tool_calls: bool = True,
-        include_file_changes: bool = True,
+        search_content_set: set[str] | None = None,
+        include_messages: bool | None = None,
+        include_tool_calls: bool | None = None,
+        include_file_changes: bool | None = None,
         session_title: str | None = None,
         sort_by: str = "relevance",
         repository: str | None = None,
@@ -1434,9 +1509,11 @@ class Database:
             skip: Number of results to skip (for pagination).
             role: Filter by message role ('user', 'assistant', or None for both).
                   Can also be specified in query as 'role:user' or 'role:assistant'.
-            include_messages: Whether to search message content.
-            include_tool_calls: Whether to also search tool invocations.
-            include_file_changes: Whether to also search file changes.
+            search_content_set: Set of content type tokens controlling which
+                data sources are searched.  See ``content_types.SEARCH_CONTENT_TYPES``.
+            include_messages: Deprecated — use *search_content_set*.
+            include_tool_calls: Deprecated — use *search_content_set*.
+            include_file_changes: Deprecated — use *search_content_set*.
             session_title: Filter by session title/workspace name.
                            Can also be specified in query as 'title:...' or 'workspace:...'.
             sort_by: Sort order - 'relevance' (default) or 'date'.
@@ -1452,7 +1529,36 @@ class Database:
         Returns:
             List of matching messages with session info.
         """
-        results = []
+        from copilot_session_tools.content_types import SEARCH_DEFAULT_INCLUDES
+
+        # Backward compat: build set from old booleans if provided
+        if search_content_set is None and any(x is not None for x in [include_messages, include_tool_calls, include_file_changes]):
+            search_content_set = set()
+            if include_messages is not False:
+                search_content_set.add("messages")
+            if include_tool_calls is not False:
+                search_content_set.update(["tools", "tool-inputs"])
+            if include_file_changes is not False:
+                search_content_set.update(["file-changes", "diffs"])
+            search_content_set.update(["thinking", "agent-details", "commands"])
+
+        if search_content_set is None:
+            search_content_set = SEARCH_DEFAULT_INCLUDES
+
+        if not search_content_set:
+            return []
+
+        # Derive individual flags from the content set
+        include_msgs = "messages" in search_content_set
+        include_tools = "tools" in search_content_set
+        include_tool_inputs_flag = "tool-inputs" in search_content_set
+        include_files = "file-changes" in search_content_set
+        include_diffs_flag = "diffs" in search_content_set
+        include_commands_flag = "commands" in search_content_set
+        include_thinking_flag = "thinking" in search_content_set
+        include_agent_content = "agent-details" in search_content_set
+
+        results: list[dict] = []
         builtin_results: dict[str, dict] = {}
 
         # Parse the query to extract field filters and convert to FTS5 format
@@ -1472,7 +1578,7 @@ class Database:
         fts_query = parsed.fts_query
 
         # Search built-in search_index FTS table for unenriched results
-        if fts_query and include_messages:
+        if fts_query and include_msgs:
             try:
                 with self._get_connection() as conn:
                     rows = conn.execute(
@@ -1502,8 +1608,8 @@ class Database:
         with self._get_connection() as conn:
             cursor = conn.cursor()
 
-            # Search messages (only if include_messages is True)
-            if include_messages:
+            # Search messages (only if include_msgs is True)
+            if include_msgs:
                 if fts_query:
                     # FTS search with optional filters
                     message_query = """
@@ -1526,6 +1632,9 @@ class Database:
                         WHERE cst_messages_fts MATCH ?
                     """
                     params = [fts_query]
+
+                    if not include_agent_content:
+                        message_query += " AND m.agent_nesting_level = 0"
 
                     if effective_role:
                         message_query += " AND m.role = ?"
@@ -1582,6 +1691,9 @@ class Database:
                     """
                     params = []
 
+                    if not include_agent_content:
+                        message_query += " AND m.agent_nesting_level = 0"
+
                     if effective_role:
                         message_query += " AND m.role = ?"
                         params.append(effective_role)
@@ -1617,12 +1729,24 @@ class Database:
             # Search tool invocations
             # For tool/file searches, we use the original query terms for LIKE matching
             search_terms = fts_query if fts_query else query
-            if include_tool_calls and len(results) < limit and search_terms:
+            like_pattern = f"%{search_terms}%"
+            if include_tools and len(results) < limit and search_terms:
                 remaining = limit - len(results)
-                tool_query = """
+
+                # Build column-selective WHERE conditions
+                tool_conditions = ["(t.name LIKE ? OR t.result LIKE ?)"]
+                tool_params: list[str | int] = [like_pattern, like_pattern]
+                if include_tool_inputs_flag:
+                    tool_conditions.append("t.input LIKE ?")
+                    tool_params.append(like_pattern)
+
+                tool_where = "(" + " OR ".join(tool_conditions) + ")"
+
+                tool_query = f"""
                     SELECT 
                         t.id,
                         m.session_id,
+                        m.message_index,
                         'assistant' as role,
                         t.name || ': ' || COALESCE(t.input, '') || ' -> ' || COALESCE(t.result, '') as content,
                         s.workspace_name,
@@ -1634,9 +1758,12 @@ class Database:
                     FROM cst_tool_invocations t
                     JOIN cst_messages m ON t.message_id = m.id
                     JOIN cst_sessions s ON m.session_id = s.session_id
-                    WHERE (t.name LIKE ? OR t.input LIKE ? OR t.result LIKE ?)
-                """
-                params = [f"%{search_terms}%", f"%{search_terms}%", f"%{search_terms}%"]
+                    WHERE {tool_where}
+                """  # noqa: S608 — tool_where is built from hardcoded column names
+                params = list(tool_params)
+
+                if not include_agent_content:
+                    tool_query += " AND m.agent_nesting_level = 0"
 
                 if effective_workspace:
                     tool_query += " AND s.workspace_name LIKE ?"
@@ -1667,12 +1794,23 @@ class Database:
                 results.extend([dict(row) for row in cursor.fetchall()])
 
             # Search file changes
-            if include_file_changes and len(results) < limit and search_terms:
+            if include_files and len(results) < limit and search_terms:
                 remaining = limit - len(results)
-                file_query = """
+
+                # Build column-selective WHERE conditions
+                file_conditions = ["(f.path LIKE ? OR f.explanation LIKE ?)"]
+                file_params: list[str | int] = [like_pattern, like_pattern]
+                if include_diffs_flag:
+                    file_conditions.append("f.diff LIKE ?")
+                    file_params.append(like_pattern)
+
+                file_where = "(" + " OR ".join(file_conditions) + ")"
+
+                file_query = f"""
                     SELECT 
                         f.id,
                         m.session_id,
+                        m.message_index,
                         'assistant' as role,
                         f.path || ': ' || COALESCE(f.explanation, '') as content,
                         s.workspace_name,
@@ -1684,9 +1822,12 @@ class Database:
                     FROM cst_file_changes f
                     JOIN cst_messages m ON f.message_id = m.id
                     JOIN cst_sessions s ON m.session_id = s.session_id
-                    WHERE (f.path LIKE ? OR f.explanation LIKE ? OR f.diff LIKE ?)
-                """
-                params = [f"%{search_terms}%", f"%{search_terms}%", f"%{search_terms}%"]
+                    WHERE {file_where}
+                """  # noqa: S608 — file_where is built from hardcoded column names
+                params = list(file_params)
+
+                if not include_agent_content:
+                    file_query += " AND m.agent_nesting_level = 0"
 
                 if effective_workspace:
                     file_query += " AND s.workspace_name LIKE ?"
@@ -1716,6 +1857,114 @@ class Database:
                 cursor.execute(file_query, params)
                 results.extend([dict(row) for row in cursor.fetchall()])
 
+            # Search command runs
+            if include_commands_flag and len(results) < limit and search_terms:
+                remaining = limit - len(results)
+                cmd_query = """
+                    SELECT 
+                        c.id,
+                        m.session_id,
+                        m.message_index,
+                        'assistant' as role,
+                        c.command || ': ' || COALESCE(c.output, '') as content,
+                        s.workspace_name,
+                        s.custom_title,
+                        s.created_at,
+                        s.vscode_edition,
+                        c.command as highlighted,
+                        'command_run' as match_type
+                    FROM cst_command_runs c
+                    JOIN cst_messages m ON c.message_id = m.id
+                    JOIN cst_sessions s ON m.session_id = s.session_id
+                    WHERE (c.command LIKE ? OR c.output LIKE ?)
+                """
+                params = [like_pattern, like_pattern]
+
+                if not include_agent_content:
+                    cmd_query += " AND m.agent_nesting_level = 0"
+
+                if effective_workspace:
+                    cmd_query += " AND s.workspace_name LIKE ?"
+                    params.append(f"%{effective_workspace}%")
+
+                if effective_title:
+                    cmd_query += " AND (s.workspace_name LIKE ? OR s.custom_title LIKE ?)"
+                    params.extend([f"%{effective_title}%", f"%{effective_title}%"])
+
+                if effective_repository:
+                    cmd_query += " AND s.repository_url LIKE ?"
+                    params.append(f"%{effective_repository}%")
+
+                if effective_edition:
+                    cmd_query += " AND s.vscode_edition = ?"
+                    params.append(effective_edition)
+
+                # Add date filters
+                date_clause, date_params = _build_date_filter_clause(effective_start_date, effective_end_date, "s.created_at")
+                if date_clause:
+                    cmd_query += f" AND {date_clause}"
+                    params.extend(date_params)
+
+                cmd_query += " LIMIT ?"
+                params.append(remaining)
+
+                cursor.execute(cmd_query, params)
+                results.extend([dict(row) for row in cursor.fetchall()])
+
+            # Search thinking blocks
+            if include_thinking_flag and len(results) < limit and search_terms:
+                remaining = limit - len(results)
+                think_query = """
+                    SELECT 
+                        cb.id,
+                        m.session_id,
+                        m.message_index,
+                        'assistant' as role,
+                        cb.content as content,
+                        s.workspace_name,
+                        s.custom_title,
+                        s.created_at,
+                        s.vscode_edition,
+                        SUBSTR(cb.content, 1, 200) as highlighted,
+                        'thinking' as match_type
+                    FROM cst_content_blocks cb
+                    JOIN cst_messages m ON cb.message_id = m.id
+                    JOIN cst_sessions s ON m.session_id = s.session_id
+                    WHERE cb.kind = 'thinking' AND cb.content LIKE ?
+                """
+                params = [like_pattern]
+
+                if not include_agent_content:
+                    think_query += " AND m.agent_nesting_level = 0"
+
+                if effective_workspace:
+                    think_query += " AND s.workspace_name LIKE ?"
+                    params.append(f"%{effective_workspace}%")
+
+                if effective_title:
+                    think_query += " AND (s.workspace_name LIKE ? OR s.custom_title LIKE ?)"
+                    params.extend([f"%{effective_title}%", f"%{effective_title}%"])
+
+                if effective_repository:
+                    think_query += " AND s.repository_url LIKE ?"
+                    params.append(f"%{effective_repository}%")
+
+                if effective_edition:
+                    think_query += " AND s.vscode_edition = ?"
+                    params.append(effective_edition)
+
+                # Add date filters
+                date_clause, date_params = _build_date_filter_clause(effective_start_date, effective_end_date, "s.created_at")
+                if date_clause:
+                    think_query += f" AND {date_clause}"
+                    params.extend(date_params)
+
+                think_query += " LIMIT ?"
+                params.append(remaining)
+
+                cursor.execute(think_query, params)
+                results.extend([dict(row) for row in cursor.fetchall()])
+
         # Merge built-in search_index results that weren't covered by cst search
         cst_session_ids = {r["session_id"] for r in results}
         for sid, builtin_row in builtin_results.items():
@@ -1743,7 +1992,7 @@ class Database:
                 FROM cst_sessions
                 WHERE workspace_name IS NOT NULL
                 GROUP BY workspace_name, workspace_path
-                ORDER BY last_activity DESC
+                ORDER BY session_count DESC, workspace_name ASC
                 """
             )
             return [dict(row) for row in cursor.fetchall()]
@@ -1765,7 +2014,7 @@ class Database:
                 FROM cst_sessions
                 WHERE repository_url IS NOT NULL
                 GROUP BY repository_url
-                ORDER BY last_activity DESC
+                ORDER BY session_count DESC, repository_url ASC
                 """
             )
             return [dict(row) for row in cursor.fetchall()]

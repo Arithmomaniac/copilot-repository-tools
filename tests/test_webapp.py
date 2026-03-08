@@ -296,6 +296,93 @@ class TestWebappRoutes:
         assert b"exact phrase" in response.data or b"role:user" in response.data
 
 
+class TestSearchContentTypeFilters:
+    """Tests for search_in content-type filtering on the index route."""
+
+    def test_search_default_no_search_in(self, client):
+        """Default search (no search_in) searches everything — backward compat."""
+        response = client.get("/?q=Python")
+        assert response.status_code == 200
+        html = response.data.decode()
+        # All content-type checkboxes should be checked by default
+        assert 'name="search_in"' in html
+        # No hidden search_in inputs should be rendered (empty selected list)
+        assert '<input type="hidden" name="search_in"' not in html
+
+    def test_search_with_search_in_params(self, client):
+        """search_in params are read and passed to the template."""
+        response = client.get("/?q=Python&search_in=tools&search_in=file-changes")
+        assert response.status_code == 200
+        html = response.data.decode()
+        # Hidden inputs should be rendered for the selected types
+        assert '<input type="hidden" name="search_in" value="tools">' in html
+        assert '<input type="hidden" name="search_in" value="file-changes">' in html
+
+    def test_search_invalid_search_in_ignored(self, client):
+        """Invalid search_in values don't crash — fall back to defaults."""
+        response = client.get("/?q=Python&search_in=bogus")
+        assert response.status_code == 200
+        # Should render without error
+
+    def test_search_all_types_selected(self, client):
+        """All 8 types selected behaves same as no filter."""
+        all_types = [
+            "messages",
+            "thinking",
+            "diffs",
+            "tool-inputs",
+            "agent-details",
+            "tools",
+            "commands",
+            "file-changes",
+        ]
+        qs = "&".join(f"search_in={t}" for t in all_types)
+        response = client.get(f"/?q=Python&{qs}")
+        assert response.status_code == 200
+        html = response.data.decode()
+        # All checkboxes should be checked
+        for t in all_types:
+            assert f'value="{t}"' in html
+
+    def test_search_pagination_preserves_search_in(self, client):
+        """selected_search_types is available for pagination links."""
+        response = client.get("/?q=Python&search_in=tools&page=1")
+        assert response.status_code == 200
+        html = response.data.decode()
+        # Hidden input for search_in should be present so pagination forms preserve it
+        assert '<input type="hidden" name="search_in" value="tools">' in html
+
+    def test_search_template_renders_with_selected_types(self, client):
+        """Page renders without error when selected_search_types is provided."""
+        response = client.get("/?q=Python&search_in=commands&search_in=diffs")
+        assert response.status_code == 200
+        html = response.data.decode()
+        # Content-type filter section should be rendered
+        assert "content-type-filters" in html
+
+    def test_search_in_preserved_in_form_hidden_inputs(self, client):
+        """Hidden inputs are rendered for each selected search type."""
+        response = client.get("/?q=Python&search_in=thinking&search_in=messages")
+        assert response.status_code == 200
+        html = response.data.decode()
+        assert '<input type="hidden" name="search_in" value="thinking">' in html
+        assert '<input type="hidden" name="search_in" value="messages">' in html
+        # Types NOT selected should NOT have hidden inputs
+        assert '<input type="hidden" name="search_in" value="diffs">' not in html
+
+    def test_search_mixed_valid_and_invalid_search_in(self, client):
+        """Mix of valid and invalid search_in values — page renders without error.
+
+        Invalid values are passed through to the template (preserving round-trip)
+        but are ignored by the search query itself.
+        """
+        response = client.get("/?q=Python&search_in=tools&search_in=bogus")
+        assert response.status_code == 200
+        html = response.data.decode()
+        # Valid type is preserved
+        assert '<input type="hidden" name="search_in" value="tools">' in html
+
+
 class TestCreateApp:
     """Tests for the create_app function."""
 
@@ -1343,3 +1430,80 @@ class TestDownloadMarkdownEndpoint:
         assert response.status_code == 200
         data = response.get_json()
         assert "markdown" in data
+
+
+class TestDownloadHtmlEndpoint:
+    """Tests for the /api/html/<session_id> endpoint."""
+
+    def test_download_returns_200(self, client):
+        """Test that the HTML download returns 200."""
+        response = client.get("/api/html/webapp-test-session")
+        assert response.status_code == 200
+
+    def test_download_content_type(self, client):
+        """Test that the download returns text/html content type."""
+        response = client.get("/api/html/webapp-test-session")
+        assert "text/html" in response.content_type
+
+    def test_download_content_disposition(self, client):
+        """Test that the download has attachment Content-Disposition with .html filename."""
+        response = client.get("/api/html/webapp-test-session")
+        disposition = response.headers.get("Content-Disposition", "")
+        assert "attachment" in disposition
+        assert ".html" in disposition
+
+    def test_download_returns_html_not_json(self, client):
+        """Test that the download returns HTML content, not JSON."""
+        response = client.get("/api/html/webapp-test-session")
+        content = response.data.decode("utf-8")
+        assert "<html" in content.lower() or "<!doctype" in content.lower()
+
+    def test_download_404_for_nonexistent_session(self, client):
+        """Test that download returns 404 for a non-existent session."""
+        response = client.get("/api/html/nonexistent-session")
+        assert response.status_code == 404
+
+    def test_download_accepts_content_set(self, client):
+        """Test that download accepts content_set param."""
+        response = client.get("/api/html/webapp-test-session?content_set=diffs,thinking")
+        assert response.status_code == 200
+
+    def test_download_accepts_range_params(self, client):
+        """Test that download accepts start and end range params."""
+        response = client.get("/api/html/webapp-test-session?start=1&end=1")
+        assert response.status_code == 200
+
+    def test_download_invalid_start_returns_400(self, client):
+        """Test that invalid start param returns 400."""
+        response = client.get("/api/html/webapp-test-session?start=abc")
+        assert response.status_code == 400
+
+    def test_api_html_returns_html(self, client):
+        """GET /api/html/<session_id> returns an HTML file."""
+        response = client.get("/api/html/webapp-test-session")
+        assert response.status_code == 200
+        assert "text/html" in response.content_type
+        assert "attachment" in response.headers.get("Content-Disposition", "")
+
+    def test_api_html_with_content_set(self, client):
+        """content_set query param controls content in exported HTML."""
+        response = client.get("/api/html/webapp-test-session?content_set=agent-details")
+        html = response.data.decode()
+        assert "<!DOCTYPE html>" in html or "<html" in html
+
+    def test_api_html_with_range(self, client):
+        """start/end params limit message range."""
+        response = client.get("/api/html/webapp-test-session?start=1&end=2")
+        assert response.status_code == 200
+
+    def test_api_html_not_found(self, client):
+        """Returns 404 for unknown session."""
+        response = client.get("/api/html/nonexistent-id")
+        assert response.status_code == 404
+
+    def test_api_html_is_self_contained(self, client):
+        """Exported HTML contains all CSS inline (no external resources)."""
+        response = client.get("/api/html/webapp-test-session")
+        html = response.data.decode()
+        assert "<style>" in html
+        assert "cdn.jsdelivr.net" not in html  # No CDN links in static

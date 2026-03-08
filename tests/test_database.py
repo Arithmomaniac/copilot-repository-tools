@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from copilot_session_tools import ChatMessage, ChatSession, Database, parse_search_query
+from copilot_session_tools import ChatMessage, ChatSession, CommandRun, ContentBlock, Database, FileChange, ToolInvocation, parse_search_query
 
 
 @pytest.fixture
@@ -139,6 +139,68 @@ class TestDatabase:
 
         results = temp_db.search("JavaScript React")
         assert len(results) == 0
+
+    def test_search_tool_invocation_includes_message_index(self, temp_db):
+        """Test that tool invocation search results include message_index."""
+        session = ChatSession(
+            session_id="tool-search-session",
+            workspace_name="test-ws",
+            workspace_path="/tmp/test",
+            messages=[
+                ChatMessage(role="user", content="first user message"),
+                ChatMessage(
+                    role="assistant",
+                    content="first reply",
+                ),
+                ChatMessage(role="user", content="second user message"),
+                ChatMessage(
+                    role="assistant",
+                    content="running a special tool now",
+                    tool_invocations=[
+                        ToolInvocation(name="grep_search", input="uniqueToolQuery999", result="found it"),
+                    ],
+                ),
+            ],
+        )
+        temp_db.add_session(session)
+
+        results = temp_db.search("uniqueToolQuery999", include_tool_calls=True)
+        tool_results = [r for r in results if r["match_type"] == "tool_invocation"]
+        assert len(tool_results) > 0
+        for r in tool_results:
+            assert "message_index" in r
+            assert r["message_index"] == 3  # 0-based index of the 4th message
+
+    def test_search_file_change_includes_message_index(self, temp_db):
+        """Test that file change search results include message_index."""
+        session = ChatSession(
+            session_id="file-search-session",
+            workspace_name="test-ws",
+            workspace_path="/tmp/test",
+            messages=[
+                ChatMessage(role="user", content="first user message"),
+                ChatMessage(
+                    role="assistant",
+                    content="first reply",
+                ),
+                ChatMessage(role="user", content="edit the config file"),
+                ChatMessage(
+                    role="assistant",
+                    content="editing the file now",
+                    file_changes=[
+                        FileChange(path="src/uniqueFileTarget777.py", explanation="updated config"),
+                    ],
+                ),
+            ],
+        )
+        temp_db.add_session(session)
+
+        results = temp_db.search("uniqueFileTarget777", include_file_changes=True)
+        file_results = [r for r in results if r["match_type"] == "file_change"]
+        assert len(file_results) > 0
+        for r in file_results:
+            assert "message_index" in r
+            assert r["message_index"] == 3  # 0-based index of the 4th message
 
     def test_get_workspaces(self, temp_db, sample_session):
         """Test getting unique workspaces."""
@@ -1060,12 +1122,10 @@ class TestFTSOptimization:
 
 
 class TestGetMessagesMarkdownIncludeThinking:
-    """Tests for get_messages_markdown with include_thinking parameter."""
+    """Tests for get_messages_markdown with content_set parameter."""
 
     def test_include_thinking_passes_through(self, temp_db):
-        """Test that include_thinking parameter is accepted and changes output."""
-        from copilot_session_tools import ContentBlock
-
+        """Test that content_set with 'thinking' is accepted and changes output."""
         session = ChatSession(
             session_id="thinking-md-test",
             workspace_name="test-project",
@@ -1084,12 +1144,12 @@ class TestGetMessagesMarkdownIncludeThinking:
         )
         temp_db.add_session(session)
 
-        # With include_thinking=False (default), thinking content should be omitted
-        md_without = temp_db.get_messages_markdown("thinking-md-test", include_thinking=False)
+        # Without 'thinking' in content_set, thinking content should be omitted
+        md_without = temp_db.get_messages_markdown("thinking-md-test", content_set={"agent-details"})
         assert "Internal reasoning..." not in md_without
 
-        # With include_thinking=True, thinking content should be included
-        md_with = temp_db.get_messages_markdown("thinking-md-test", include_thinking=True)
+        # With 'thinking' in content_set, thinking content should be included
+        md_with = temp_db.get_messages_markdown("thinking-md-test", content_set={"thinking", "agent-details"})
         assert "Internal reasoning..." in md_with
 
 
@@ -1234,6 +1294,240 @@ class TestFTS5SpecialCharacterEscaping:
         results = temp_db.search("Python function")
         assert len(results) > 0
         assert any("Python" in r["content"] for r in results)
+
+
+class TestGranularSearchContentSet:
+    """Tests for search_content_set column-selective search and agent nesting gate."""
+
+    @pytest.fixture
+    def rich_db(self, tmp_path):
+        """Database with a session containing tool invocations, file changes, commands, thinking, and agent-nested content."""
+        db = Database(tmp_path / "rich_search.db")
+        session = ChatSession(
+            session_id="rich-session",
+            workspace_name="rich-project",
+            workspace_path="/tmp/rich",
+            messages=[
+                # msg 0: plain user message
+                ChatMessage(role="user", content="Please help me refactor"),
+                # msg 1: assistant with tools, files, commands, thinking
+                ChatMessage(
+                    role="assistant",
+                    content="Here is the refactored code",
+                    tool_invocations=[
+                        ToolInvocation(
+                            name="grep_search",
+                            input="xyzzyToolInput42 in some file",
+                            result="found match in main.py",
+                        ),
+                    ],
+                    file_changes=[
+                        FileChange(
+                            path="src/main.py",
+                            explanation="updated the handler",
+                            diff="--- a/src/main.py\n+++ b/src/main.py\n@@ -1 +1 @@\n-old xyzzyDiffOnly99\n+new code",
+                        ),
+                    ],
+                    command_runs=[
+                        CommandRun(command="npm test", output="xyzzyCommandOut55 all tests passed"),
+                    ],
+                    content_blocks=[
+                        ContentBlock(kind="thinking", content="xyzzyThinkSecret77 reasoning about approach"),
+                        ContentBlock(kind="text", content="Here is the refactored code"),
+                    ],
+                ),
+                # msg 2: user follow-up
+                ChatMessage(role="user", content="Now run inside the agent"),
+                # msg 3: agent-nested assistant message (nesting_level=1)
+                ChatMessage(
+                    role="assistant",
+                    content="xyzzyAgentNested88 subagent did work",
+                    agent_nesting_level=1,
+                    agent_id="task-agent-1",
+                    agent_display_name="General Purpose Agent",
+                    tool_invocations=[
+                        ToolInvocation(
+                            name="edit_file",
+                            input="xyzzyNestedToolInput33",
+                            result="xyzzyNestedToolResult33",
+                        ),
+                    ],
+                ),
+            ],
+            created_at="2025-01-15T10:30:00Z",
+            vscode_edition="stable",
+        )
+        db.add_session(session)
+        return db
+
+    # 1. search_content_set parameter — passing a specific set works
+    def test_search_content_set_filters_results(self, rich_db):
+        """Passing a specific search_content_set restricts which sources are searched."""
+        # Search for tool name — should match with tools, not with messages-only
+        results_tools = rich_db.search("grep_search", search_content_set={"tools", "tool-inputs", "agent-details"})
+        tool_hits = [r for r in results_tools if r["match_type"] == "tool_invocation"]
+        assert len(tool_hits) > 0
+
+        # Same query with only messages — tool invocations should not appear
+        results_msgs = rich_db.search("grep_search", search_content_set={"messages", "agent-details"})
+        tool_hits_msgs = [r for r in results_msgs if r["match_type"] == "tool_invocation"]
+        assert len(tool_hits_msgs) == 0
+
+    # 2. Tools-only search
+    def test_tools_only_search(self, rich_db):
+        """search_content_set={'tools'} only returns tool invocation matches."""
+        results = rich_db.search("grep_search", search_content_set={"tools", "agent-details"})
+        assert all(r["match_type"] == "tool_invocation" for r in results)
+        assert len(results) > 0
+
+    # 3. File-changes-only search
+    def test_file_changes_only_search(self, rich_db):
+        """search_content_set={'file-changes'} only returns file change matches."""
+        results = rich_db.search("main.py", search_content_set={"file-changes", "agent-details"})
+        assert all(r["match_type"] == "file_change" for r in results)
+        assert len(results) > 0
+
+    # 4. Column-selective: tool-inputs
+    def test_tool_input_excluded_without_flag(self, rich_db):
+        """With only 'tools' (no 'tool-inputs'), a term only in tool input should NOT match."""
+        # xyzzyToolInput42 only exists in tool input, not name or result
+        results = rich_db.search("xyzzyToolInput42", search_content_set={"tools", "agent-details"})
+        tool_hits = [r for r in results if r["match_type"] == "tool_invocation"]
+        assert len(tool_hits) == 0
+
+    def test_tool_input_included_with_flag(self, rich_db):
+        """With 'tools' + 'tool-inputs', a term only in tool input SHOULD match."""
+        results = rich_db.search("xyzzyToolInput42", search_content_set={"tools", "tool-inputs", "agent-details"})
+        tool_hits = [r for r in results if r["match_type"] == "tool_invocation"]
+        assert len(tool_hits) > 0
+
+    # 5. Column-selective: diffs
+    def test_diff_excluded_without_flag(self, rich_db):
+        """With only 'file-changes' (no 'diffs'), a term only in diff should NOT match."""
+        # xyzzyDiffOnly99 only exists in the diff, not path or explanation
+        results = rich_db.search("xyzzyDiffOnly99", search_content_set={"file-changes", "agent-details"})
+        file_hits = [r for r in results if r["match_type"] == "file_change"]
+        assert len(file_hits) == 0
+
+    def test_diff_included_with_flag(self, rich_db):
+        """With 'file-changes' + 'diffs', a term only in diff SHOULD match."""
+        results = rich_db.search("xyzzyDiffOnly99", search_content_set={"file-changes", "diffs", "agent-details"})
+        file_hits = [r for r in results if r["match_type"] == "file_change"]
+        assert len(file_hits) > 0
+
+    # 6. Commands search
+    def test_commands_search(self, rich_db):
+        """search_content_set={'commands'} searches cst_command_runs."""
+        results = rich_db.search("xyzzyCommandOut55", search_content_set={"commands", "agent-details"})
+        cmd_hits = [r for r in results if r["match_type"] == "command_run"]
+        assert len(cmd_hits) > 0
+
+    def test_commands_excluded_when_not_in_set(self, rich_db):
+        """Command results should not appear when 'commands' is not in the set."""
+        results = rich_db.search("xyzzyCommandOut55", search_content_set={"messages", "agent-details"})
+        cmd_hits = [r for r in results if r["match_type"] == "command_run"]
+        assert len(cmd_hits) == 0
+
+    # 7. Thinking search
+    def test_thinking_search(self, rich_db):
+        """search_content_set={'thinking'} searches cst_content_blocks WHERE kind='thinking'."""
+        results = rich_db.search("xyzzyThinkSecret77", search_content_set={"thinking", "agent-details"})
+        think_hits = [r for r in results if r["match_type"] == "thinking"]
+        assert len(think_hits) > 0
+
+    def test_thinking_excluded_when_not_in_set(self, rich_db):
+        """Thinking results should not appear when 'thinking' is not in the set."""
+        results = rich_db.search("xyzzyThinkSecret77", search_content_set={"messages", "agent-details"})
+        think_hits = [r for r in results if r["match_type"] == "thinking"]
+        assert len(think_hits) == 0
+
+    # 8. Agent nesting gate
+    def test_agent_nesting_gate_excludes_nested(self, rich_db):
+        """Without 'agent-details', results from agent_nesting_level > 0 are excluded."""
+        # xyzzyAgentNested88 is in a message with nesting_level=1
+        results = rich_db.search("xyzzyAgentNested88", search_content_set={"messages"})
+        assert len(results) == 0
+
+    def test_agent_nesting_gate_includes_nested(self, rich_db):
+        """With 'agent-details', results from agent_nesting_level > 0 are included."""
+        results = rich_db.search("xyzzyAgentNested88", search_content_set={"messages", "agent-details"})
+        msg_hits = [r for r in results if r["match_type"] == "message"]
+        assert len(msg_hits) > 0
+
+    def test_agent_nesting_gate_tools(self, rich_db):
+        """Without 'agent-details', tool invocations from nested agents are excluded."""
+        # xyzzyNestedToolResult33 is in a tool invocation on a nested message
+        results = rich_db.search("xyzzyNestedToolResult33", search_content_set={"tools", "tool-inputs"})
+        tool_hits = [r for r in results if r["match_type"] == "tool_invocation"]
+        assert len(tool_hits) == 0
+
+    def test_agent_nesting_gate_tools_included(self, rich_db):
+        """With 'agent-details', tool invocations from nested agents are included."""
+        results = rich_db.search(
+            "xyzzyNestedToolResult33",
+            search_content_set={"tools", "tool-inputs", "agent-details"},
+        )
+        tool_hits = [r for r in results if r["match_type"] == "tool_invocation"]
+        assert len(tool_hits) > 0
+
+    # 9. Backward compatibility
+    def test_backward_compat_include_messages_only(self, rich_db):
+        """Old-style include_messages=True, include_tool_calls=False still works."""
+        results = rich_db.search("refactor", include_messages=True, include_tool_calls=False, include_file_changes=False)
+        # Should find the message but not tool/file results
+        msg_hits = [r for r in results if r["match_type"] == "message"]
+        assert len(msg_hits) > 0
+        tool_hits = [r for r in results if r["match_type"] == "tool_invocation"]
+        assert len(tool_hits) == 0
+
+    def test_backward_compat_include_tool_calls(self, rich_db):
+        """Old-style include_tool_calls=True enables tools + tool-inputs."""
+        results = rich_db.search("xyzzyToolInput42", include_messages=False, include_tool_calls=True)
+        tool_hits = [r for r in results if r["match_type"] == "tool_invocation"]
+        assert len(tool_hits) > 0
+
+    # 10. Empty set
+    def test_empty_content_set_returns_empty(self, rich_db):
+        """search_content_set=set() returns empty list."""
+        results = rich_db.search("refactor", search_content_set=set())
+        assert results == []
+
+    # 11. message_index in results
+    def test_tool_results_include_message_index(self, rich_db):
+        """Tool invocation results include message_index field."""
+        results = rich_db.search("grep_search", search_content_set={"tools", "agent-details"})
+        tool_hits = [r for r in results if r["match_type"] == "tool_invocation"]
+        assert len(tool_hits) > 0
+        for r in tool_hits:
+            assert "message_index" in r
+            assert r["message_index"] == 1  # 0-based, second message
+
+    def test_file_results_include_message_index(self, rich_db):
+        """File change results include message_index field."""
+        results = rich_db.search("main.py", search_content_set={"file-changes", "agent-details"})
+        file_hits = [r for r in results if r["match_type"] == "file_change"]
+        assert len(file_hits) > 0
+        for r in file_hits:
+            assert "message_index" in r
+            assert r["message_index"] == 1
+
+    def test_command_results_include_message_index(self, rich_db):
+        """Command run results include message_index field."""
+        results = rich_db.search("xyzzyCommandOut55", search_content_set={"commands", "agent-details"})
+        cmd_hits = [r for r in results if r["match_type"] == "command_run"]
+        assert len(cmd_hits) > 0
+        for r in cmd_hits:
+            assert "message_index" in r
+            assert r["message_index"] == 1
+
+    def test_thinking_results_include_message_index(self, rich_db):
+        """Thinking block results include message_index field."""
+        results = rich_db.search("xyzzyThinkSecret77", search_content_set={"thinking", "agent-details"})
+        think_hits = [r for r in results if r["match_type"] == "thinking"]
+        assert len(think_hits) > 0
+        for r in think_hits:
+            assert "message_index" in r
+            assert r["message_index"] == 1
 
 
 class TestRelevanceWithRecency:
@@ -1586,6 +1880,7 @@ class TestTwoTierRendering:
     def test_delete_cst_session(self, full_db):
         """Deleting a cst_session removes it; get_session still falls back to built-in."""
         _insert_builtin_session(str(full_db.db_path), "sess-del")
+        _insert_builtin_turn(str(full_db.db_path), "sess-del", 0, "hi", "hello")
         full_db.add_session(
             ChatSession(
                 session_id="sess-del",

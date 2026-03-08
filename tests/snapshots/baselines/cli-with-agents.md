@@ -65,7 +65,7 @@ Explore Agent: Verify fix in related files — completed
 The JWT token refresh bug is fixed. Both agents confirmed the fix is complete.
 
 
-*Used tools: task, task*
+*🔧 Tools: task, task*
 
 **task input:**
 ```
