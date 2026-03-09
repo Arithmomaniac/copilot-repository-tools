@@ -1427,13 +1427,7 @@ pre.command-output {
     }
 }
 
-/* Cleanup indicator — two icons: static mic + tristate status */
-.cleanup-mic {
-    font-size: 0.8em;
-    opacity: 0.3;
-    vertical-align: middle;
-    cursor: default;
-}
+/* Cleanup indicator — tristate: — (neutral) / ✅ (cleaned) / 🔄 (showing original) */
 .cleanup-indicator {
     background: none;
     border: none;
@@ -2012,8 +2006,8 @@ input:checked + .toggle-switch::after {
                 if (indicator) {
                   indicator.classList.remove('cleaned');
                   indicator.classList.add('uncleaned');
-                  indicator.textContent = '⚠️';
-                  indicator.title = 'Not yet cleaned';
+                  indicator.textContent = '—';
+                  indicator.title = 'Transcript cleanup';
                 }
                 // Replace popover
                 const popover = msgEl.querySelector('.cleanup-popover');
@@ -2728,15 +2722,14 @@ input:checked + .toggle-switch::after {
                     {% endif %}
                     {% if message.role == 'user' and not static %}
                     <span style="position:relative;display:inline-block;">
-                      <span class="cleanup-mic" title="Voice input">🎙️</span>
                       <button type="button"
                               class="cleanup-indicator {{ 'cleaned' if message.original_content is not none else 'uncleaned' }}"
                               data-message-index="{{ loop.index0 }}"
                               data-session-id="{{ session.session_id }}"
                               data-cleaned="{{ 'true' if message.original_content is not none else 'false' }}"
-                              title="{{ 'Cleaned by ' ~ message.cleanup_model if message.original_content is not none else 'Not yet cleaned' }}"
+                              title="{{ 'Cleaned by ' ~ message.cleanup_model if message.original_content is not none else 'Transcript cleanup' }}"
                               aria-label="Cleanup options">
-                        {{ '✅' if message.original_content is not none else '⚠️' }}
+                        {{ '✅' if message.original_content is not none else '—' }}
                       </button>
                       <div class="cleanup-popover" data-popover-for="{{ loop.index0 }}">
                         {% if message.original_content is none %}
