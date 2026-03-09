@@ -1427,7 +1427,13 @@ pre.command-output {
     }
 }
 
-/* Cleanup indicator button — single button per user message */
+/* Cleanup indicator — two icons: static mic + tristate status */
+.cleanup-mic {
+    font-size: 0.8em;
+    opacity: 0.3;
+    vertical-align: middle;
+    cursor: default;
+}
 .cleanup-indicator {
     background: none;
     border: none;
@@ -1923,11 +1929,12 @@ input:checked + .toggle-switch::after {
                     // Render cleaned content (simple paragraph conversion)
                     contentInner.innerHTML = '<p>' + result.cleaned.replace(/\n\n+/g, '</p><p>').replace(/\n/g, '<br>') + '</p>';
                   }
-                  // Update indicator
+                  // Update indicator icon
                   const indicator = msgEl.querySelector('.cleanup-indicator');
                   if (indicator) {
                     indicator.classList.remove('uncleaned');
                     indicator.classList.add('cleaned');
+                    indicator.textContent = '✅';
                     indicator.title = 'Cleaned';
                   }
                   // Replace popover contents
@@ -1970,6 +1977,9 @@ input:checked + .toggle-switch::after {
             contentDiv.style.display = isOriginalVisible ? 'block' : 'none';
             btn.textContent = isOriginalVisible ? '👁️ Original' : '👁️ Cleaned';
             btn.classList.toggle('active-toggle', !isOriginalVisible);
+            // Update indicator icon
+            const indicator = msgEl.querySelector('.cleanup-indicator');
+            if (indicator) indicator.textContent = isOriginalVisible ? '✅' : '🔄';
             Alpine.$data(document.querySelector('[x-data]')).restoreScroll(anchor);
           });
 
@@ -1997,12 +2007,13 @@ input:checked + .toggle-switch::after {
                   originalDiv.remove();
                   contentDiv.style.display = 'block';
                 }
-                // Update indicator
+                // Update indicator icon
                 const indicator = msgEl.querySelector('.cleanup-indicator');
                 if (indicator) {
                   indicator.classList.remove('cleaned');
                   indicator.classList.add('uncleaned');
-                  indicator.title = 'Clean up this message';
+                  indicator.textContent = '⚠️';
+                  indicator.title = 'Not yet cleaned';
                 }
                 // Replace popover
                 const popover = msgEl.querySelector('.cleanup-popover');
@@ -2717,14 +2728,15 @@ input:checked + .toggle-switch::after {
                     {% endif %}
                     {% if message.role == 'user' and not static %}
                     <span style="position:relative;display:inline-block;">
+                      <span class="cleanup-mic" title="Voice input">🎙️</span>
                       <button type="button"
                               class="cleanup-indicator {{ 'cleaned' if message.original_content is not none else 'uncleaned' }}"
                               data-message-index="{{ loop.index0 }}"
                               data-session-id="{{ session.session_id }}"
                               data-cleaned="{{ 'true' if message.original_content is not none else 'false' }}"
-                              title="{{ 'Cleaned by ' ~ message.cleanup_model if message.original_content is not none else 'Clean up this message' }}"
+                              title="{{ 'Cleaned by ' ~ message.cleanup_model if message.original_content is not none else 'Not yet cleaned' }}"
                               aria-label="Cleanup options">
-                        ✨
+                        {{ '✅' if message.original_content is not none else '⚠️' }}
                       </button>
                       <div class="cleanup-popover" data-popover-for="{{ loop.index0 }}">
                         {% if message.original_content is none %}
