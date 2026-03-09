@@ -1414,59 +1414,79 @@ pre.command-output {
     }
 }
 
-/* Cleanup / Revert buttons */
-.message-cleanup-btn,
-.message-revert-btn,
-.message-toggle-raw-btn {
+/* Cleanup indicator button — single button per user message */
+.cleanup-indicator {
     background: none;
     border: none;
     cursor: pointer;
     font-size: 0.85em;
     padding: 2px 4px;
     margin-left: 4px;
-    opacity: 0;
+    opacity: 0.35;
     transition: opacity 0.15s ease;
     vertical-align: middle;
+    position: relative;
 }
-.message:hover .message-cleanup-btn,
-.message:hover .message-revert-btn,
-.message:hover .message-toggle-raw-btn {
-    opacity: 0.6;
+.message:hover .cleanup-indicator {
+    opacity: 0.7;
 }
-.message-cleanup-btn:hover {
+.cleanup-indicator:hover {
     opacity: 1 !important;
+}
+.cleanup-indicator.cleaned {
+    opacity: 0.6;
+    color: #16a34a;
+}
+.cleanup-indicator.uncleaned {
     color: #d97706;
 }
-.message-revert-btn:hover {
-    opacity: 1 !important;
-    color: #2563eb;
-}
-.message-toggle-raw-btn:hover {
-    opacity: 1 !important;
-    color: #6b7280;
-}
 @media (prefers-color-scheme: dark) {
-    .message-cleanup-btn:hover { color: #fbbf24; }
-    .message-revert-btn:hover { color: #60a5fa; }
-    .message-toggle-raw-btn:hover { color: #9ca3af; }
+    .cleanup-indicator.cleaned { color: #4ade80; }
+    .cleanup-indicator.uncleaned { color: #fbbf24; }
 }
 
-.cleanup-badge {
-    display: inline-block;
-    font-size: 0.7em;
-    padding: 1px 6px;
-    margin-left: 6px;
-    border-radius: 9999px;
-    background: #fef3c7;
-    color: #92400e;
-    vertical-align: middle;
-    font-weight: 500;
+/* Cleanup popover bubble */
+.cleanup-popover {
+    display: none;
+    position: absolute;
+    top: 100%;
+    right: 0;
+    z-index: 100;
+    background: var(--bg-primary, #fff);
+    border: 1px solid var(--border-color, #d0d7de);
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    padding: 6px;
+    white-space: nowrap;
+    margin-top: 4px;
+}
+.cleanup-popover.open { display: flex; gap: 4px; align-items: center; }
+.cleanup-popover button {
+    background: none;
+    border: 1px solid var(--border-color, #d0d7de);
+    border-radius: 6px;
+    cursor: pointer;
+    padding: 4px 10px;
+    font-size: 0.8em;
+    color: var(--text-primary, #24292f);
+    transition: background 0.1s;
+}
+.cleanup-popover button:hover {
+    background: var(--bg-secondary, #f6f8fa);
+}
+.cleanup-popover button.active-toggle {
+    background: #dbeafe;
+    border-color: #93c5fd;
 }
 @media (prefers-color-scheme: dark) {
-    .cleanup-badge {
-        background: #451a03;
-        color: #fde68a;
+    .cleanup-popover {
+        background: #161b22;
+        border-color: #30363d;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.4);
     }
+    .cleanup-popover button { color: #c9d1d9; border-color: #30363d; }
+    .cleanup-popover button:hover { background: #21262d; }
+    .cleanup-popover button.active-toggle { background: #1e3a5f; border-color: #58a6ff; }
 }
 
 .message-original-content {

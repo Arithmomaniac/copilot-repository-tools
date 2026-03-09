@@ -1427,59 +1427,79 @@ pre.command-output {
     }
 }
 
-/* Cleanup / Revert buttons */
-.message-cleanup-btn,
-.message-revert-btn,
-.message-toggle-raw-btn {
+/* Cleanup indicator button — single button per user message */
+.cleanup-indicator {
     background: none;
     border: none;
     cursor: pointer;
     font-size: 0.85em;
     padding: 2px 4px;
     margin-left: 4px;
-    opacity: 0;
+    opacity: 0.35;
     transition: opacity 0.15s ease;
     vertical-align: middle;
+    position: relative;
 }
-.message:hover .message-cleanup-btn,
-.message:hover .message-revert-btn,
-.message:hover .message-toggle-raw-btn {
-    opacity: 0.6;
+.message:hover .cleanup-indicator {
+    opacity: 0.7;
 }
-.message-cleanup-btn:hover {
+.cleanup-indicator:hover {
     opacity: 1 !important;
+}
+.cleanup-indicator.cleaned {
+    opacity: 0.6;
+    color: #16a34a;
+}
+.cleanup-indicator.uncleaned {
     color: #d97706;
 }
-.message-revert-btn:hover {
-    opacity: 1 !important;
-    color: #2563eb;
-}
-.message-toggle-raw-btn:hover {
-    opacity: 1 !important;
-    color: #6b7280;
-}
 @media (prefers-color-scheme: dark) {
-    .message-cleanup-btn:hover { color: #fbbf24; }
-    .message-revert-btn:hover { color: #60a5fa; }
-    .message-toggle-raw-btn:hover { color: #9ca3af; }
+    .cleanup-indicator.cleaned { color: #4ade80; }
+    .cleanup-indicator.uncleaned { color: #fbbf24; }
 }
 
-.cleanup-badge {
-    display: inline-block;
-    font-size: 0.7em;
-    padding: 1px 6px;
-    margin-left: 6px;
-    border-radius: 9999px;
-    background: #fef3c7;
-    color: #92400e;
-    vertical-align: middle;
-    font-weight: 500;
+/* Cleanup popover bubble */
+.cleanup-popover {
+    display: none;
+    position: absolute;
+    top: 100%;
+    right: 0;
+    z-index: 100;
+    background: var(--bg-primary, #fff);
+    border: 1px solid var(--border-color, #d0d7de);
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    padding: 6px;
+    white-space: nowrap;
+    margin-top: 4px;
+}
+.cleanup-popover.open { display: flex; gap: 4px; align-items: center; }
+.cleanup-popover button {
+    background: none;
+    border: 1px solid var(--border-color, #d0d7de);
+    border-radius: 6px;
+    cursor: pointer;
+    padding: 4px 10px;
+    font-size: 0.8em;
+    color: var(--text-primary, #24292f);
+    transition: background 0.1s;
+}
+.cleanup-popover button:hover {
+    background: var(--bg-secondary, #f6f8fa);
+}
+.cleanup-popover button.active-toggle {
+    background: #dbeafe;
+    border-color: #93c5fd;
 }
 @media (prefers-color-scheme: dark) {
-    .cleanup-badge {
-        background: #451a03;
-        color: #fde68a;
+    .cleanup-popover {
+        background: #161b22;
+        border-color: #30363d;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.4);
     }
+    .cleanup-popover button { color: #c9d1d9; border-color: #30363d; }
+    .cleanup-popover button:hover { background: #21262d; }
+    .cleanup-popover button.active-toggle { background: #1e3a5f; border-color: #58a6ff; }
 }
 
 .message-original-content {
@@ -1855,65 +1875,146 @@ input:checked + .toggle-switch::after {
             });
           });
 
-          // Per-message cleanup buttons
-          document.querySelectorAll('.message-cleanup-btn').forEach(btn => {
-            btn.addEventListener('click', async function() {
-              const sessionId = this.dataset.sessionId;
-              const messageIndex = parseInt(this.dataset.messageIndex);
-              if (!confirm('Clean up this message?')) return;
-              try {
-                const response = await fetch('/api/cleanup/' + sessionId, {
-                  method: 'POST',
-                  headers: {'Content-Type': 'application/json'},
-                  body: JSON.stringify({message_index: messageIndex})
-                });
-                const data = await response.json();
-                if (data.success && data.cleaned > 0) {
-                  location.reload();
-                } else if (!data.success) {
-                  alert('Error: ' + data.error);
-                }
-              } catch (err) {
-                alert('Cleanup failed: ' + err.message);
+          // Cleanup indicator: open/close popover
+          document.addEventListener('click', function(e) {
+            // Close all popovers first
+            document.querySelectorAll('.cleanup-popover.open').forEach(pop => {
+              if (!pop.contains(e.target) && !pop.previousElementSibling?.contains(e.target)) {
+                pop.classList.remove('open');
               }
             });
+            // Open clicked indicator's popover
+            const indicator = e.target.closest('.cleanup-indicator');
+            if (indicator) {
+              const popover = indicator.parentElement.querySelector('.cleanup-popover');
+              if (popover) popover.classList.toggle('open');
+            }
           });
 
-          // Per-message revert buttons
-          document.querySelectorAll('.message-revert-btn').forEach(btn => {
-            btn.addEventListener('click', async function() {
-              const sessionId = this.dataset.sessionId;
-              const messageIndex = parseInt(this.dataset.messageIndex);
-              try {
-                const response = await fetch('/api/cleanup-revert/' + sessionId, {
-                  method: 'POST',
-                  headers: {'Content-Type': 'application/json'},
-                  body: JSON.stringify({message_index: messageIndex})
-                });
-                const data = await response.json();
-                if (data.success && data.reverted_count > 0) {
-                  location.reload();
+          // Popover: Clean button (single message)
+          document.addEventListener('click', async function(e) {
+            const btn = e.target.closest('.popover-cleanup-btn');
+            if (!btn) return;
+            const sessionId = btn.dataset.sessionId;
+            const messageIndex = parseInt(btn.dataset.messageIndex);
+            const msgEl = document.getElementById('msg-' + (messageIndex + 1));
+            btn.textContent = '⏳ Cleaning...';
+            btn.disabled = true;
+            const anchor = Alpine.$data(document.querySelector('[x-data]')).getAnchorState();
+            try {
+              const response = await fetch('/api/cleanup/' + sessionId, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({message_index: messageIndex})
+              });
+              const data = await response.json();
+              if (data.success && data.cleaned > 0) {
+                // Update content in-place
+                const result = data.results.find(r => r.index === messageIndex && r.is_voice);
+                if (result && msgEl) {
+                  const contentInner = msgEl.querySelector('.message-content-inner');
+                  if (contentInner) {
+                    // Insert original-content div
+                    const origDiv = document.createElement('div');
+                    origDiv.className = 'message-original-content';
+                    origDiv.dataset.msgIndex = messageIndex;
+                    origDiv.innerHTML = contentInner.innerHTML;
+                    contentInner.parentElement.insertBefore(origDiv, contentInner);
+                    // Render cleaned content (simple paragraph conversion)
+                    contentInner.innerHTML = '<p>' + result.cleaned.replace(/\n\n+/g, '</p><p>').replace(/\n/g, '<br>') + '</p>';
+                  }
+                  // Update indicator
+                  const indicator = msgEl.querySelector('.cleanup-indicator');
+                  if (indicator) {
+                    indicator.classList.remove('uncleaned');
+                    indicator.classList.add('cleaned');
+                    indicator.title = 'Cleaned';
+                  }
+                  // Replace popover contents
+                  const popover = msgEl.querySelector('.cleanup-popover');
+                  if (popover) {
+                    popover.innerHTML = '<button type="button" class="popover-toggle-btn" data-message-index="' + messageIndex + '">👁️ Original</button>'
+                      + '<button type="button" class="popover-revert-btn" data-message-index="' + messageIndex + '" data-session-id="' + sessionId + '">↩️ Revert</button>';
+                    popover.classList.remove('open');
+                  }
                 }
-              } catch (err) {
-                alert('Revert failed: ' + err.message);
+                Alpine.$data(document.querySelector('[x-data]')).restoreScroll(anchor);
+              } else if (!data.success) {
+                alert('Error: ' + data.error);
+                btn.textContent = '🧹 Clean';
+                btn.disabled = false;
+              } else {
+                btn.textContent = '✓ Already clean';
+                setTimeout(() => { btn.closest('.cleanup-popover')?.classList.remove('open'); }, 1000);
               }
-            });
+            } catch (err) {
+              alert('Cleanup failed: ' + err.message);
+              btn.textContent = '🧹 Clean';
+              btn.disabled = false;
+            }
           });
 
-          // Toggle raw/cleaned view per message
-          document.querySelectorAll('.message-toggle-raw-btn').forEach(btn => {
-            btn.addEventListener('click', function() {
-              const msgIndex = this.dataset.messageIndex;
-              const originalDiv = document.querySelector(`.message-original-content[data-msg-index="${msgIndex}"]`);
-              const contentDiv = originalDiv?.parentElement?.querySelector('.message-content-inner');
-              if (originalDiv && contentDiv) {
-                const isOriginalVisible = getComputedStyle(originalDiv).display !== 'none';
-                originalDiv.style.display = isOriginalVisible ? 'none' : 'block';
-                contentDiv.style.display = isOriginalVisible ? 'block' : 'none';
-                this.textContent = isOriginalVisible ? '👁️' : '👁️‍🗨️';
-                this.title = isOriginalVisible ? 'Show original (raw) text' : 'Show cleaned text';
+          // Popover: Toggle original/cleaned
+          document.addEventListener('click', function(e) {
+            const btn = e.target.closest('.popover-toggle-btn');
+            if (!btn) return;
+            const msgIndex = btn.dataset.messageIndex;
+            const msgEl = document.getElementById('msg-' + (parseInt(msgIndex) + 1));
+            if (!msgEl) return;
+            const originalDiv = msgEl.querySelector('.message-original-content');
+            const contentDiv = msgEl.querySelector('.message-content-inner');
+            if (!originalDiv || !contentDiv) return;
+            const anchor = Alpine.$data(document.querySelector('[x-data]')).getAnchorState();
+            const isOriginalVisible = getComputedStyle(originalDiv).display !== 'none';
+            originalDiv.style.display = isOriginalVisible ? 'none' : 'block';
+            contentDiv.style.display = isOriginalVisible ? 'block' : 'none';
+            btn.textContent = isOriginalVisible ? '👁️ Original' : '👁️ Cleaned';
+            btn.classList.toggle('active-toggle', !isOriginalVisible);
+            Alpine.$data(document.querySelector('[x-data]')).restoreScroll(anchor);
+          });
+
+          // Popover: Revert button
+          document.addEventListener('click', async function(e) {
+            const btn = e.target.closest('.popover-revert-btn');
+            if (!btn) return;
+            const sessionId = btn.dataset.sessionId;
+            const messageIndex = parseInt(btn.dataset.messageIndex);
+            const msgEl = document.getElementById('msg-' + (messageIndex + 1));
+            const anchor = Alpine.$data(document.querySelector('[x-data]')).getAnchorState();
+            try {
+              const response = await fetch('/api/cleanup-revert/' + sessionId, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({message_index: messageIndex})
+              });
+              const data = await response.json();
+              if (data.success && data.reverted_count > 0 && msgEl) {
+                // Restore original content in-place
+                const originalDiv = msgEl.querySelector('.message-original-content');
+                const contentDiv = msgEl.querySelector('.message-content-inner');
+                if (originalDiv && contentDiv) {
+                  contentDiv.innerHTML = originalDiv.innerHTML;
+                  originalDiv.remove();
+                  contentDiv.style.display = 'block';
+                }
+                // Update indicator
+                const indicator = msgEl.querySelector('.cleanup-indicator');
+                if (indicator) {
+                  indicator.classList.remove('cleaned');
+                  indicator.classList.add('uncleaned');
+                  indicator.title = 'Clean up this message';
+                }
+                // Replace popover
+                const popover = msgEl.querySelector('.cleanup-popover');
+                if (popover) {
+                  popover.innerHTML = '<button type="button" class="popover-cleanup-btn" data-message-index="' + messageIndex + '" data-session-id="' + sessionId + '">🧹 Clean</button>';
+                  popover.classList.remove('open');
+                }
+                Alpine.$data(document.querySelector('[x-data]')).restoreScroll(anchor);
               }
-            });
+            } catch (err) {
+              alert('Revert failed: ' + err.message);
+            }
           });
         },
         saveSettings() {
@@ -2015,6 +2116,7 @@ input:checked + .toggle-switch::after {
           this.cleanupInProgress = true;
           this.copyStatusText = 'Cleaning...';
           this.copyStatusClass = '';
+          const anchor = this.getAnchorState();
           try {
             const response = await fetch('/api/cleanup/' + this.sessionId, {
               method: 'POST',
@@ -2024,7 +2126,10 @@ input:checked + .toggle-switch::after {
             if (data.success) {
               this.copyStatusText = `Cleaned ${data.cleaned} message(s)`;
               this.copyStatusClass = 'success';
-              if (data.cleaned > 0) setTimeout(() => location.reload(), 1500);
+              if (data.cleaned > 0) {
+                // Reload to get new content but preserve scroll
+                setTimeout(() => location.reload(), 1200);
+              }
             } else {
               this.copyStatusText = 'Error: ' + data.error;
               this.copyStatusClass = 'error';
@@ -2040,6 +2145,7 @@ input:checked + .toggle-switch::after {
 
         async revertAllSession() {
           if (!confirm('Revert ALL cleaned messages to their originals?')) return;
+          const anchor = this.getAnchorState();
           try {
             const response = await fetch('/api/cleanup-revert/' + this.sessionId, {
               method: 'POST',
@@ -2049,7 +2155,9 @@ input:checked + .toggle-switch::after {
             if (data.success) {
               this.copyStatusText = `Reverted ${data.reverted_count} message(s)`;
               this.copyStatusClass = 'success';
-              if (data.reverted_count > 0) setTimeout(() => location.reload(), 1500);
+              if (data.reverted_count > 0) {
+                setTimeout(() => location.reload(), 1200);
+              }
             } else {
               this.copyStatusText = 'Error: ' + data.error;
               this.copyStatusClass = 'error';
@@ -2608,19 +2716,25 @@ input:checked + .toggle-switch::after {
                     </button>
                     {% endif %}
                     {% if message.role == 'user' and not static %}
-                      {% if message.original_content is none %}
-                      <button type="button" class="message-cleanup-btn" data-message-index="{{ loop.index0 }}" data-session-id="{{ session.session_id }}" title="Clean up this message" aria-label="Clean message">
-                        🧹
+                    <span style="position:relative;display:inline-block;">
+                      <button type="button"
+                              class="cleanup-indicator {{ 'cleaned' if message.original_content is not none else 'uncleaned' }}"
+                              data-message-index="{{ loop.index0 }}"
+                              data-session-id="{{ session.session_id }}"
+                              data-cleaned="{{ 'true' if message.original_content is not none else 'false' }}"
+                              title="{{ 'Cleaned by ' ~ message.cleanup_model if message.original_content is not none else 'Clean up this message' }}"
+                              aria-label="Cleanup options">
+                        ✨
                       </button>
-                      {% else %}
-                      <button type="button" class="message-revert-btn" data-message-index="{{ loop.index0 }}" data-session-id="{{ session.session_id }}" title="Revert to original" aria-label="Revert message">
-                        ↩️
-                      </button>
-                      <button type="button" class="message-toggle-raw-btn" data-message-index="{{ loop.index0 }}" title="Toggle raw/cleaned view" aria-label="Toggle raw/cleaned">
-                        👁️
-                      </button>
-                      <span class="cleanup-badge" title="Cleaned by {{ message.cleanup_model }}">✨ cleaned</span>
-                      {% endif %}
+                      <div class="cleanup-popover" data-popover-for="{{ loop.index0 }}">
+                        {% if message.original_content is none %}
+                        <button type="button" class="popover-cleanup-btn" data-message-index="{{ loop.index0 }}" data-session-id="{{ session.session_id }}">🧹 Clean</button>
+                        {% else %}
+                        <button type="button" class="popover-toggle-btn" data-message-index="{{ loop.index0 }}">👁️ Original</button>
+                        <button type="button" class="popover-revert-btn" data-message-index="{{ loop.index0 }}" data-session-id="{{ session.session_id }}">↩️ Revert</button>
+                        {% endif %}
+                      </div>
+                    </span>
                     {% endif %}
                 </div>
                 <div class="message-content">
