@@ -92,6 +92,8 @@ class ChatMessage:
     agent_id: str | None = None  # toolCallId linking to parent task tool invocation
     agent_display_name: str | None = None  # "General Purpose Agent", "Explore Agent", etc.
     agent_nesting_level: int = 0  # 0=top-level, 1=inside agent, 2=nested agent, etc.
+    original_content: str | None = None  # Pre-cleanup content (None = not cleaned)
+    cleanup_model: str | None = None  # LLM model used for cleanup
 
 
 @dataclass

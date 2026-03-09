@@ -259,6 +259,9 @@ def create_app(
 
             needs_version_refresh = enrichment_version is None or Version(enrichment_version) < Version(__version__)
 
+        # Check if any messages have been cleaned (for showing revert-all button)
+        has_cleanup_data = any(m.original_content is not None for m in session.messages) if is_enriched else False
+
         return render_template(
             "session.html",
             title=app.config["ARCHIVE_TITLE"],
@@ -272,6 +275,7 @@ def create_app(
             new_turns=new_turns,
             needs_version_refresh=needs_version_refresh,
             enrichment_version=enrichment_version,
+            has_cleanup_data=has_cleanup_data,
         )
 
     @app.route("/refresh", methods=["POST"])
@@ -315,6 +319,56 @@ def create_app(
             flash(error, "error")
             return redirect(url_for("session_view", session_id=session_id))
         return redirect(url_for("session_view", session_id=session_id))
+
+    @app.route("/api/cleanup/<session_id>", methods=["POST"])
+    def api_cleanup_session(session_id: str):
+        """Clean up voice-dictated messages in a session using LLM."""
+        try:
+            from copilot_session_tools.transcript_cleanup import cleanup_session
+        except ImportError:
+            return jsonify({"success": False, "error": "litellm not installed. Install with: pip install copilot-session-tools[llm]"}), 500
+
+        cleanup_db = Database(app.config["DB_PATH"])
+        data = request.get_json(silent=True) or {}
+        message_index = data.get("message_index")
+
+        try:
+            result = cleanup_session(
+                db=cleanup_db,
+                session_id=session_id,
+                message_index=message_index,
+                all_messages=message_index is None,
+            )
+            return jsonify(
+                {
+                    "success": True,
+                    "cleaned": result.cleaned,
+                    "detected_voice": result.detected_voice,
+                    "skipped_clean": result.skipped_clean,
+                    "results": [{"index": r.message_index, "is_voice": r.is_voice, "original": r.original, "cleaned": r.cleaned} for r in result.results],
+                }
+            )
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)}), 500
+
+    @app.route("/api/cleanup-revert/<session_id>", methods=["POST"])
+    def api_cleanup_revert(session_id: str):
+        """Revert cleaned messages to their original content."""
+        from copilot_session_tools.transcript_cleanup import revert_message, revert_session
+
+        revert_db = Database(app.config["DB_PATH"])
+        data = request.get_json(silent=True) or {}
+        message_index = data.get("message_index")
+
+        try:
+            if message_index is not None:
+                reverted = revert_message(revert_db, session_id, message_index)
+                return jsonify({"success": True, "reverted_count": 1 if reverted else 0})
+            else:
+                count = revert_session(revert_db, session_id)
+                return jsonify({"success": True, "reverted_count": count})
+        except Exception as e:
+            return jsonify({"success": False, "error": str(e)}), 500
 
     @app.route("/api/markdown/<session_id>", methods=["GET"])
     def get_markdown(session_id: str):

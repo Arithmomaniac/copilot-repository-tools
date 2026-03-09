@@ -1427,6 +1427,99 @@ pre.command-output {
     }
 }
 
+/* Cleanup indicator — Font Awesome mic, tristate by color */
+.cleanup-indicator {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 0.8em;
+    padding: 2px 4px;
+    margin-left: 4px;
+    opacity: 0.4;
+    transition: opacity 0.15s ease, color 0.15s ease;
+    vertical-align: middle;
+    position: relative;
+    color: var(--text-secondary, #57606a);
+}
+.message:hover .cleanup-indicator {
+    opacity: 0.7;
+}
+.cleanup-indicator:hover {
+    opacity: 1 !important;
+}
+.cleanup-indicator.cleaned {
+    opacity: 0.7;
+    color: #16a34a;
+}
+.cleanup-indicator.showing-original {
+    opacity: 0.7;
+    color: #d97706;
+}
+@media (prefers-color-scheme: dark) {
+    .cleanup-indicator { color: #8b949e; }
+    .cleanup-indicator.cleaned { color: #4ade80; }
+    .cleanup-indicator.showing-original { color: #fbbf24; }
+}
+
+/* Cleanup popover bubble */
+.cleanup-popover {
+    display: none;
+    position: absolute;
+    top: 100%;
+    right: 0;
+    z-index: 100;
+    background: var(--bg-primary, #fff);
+    border: 1px solid var(--border-color, #d0d7de);
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    padding: 6px;
+    white-space: nowrap;
+    margin-top: 4px;
+}
+.cleanup-popover.open { display: flex; gap: 4px; align-items: center; }
+.cleanup-popover button {
+    background: none;
+    border: 1px solid var(--border-color, #d0d7de);
+    border-radius: 6px;
+    cursor: pointer;
+    padding: 4px 10px;
+    font-size: 0.8em;
+    color: var(--text-primary, #24292f);
+    transition: background 0.1s;
+}
+.cleanup-popover button:hover {
+    background: var(--bg-secondary, #f6f8fa);
+}
+.cleanup-popover button.active-toggle {
+    background: #dbeafe;
+    border-color: #93c5fd;
+}
+@media (prefers-color-scheme: dark) {
+    .cleanup-popover {
+        background: #161b22;
+        border-color: #30363d;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    }
+    .cleanup-popover button { color: #c9d1d9; border-color: #30363d; }
+    .cleanup-popover button:hover { background: #21262d; }
+    .cleanup-popover button.active-toggle { background: #1e3a5f; border-color: #58a6ff; }
+}
+
+.message-original-content {
+    display: none;
+}
+
+.toolbar-cleanup-btn {
+    color: #d97706 !important;
+}
+.toolbar-cleanup-btn:hover {
+    background: rgba(217, 119, 6, 0.1) !important;
+}
+@media (prefers-color-scheme: dark) {
+    .toolbar-cleanup-btn { color: #fbbf24 !important; }
+    .toolbar-cleanup-btn:hover { background: rgba(251, 191, 36, 0.15) !important; }
+}
+
 /* Tables */
 .message-content table {
     border-collapse: collapse;
@@ -1667,6 +1760,7 @@ input:checked + .toggle-switch::after {
         copyStatusClass: '',
         messageCount: {{ message_count | default(0) }},
         sessionId: '{{ session.session_id }}',
+        cleanupInProgress: false,
 
         // Scroll-position preservation helpers
         getAnchorState() {
@@ -1783,8 +1877,157 @@ input:checked + .toggle-switch::after {
               }
             });
           });
-        },
 
+          // Cleanup indicator: open/close popover
+          document.addEventListener('click', function(e) {
+            // Close all popovers first
+            document.querySelectorAll('.cleanup-popover.open').forEach(pop => {
+              if (!pop.contains(e.target) && !pop.previousElementSibling?.contains(e.target)) {
+                pop.classList.remove('open');
+              }
+            });
+            // Open clicked indicator's popover
+            const indicator = e.target.closest('.cleanup-indicator');
+            if (indicator) {
+              const popover = indicator.parentElement.querySelector('.cleanup-popover');
+              if (popover) popover.classList.toggle('open');
+            }
+          });
+
+          // Popover: Clean button (single message)
+          document.addEventListener('click', async function(e) {
+            const btn = e.target.closest('.popover-cleanup-btn');
+            if (!btn) return;
+            const sessionId = btn.dataset.sessionId;
+            const messageIndex = parseInt(btn.dataset.messageIndex);
+            const msgEl = document.getElementById('msg-' + (messageIndex + 1));
+            btn.textContent = '⏳ Cleaning...';
+            btn.disabled = true;
+            const anchor = Alpine.$data(document.querySelector('[x-data]')).getAnchorState();
+            try {
+              const response = await fetch('/api/cleanup/' + sessionId, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({message_index: messageIndex})
+              });
+              const data = await response.json();
+              if (data.success && data.cleaned > 0) {
+                // Update content in-place
+                const result = data.results.find(r => r.index === messageIndex && r.is_voice);
+                if (result && msgEl) {
+                  const contentInner = msgEl.querySelector('.message-content-inner');
+                  if (contentInner) {
+                    // Insert original-content div
+                    const origDiv = document.createElement('div');
+                    origDiv.className = 'message-original-content';
+                    origDiv.dataset.msgIndex = messageIndex;
+                    origDiv.innerHTML = contentInner.innerHTML;
+                    contentInner.parentElement.insertBefore(origDiv, contentInner);
+                    // Render cleaned content (simple paragraph conversion)
+                    // Escape HTML before inserting (LLM output is untrusted)
+                    const escHtml = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+                    contentInner.innerHTML = '<p>' + escHtml(result.cleaned).replace(/\n\n+/g, '</p><p>').replace(/\n/g, '<br>') + '</p>';
+                  }
+                  // Update indicator color
+                  const indicator = msgEl.querySelector('.cleanup-indicator');
+                  if (indicator) {
+                    indicator.classList.remove('uncleaned');
+                    indicator.classList.add('cleaned');
+                    indicator.title = 'Cleaned';
+                  }
+                  // Replace popover contents
+                  const popover = msgEl.querySelector('.cleanup-popover');
+                  if (popover) {
+                    popover.innerHTML = '<button type="button" class="popover-toggle-btn" data-message-index="' + messageIndex + '">👁️ Original</button>'
+                      + '<button type="button" class="popover-revert-btn" data-message-index="' + messageIndex + '" data-session-id="' + sessionId + '">↩️ Revert</button>';
+                    popover.classList.remove('open');
+                  }
+                }
+                Alpine.$data(document.querySelector('[x-data]')).restoreScroll(anchor);
+              } else if (!data.success) {
+                alert('Error: ' + data.error);
+                btn.textContent = '🧹 Clean';
+                btn.disabled = false;
+              } else {
+                btn.textContent = '✓ Already clean';
+                setTimeout(() => { btn.closest('.cleanup-popover')?.classList.remove('open'); }, 1000);
+              }
+            } catch (err) {
+              alert('Cleanup failed: ' + err.message);
+              btn.textContent = '🧹 Clean';
+              btn.disabled = false;
+            }
+          });
+
+          // Popover: Toggle original/cleaned
+          document.addEventListener('click', function(e) {
+            const btn = e.target.closest('.popover-toggle-btn');
+            if (!btn) return;
+            const msgIndex = btn.dataset.messageIndex;
+            const msgEl = document.getElementById('msg-' + (parseInt(msgIndex) + 1));
+            if (!msgEl) return;
+            const originalDiv = msgEl.querySelector('.message-original-content');
+            const contentDiv = msgEl.querySelector('.message-content-inner');
+            if (!originalDiv || !contentDiv) return;
+            const anchor = Alpine.$data(document.querySelector('[x-data]')).getAnchorState();
+            const isOriginalVisible = getComputedStyle(originalDiv).display !== 'none';
+            originalDiv.style.display = isOriginalVisible ? 'none' : 'block';
+            contentDiv.style.display = isOriginalVisible ? 'block' : 'none';
+            btn.textContent = isOriginalVisible ? '👁️ Original' : '👁️ Cleaned';
+            btn.classList.toggle('active-toggle', !isOriginalVisible);
+            // Update indicator color
+            const indicator = msgEl.querySelector('.cleanup-indicator');
+            if (indicator) {
+              indicator.classList.toggle('showing-original', !isOriginalVisible);
+              indicator.classList.toggle('cleaned', isOriginalVisible);
+            }
+            Alpine.$data(document.querySelector('[x-data]')).restoreScroll(anchor);
+          });
+
+          // Popover: Revert button
+          document.addEventListener('click', async function(e) {
+            const btn = e.target.closest('.popover-revert-btn');
+            if (!btn) return;
+            const sessionId = btn.dataset.sessionId;
+            const messageIndex = parseInt(btn.dataset.messageIndex);
+            const msgEl = document.getElementById('msg-' + (messageIndex + 1));
+            const anchor = Alpine.$data(document.querySelector('[x-data]')).getAnchorState();
+            try {
+              const response = await fetch('/api/cleanup-revert/' + sessionId, {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({message_index: messageIndex})
+              });
+              const data = await response.json();
+              if (data.success && data.reverted_count > 0 && msgEl) {
+                // Restore original content in-place
+                const originalDiv = msgEl.querySelector('.message-original-content');
+                const contentDiv = msgEl.querySelector('.message-content-inner');
+                if (originalDiv && contentDiv) {
+                  contentDiv.innerHTML = originalDiv.innerHTML;
+                  originalDiv.remove();
+                  contentDiv.style.display = 'block';
+                }
+                // Update indicator color
+                const indicator = msgEl.querySelector('.cleanup-indicator');
+                if (indicator) {
+                  indicator.classList.remove('cleaned', 'showing-original');
+                  indicator.classList.add('uncleaned');
+                  indicator.title = 'Transcript cleanup';
+                }
+                // Replace popover
+                const popover = msgEl.querySelector('.cleanup-popover');
+                if (popover) {
+                  popover.innerHTML = '<button type="button" class="popover-cleanup-btn" data-message-index="' + messageIndex + '" data-session-id="' + sessionId + '">🧹 Clean</button>';
+                  popover.classList.remove('open');
+                }
+                Alpine.$data(document.querySelector('[x-data]')).restoreScroll(anchor);
+              }
+            } catch (err) {
+              alert('Revert failed: ' + err.message);
+            }
+          });
+        },
         saveSettings() {
           try {
             localStorage.setItem('cst-settings', JSON.stringify({
@@ -1878,6 +2121,66 @@ input:checked + .toggle-switch::after {
           }
         },
 
+        async cleanupSession() {
+          if (this.cleanupInProgress) return;
+          if (!confirm('Clean up voice-dictated messages in this session?')) return;
+          this.cleanupInProgress = true;
+          this.copyStatusText = 'Cleaning...';
+          this.copyStatusClass = '';
+          const anchor = this.getAnchorState();
+          try {
+            const response = await fetch('/api/cleanup/' + this.sessionId, {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+            });
+            const data = await response.json();
+            if (data.success) {
+              this.copyStatusText = `Cleaned ${data.cleaned} message(s)`;
+              this.copyStatusClass = 'success';
+              if (data.cleaned > 0) {
+                // Reload to get new content but preserve scroll
+                setTimeout(() => location.reload(), 1200);
+              }
+            } else {
+              this.copyStatusText = 'Error: ' + data.error;
+              this.copyStatusClass = 'error';
+            }
+          } catch (err) {
+            this.copyStatusText = 'Cleanup failed';
+            this.copyStatusClass = 'error';
+          } finally {
+            this.cleanupInProgress = false;
+            setTimeout(() => { this.copyStatusText = ''; this.copyStatusClass = ''; }, 5000);
+          }
+        },
+
+        async revertAllSession() {
+          if (!confirm('Revert ALL cleaned messages to their originals?')) return;
+          const anchor = this.getAnchorState();
+          try {
+            const response = await fetch('/api/cleanup-revert/' + this.sessionId, {
+              method: 'POST',
+              headers: {'Content-Type': 'application/json'},
+            });
+            const data = await response.json();
+            if (data.success) {
+              this.copyStatusText = `Reverted ${data.reverted_count} message(s)`;
+              this.copyStatusClass = 'success';
+              if (data.reverted_count > 0) {
+                setTimeout(() => location.reload(), 1200);
+              }
+            } else {
+              this.copyStatusText = 'Error: ' + data.error;
+              this.copyStatusClass = 'error';
+            }
+          } catch (err) {
+            this.copyStatusText = 'Revert failed';
+            this.copyStatusClass = 'error';
+          } finally {
+            setTimeout(() => { this.copyStatusText = ''; this.copyStatusClass = ''; }, 5000);
+          }
+        },
+
         autoCollapseCodeBlocks() {
           const CODE_LINE_THRESHOLD = 20;
           document.querySelectorAll('.message-content pre').forEach(function(pre) {
@@ -1936,6 +2239,10 @@ input:checked + .toggle-switch::after {
                 <button type="button" class="toolbar-btn" @click="downloadMarkdown()" title="Download Markdown">⬇ MD</button>
                 <button type="button" class="toolbar-btn" @click="downloadHtml()" title="Download HTML">⬇ HTML</button>
                 <button type="button" class="toolbar-btn" @click="copyUrl()" title="Copy URL">🔗</button>
+                <button type="button" class="toolbar-btn toolbar-cleanup-btn" @click="cleanupSession()" title="Clean up voice-dictated messages">🧹 Cleanup</button>
+                {% if has_cleanup_data %}
+                <button type="button" class="toolbar-btn toolbar-cleanup-btn" @click="revertAllSession()" title="Revert all cleaned messages to originals">↩️ Revert All</button>
+                {% endif %}
                 <span class="copy-status" id="copy-status" :class="copyStatusClass" x-text="copyStatusText"></span>
             </div>
             {% endif %}
@@ -2419,9 +2726,37 @@ input:checked + .toggle-switch::after {
                         <i class="fa-regular fa-copy"></i>
                     </button>
                     {% endif %}
+                    {% if message.role == 'user' and not static and is_enriched %}
+                    <span style="position:relative;display:inline-block;">
+                      <button type="button"
+                              class="cleanup-indicator {{ 'cleaned' if message.original_content is not none else 'uncleaned' }}"
+                              data-message-index="{{ loop.index0 }}"
+                              data-session-id="{{ session.session_id }}"
+                              data-cleaned="{{ 'true' if message.original_content is not none else 'false' }}"
+                              title="{{ 'Cleaned by ' ~ message.cleanup_model if message.original_content is not none else 'Transcript cleanup' }}"
+                              aria-label="Cleanup options">
+                        <i class="fa-solid fa-microphone"></i>
+                      </button>
+                      <div class="cleanup-popover" data-popover-for="{{ loop.index0 }}">
+                        {% if message.original_content is none %}
+                        <button type="button" class="popover-cleanup-btn" data-message-index="{{ loop.index0 }}" data-session-id="{{ session.session_id }}">🧹 Clean</button>
+                        {% else %}
+                        <button type="button" class="popover-toggle-btn" data-message-index="{{ loop.index0 }}">👁️ Original</button>
+                        <button type="button" class="popover-revert-btn" data-message-index="{{ loop.index0 }}" data-session-id="{{ session.session_id }}">↩️ Revert</button>
+                        {% endif %}
+                      </div>
+                    </span>
+                    {% endif %}
                 </div>
                 <div class="message-content">
+                    {% if message.original_content is not none %}
+                    <div class="message-original-content" data-msg-index="{{ loop.index0 }}">
+                      {{ message.original_content | markdown }}
+                    </div>
+                    {% endif %}
+                    <div class="message-content-inner">
                     {{ render_content_blocks(message.content_blocks, message.tool_invocations, message.file_changes, message.command_runs, msg_meta, message.content) }}
+                    </div>
                 </div>
             </div>
             {% endfor %}

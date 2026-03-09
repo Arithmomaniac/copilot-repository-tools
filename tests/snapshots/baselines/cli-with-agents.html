@@ -1402,6 +1402,99 @@ pre.command-output {
     }
 }
 
+/* Cleanup indicator — Font Awesome mic, tristate by color */
+.cleanup-indicator {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 0.8em;
+    padding: 2px 4px;
+    margin-left: 4px;
+    opacity: 0.4;
+    transition: opacity 0.15s ease, color 0.15s ease;
+    vertical-align: middle;
+    position: relative;
+    color: var(--text-secondary, #57606a);
+}
+.message:hover .cleanup-indicator {
+    opacity: 0.7;
+}
+.cleanup-indicator:hover {
+    opacity: 1 !important;
+}
+.cleanup-indicator.cleaned {
+    opacity: 0.7;
+    color: #16a34a;
+}
+.cleanup-indicator.showing-original {
+    opacity: 0.7;
+    color: #d97706;
+}
+@media (prefers-color-scheme: dark) {
+    .cleanup-indicator { color: #8b949e; }
+    .cleanup-indicator.cleaned { color: #4ade80; }
+    .cleanup-indicator.showing-original { color: #fbbf24; }
+}
+
+/* Cleanup popover bubble */
+.cleanup-popover {
+    display: none;
+    position: absolute;
+    top: 100%;
+    right: 0;
+    z-index: 100;
+    background: var(--bg-primary, #fff);
+    border: 1px solid var(--border-color, #d0d7de);
+    border-radius: 8px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    padding: 6px;
+    white-space: nowrap;
+    margin-top: 4px;
+}
+.cleanup-popover.open { display: flex; gap: 4px; align-items: center; }
+.cleanup-popover button {
+    background: none;
+    border: 1px solid var(--border-color, #d0d7de);
+    border-radius: 6px;
+    cursor: pointer;
+    padding: 4px 10px;
+    font-size: 0.8em;
+    color: var(--text-primary, #24292f);
+    transition: background 0.1s;
+}
+.cleanup-popover button:hover {
+    background: var(--bg-secondary, #f6f8fa);
+}
+.cleanup-popover button.active-toggle {
+    background: #dbeafe;
+    border-color: #93c5fd;
+}
+@media (prefers-color-scheme: dark) {
+    .cleanup-popover {
+        background: #161b22;
+        border-color: #30363d;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    }
+    .cleanup-popover button { color: #c9d1d9; border-color: #30363d; }
+    .cleanup-popover button:hover { background: #21262d; }
+    .cleanup-popover button.active-toggle { background: #1e3a5f; border-color: #58a6ff; }
+}
+
+.message-original-content {
+    display: none;
+}
+
+.toolbar-cleanup-btn {
+    color: #d97706 !important;
+}
+.toolbar-cleanup-btn:hover {
+    background: rgba(217, 119, 6, 0.1) !important;
+}
+@media (prefers-color-scheme: dark) {
+    .toolbar-cleanup-btn { color: #fbbf24 !important; }
+    .toolbar-cleanup-btn:hover { background: rgba(251, 191, 36, 0.15) !important; }
+}
+
 /* Tables */
 .message-content table {
     border-collapse: collapse;
@@ -1658,8 +1751,11 @@ input:checked + .toggle-switch::after {
                     
                     <a href="#msg-1" class="message-anchor" title="Link to this message">#1</a>
                     
+                    
                 </div>
                 <div class="message-content">
+                    
+                    <div class="message-content-inner">
                     
                     
                         
@@ -1678,6 +1774,7 @@ input:checked + .toggle-switch::after {
                 
                 
         
+                    </div>
                 </div>
             </div>
             
@@ -1690,8 +1787,11 @@ input:checked + .toggle-switch::after {
                     
                     <a href="#msg-2" class="message-anchor" title="Link to this message">#2</a>
                     
+                    
                 </div>
                 <div class="message-content">
+                    
+                    <div class="message-content-inner">
                     
                     
                         
@@ -2040,6 +2140,7 @@ tests/test_auth.py::test_expired PASSED
                 
                 
         
+                    </div>
                 </div>
             </div>
             
