@@ -1402,18 +1402,19 @@ pre.command-output {
     }
 }
 
-/* Cleanup indicator — tristate: — (neutral) / ✅ (cleaned) / 🔄 (showing original) */
+/* Cleanup indicator — Font Awesome mic, tristate by color */
 .cleanup-indicator {
     background: none;
     border: none;
     cursor: pointer;
-    font-size: 0.85em;
+    font-size: 0.8em;
     padding: 2px 4px;
     margin-left: 4px;
-    opacity: 0.35;
-    transition: opacity 0.15s ease;
+    opacity: 0.4;
+    transition: opacity 0.15s ease, color 0.15s ease;
     vertical-align: middle;
     position: relative;
+    color: var(--text-secondary, #57606a);
 }
 .message:hover .cleanup-indicator {
     opacity: 0.7;
@@ -1422,15 +1423,17 @@ pre.command-output {
     opacity: 1 !important;
 }
 .cleanup-indicator.cleaned {
-    opacity: 0.6;
+    opacity: 0.7;
     color: #16a34a;
 }
-.cleanup-indicator.uncleaned {
+.cleanup-indicator.showing-original {
+    opacity: 0.7;
     color: #d97706;
 }
 @media (prefers-color-scheme: dark) {
+    .cleanup-indicator { color: #8b949e; }
     .cleanup-indicator.cleaned { color: #4ade80; }
-    .cleanup-indicator.uncleaned { color: #fbbf24; }
+    .cleanup-indicator.showing-original { color: #fbbf24; }
 }
 
 /* Cleanup popover bubble */

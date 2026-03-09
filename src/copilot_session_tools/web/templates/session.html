@@ -1427,18 +1427,19 @@ pre.command-output {
     }
 }
 
-/* Cleanup indicator — tristate: — (neutral) / ✅ (cleaned) / 🔄 (showing original) */
+/* Cleanup indicator — Font Awesome mic, tristate by color */
 .cleanup-indicator {
     background: none;
     border: none;
     cursor: pointer;
-    font-size: 0.85em;
+    font-size: 0.8em;
     padding: 2px 4px;
     margin-left: 4px;
-    opacity: 0.35;
-    transition: opacity 0.15s ease;
+    opacity: 0.4;
+    transition: opacity 0.15s ease, color 0.15s ease;
     vertical-align: middle;
     position: relative;
+    color: var(--text-secondary, #57606a);
 }
 .message:hover .cleanup-indicator {
     opacity: 0.7;
@@ -1447,15 +1448,17 @@ pre.command-output {
     opacity: 1 !important;
 }
 .cleanup-indicator.cleaned {
-    opacity: 0.6;
+    opacity: 0.7;
     color: #16a34a;
 }
-.cleanup-indicator.uncleaned {
+.cleanup-indicator.showing-original {
+    opacity: 0.7;
     color: #d97706;
 }
 @media (prefers-color-scheme: dark) {
+    .cleanup-indicator { color: #8b949e; }
     .cleanup-indicator.cleaned { color: #4ade80; }
-    .cleanup-indicator.uncleaned { color: #fbbf24; }
+    .cleanup-indicator.showing-original { color: #fbbf24; }
 }
 
 /* Cleanup popover bubble */
@@ -1923,12 +1926,11 @@ input:checked + .toggle-switch::after {
                     // Render cleaned content (simple paragraph conversion)
                     contentInner.innerHTML = '<p>' + result.cleaned.replace(/\n\n+/g, '</p><p>').replace(/\n/g, '<br>') + '</p>';
                   }
-                  // Update indicator icon
+                  // Update indicator color
                   const indicator = msgEl.querySelector('.cleanup-indicator');
                   if (indicator) {
                     indicator.classList.remove('uncleaned');
                     indicator.classList.add('cleaned');
-                    indicator.textContent = '✅';
                     indicator.title = 'Cleaned';
                   }
                   // Replace popover contents
@@ -1971,9 +1973,12 @@ input:checked + .toggle-switch::after {
             contentDiv.style.display = isOriginalVisible ? 'block' : 'none';
             btn.textContent = isOriginalVisible ? '👁️ Original' : '👁️ Cleaned';
             btn.classList.toggle('active-toggle', !isOriginalVisible);
-            // Update indicator icon
+            // Update indicator color
             const indicator = msgEl.querySelector('.cleanup-indicator');
-            if (indicator) indicator.textContent = isOriginalVisible ? '✅' : '🔄';
+            if (indicator) {
+              indicator.classList.toggle('showing-original', !isOriginalVisible);
+              indicator.classList.toggle('cleaned', isOriginalVisible);
+            }
             Alpine.$data(document.querySelector('[x-data]')).restoreScroll(anchor);
           });
 
@@ -2001,12 +2006,11 @@ input:checked + .toggle-switch::after {
                   originalDiv.remove();
                   contentDiv.style.display = 'block';
                 }
-                // Update indicator icon
+                // Update indicator color
                 const indicator = msgEl.querySelector('.cleanup-indicator');
                 if (indicator) {
-                  indicator.classList.remove('cleaned');
+                  indicator.classList.remove('cleaned', 'showing-original');
                   indicator.classList.add('uncleaned');
-                  indicator.textContent = '—';
                   indicator.title = 'Transcript cleanup';
                 }
                 // Replace popover
@@ -2729,7 +2733,7 @@ input:checked + .toggle-switch::after {
                               data-cleaned="{{ 'true' if message.original_content is not none else 'false' }}"
                               title="{{ 'Cleaned by ' ~ message.cleanup_model if message.original_content is not none else 'Transcript cleanup' }}"
                               aria-label="Cleanup options">
-                        {{ '✅' if message.original_content is not none else '—' }}
+                        <i class="fa-solid fa-microphone"></i>
                       </button>
                       <div class="cleanup-popover" data-popover-for="{{ loop.index0 }}">
                         {% if message.original_content is none %}
