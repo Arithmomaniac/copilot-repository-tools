@@ -323,6 +323,9 @@ def cleanup_session(
         msg = f"Session not found: {session_id}"
         raise ValueError(msg)
 
+    # Reject cleanup on unenriched sessions (writes go to cst_messages which won't exist)
+    _require_enriched(db, session_id)
+
     # Determine which messages to process
     if message_index is not None:
         if message_index >= len(session.messages):
@@ -364,10 +367,17 @@ def cleanup_session(
         prompt = build_batch_prompt(session, chunk_indices)
         try:
             chunk_results = call_cleanup_llm(prompt, model, len(chunk_indices))
+            # Validate returned indices match requested chunk
+            returned_indices = {r["index"] for r in chunk_results}
+            expected_indices = set(chunk_indices)
+            if returned_indices != expected_indices:
+                # Model returned wrong indices — remap by position
+                for i, r in enumerate(chunk_results):
+                    r["index"] = chunk_indices[i]
             all_llm_results.extend(chunk_results)
         except Exception as e:
             failed_count += len(chunk_indices)
-            all_llm_results.extend({"index": i, "is_voice": True, "cleaned": f"ERROR: {e}"} for i in chunk_indices)
+            all_llm_results.extend({"index": i, "is_voice": True, "cleaned": None, "_error": str(e)} for i in chunk_indices)
 
     llm_results = all_llm_results
 
@@ -383,13 +393,13 @@ def cleanup_session(
         original_msg = session.messages[msg_idx]
 
         # Skip error results from failed chunks
-        if isinstance(cleaned_text, str) and cleaned_text.startswith("ERROR:"):
+        if "_error" in llm_result:
             message_results.append(
                 MessageCleanupResult(
                     message_index=msg_idx,
                     is_voice=is_voice,
                     original=original_msg.content,
-                    cleaned=cleaned_text,
+                    cleaned=f"ERROR: {llm_result['_error']}",
                 )
             )
             continue
@@ -432,7 +442,7 @@ def cleanup_session(
                 session_id=session_id,
                 message_index=msg_idx,
                 new_content=cleaned_text,
-                original_content=original_msg.content,
+                original_content=original_msg.original_content or original_msg.content,
                 cleanup_model=model,
                 cached_markdown=new_cached_md,
             )
@@ -447,7 +457,7 @@ def cleanup_session(
         detected_voice=detected_voice,
         cleaned=cleaned_count,
         skipped_clean=skipped_count,
-        failed=0,
+        failed=failed_count,
         results=message_results,
     )
 
@@ -455,6 +465,18 @@ def cleanup_session(
 # ---------------------------------------------------------------------------
 # Database operations
 # ---------------------------------------------------------------------------
+
+
+def _require_enriched(db: Database, session_id: str) -> None:
+    """Raise ValueError if the session is not in the enriched cst_* tables."""
+    if not db.has_cst_tables():
+        msg = "No enriched sessions available. Run 'scan' first."
+        raise ValueError(msg)
+    with db._get_connection() as conn:
+        row = conn.execute("SELECT 1 FROM cst_sessions WHERE session_id = ?", (session_id,)).fetchone()
+        if not row:
+            msg = f"Session {session_id} is not enriched. Run 'scan' or 'enrich' first."
+            raise ValueError(msg)
 
 
 def _update_message_content(

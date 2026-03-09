@@ -1924,7 +1924,9 @@ input:checked + .toggle-switch::after {
                     origDiv.innerHTML = contentInner.innerHTML;
                     contentInner.parentElement.insertBefore(origDiv, contentInner);
                     // Render cleaned content (simple paragraph conversion)
-                    contentInner.innerHTML = '<p>' + result.cleaned.replace(/\n\n+/g, '</p><p>').replace(/\n/g, '<br>') + '</p>';
+                    // Escape HTML before inserting (LLM output is untrusted)
+                    const escHtml = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+                    contentInner.innerHTML = '<p>' + escHtml(result.cleaned).replace(/\n\n+/g, '</p><p>').replace(/\n/g, '<br>') + '</p>';
                   }
                   // Update indicator color
                   const indicator = msgEl.querySelector('.cleanup-indicator');
@@ -2724,7 +2726,7 @@ input:checked + .toggle-switch::after {
                         <i class="fa-regular fa-copy"></i>
                     </button>
                     {% endif %}
-                    {% if message.role == 'user' and not static %}
+                    {% if message.role == 'user' and not static and is_enriched %}
                     <span style="position:relative;display:inline-block;">
                       <button type="button"
                               class="cleanup-indicator {{ 'cleaned' if message.original_content is not none else 'uncleaned' }}"

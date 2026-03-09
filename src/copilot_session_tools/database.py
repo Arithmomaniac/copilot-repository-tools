@@ -558,10 +558,7 @@ class Database:
                         cursor.execute("ALTER TABLE cst_sessions ADD COLUMN enrichment_version TEXT")
                 if current_version < 5:
                     # v5: transcript cleanup columns for voice-dictated message cleanup
-                    with contextlib.suppress(Exception):
-                        cursor.execute("ALTER TABLE cst_messages ADD COLUMN original_content TEXT")
-                    with contextlib.suppress(Exception):
-                        cursor.execute("ALTER TABLE cst_messages ADD COLUMN cleanup_model TEXT")
+                    pass  # Handled by catch-up block below
                 # v5 catch-up: ensure columns exist even if version was already bumped
                 with contextlib.suppress(Exception):
                     cursor.execute("ALTER TABLE cst_messages ADD COLUMN original_content TEXT")

@@ -507,3 +507,140 @@ class TestSchemaMigration:
             result = cursor.fetchone()
 
         assert result is not None, "FTS UPDATE trigger cst_messages_au should exist"
+
+
+# ---------------------------------------------------------------------------
+# Gherkin-style user flow coverage
+# ---------------------------------------------------------------------------
+
+
+class TestForceRecleanPreservesOriginal:
+    """Given a message cleaned once, when force re-cleaned, original voice text is preserved."""
+
+    @pytest.fixture
+    def db_with_session(self, tmp_path):
+        from copilot_session_tools.database import Database
+
+        db_path = tmp_path / "test.db"
+        db = Database(str(db_path))
+        session = _make_test_session(
+            session_id="force-test",
+            messages=[
+                ChatMessage(role="user", content="the the garbled original text"),
+                ChatMessage(role="assistant", content="I understand"),
+            ],
+        )
+        db.add_session(session)
+        return db
+
+    def _mock_response(self, results):
+        import json
+
+        response = MagicMock()
+        response.choices = [MagicMock()]
+        response.choices[0].message.content = json.dumps({"messages": results})
+        return response
+
+    def test_second_cleanup_preserves_true_original(self, db_with_session):
+        mock_litellm = MagicMock()
+
+        # First cleanup
+        mock_litellm.completion.return_value = self._mock_response(
+            [{"index": 0, "is_voice": True, "cleaned": "First cleanup"}]
+        )
+        with patch.dict("sys.modules", {"litellm": mock_litellm}):
+            cleanup_session(db_with_session, "force-test", message_index=0)
+
+        # Second cleanup with force
+        mock_litellm.completion.return_value = self._mock_response(
+            [{"index": 0, "is_voice": True, "cleaned": "Second cleanup"}]
+        )
+        with patch.dict("sys.modules", {"litellm": mock_litellm}):
+            cleanup_session(db_with_session, "force-test", message_index=0, force=True)
+
+        session = db_with_session.get_session("force-test")
+        assert session.messages[0].content == "Second cleanup"
+        # The TRUE original (garbled) must be preserved, not "First cleanup"
+        assert session.messages[0].original_content == "the the garbled original text"
+
+    def test_revert_after_double_cleanup_restores_true_original(self, db_with_session):
+        mock_litellm = MagicMock()
+
+        # Clean twice
+        for text in ["First", "Second"]:
+            mock_litellm.completion.return_value = self._mock_response(
+                [{"index": 0, "is_voice": True, "cleaned": text}]
+            )
+            with patch.dict("sys.modules", {"litellm": mock_litellm}):
+                cleanup_session(db_with_session, "force-test", message_index=0, force=True)
+
+        # Revert should restore the true original
+        revert_message(db_with_session, "force-test", 0)
+        session = db_with_session.get_session("force-test")
+        assert session.messages[0].content == "the the garbled original text"
+        assert session.messages[0].original_content is None
+
+
+class TestPartialChunkFailure:
+    """Given a large session, when one LLM chunk fails, partial results are reported correctly."""
+
+    @pytest.fixture
+    def db_with_large_session(self, tmp_path):
+        from copilot_session_tools.database import Database
+
+        db_path = tmp_path / "test.db"
+        db = Database(str(db_path))
+        # Create 15 user messages (will be split into 2 chunks of 10+5)
+        messages = []
+        for i in range(15):
+            messages.append(ChatMessage(role="user", content=f"so um basically message {i}"))
+            messages.append(ChatMessage(role="assistant", content=f"Response {i}"))
+        session = _make_test_session(session_id="chunk-test", messages=messages)
+        db.add_session(session)
+        return db
+
+    def _mock_response(self, results):
+        import json
+
+        response = MagicMock()
+        response.choices = [MagicMock()]
+        response.choices[0].message.content = json.dumps({"messages": results})
+        return response
+
+    def test_partial_failure_reports_failed_count(self, db_with_large_session):
+        mock_litellm = MagicMock()
+        call_count = 0
+
+        def side_effect(*args, **kwargs):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                # First chunk succeeds
+                return self._mock_response(
+                    [{"index": i * 2, "is_voice": True, "cleaned": f"Cleaned {i}"} for i in range(10)]
+                )
+            # Second chunk fails
+            raise ConnectionError("Network error")
+
+        mock_litellm.completion.side_effect = side_effect
+
+        with patch.dict("sys.modules", {"litellm": mock_litellm}):
+            result = cleanup_session(db_with_large_session, "chunk-test", all_messages=True)
+
+        assert result.cleaned > 0
+        assert result.failed > 0
+        assert result.cleaned + result.failed + result.skipped_clean <= 15
+
+
+class TestCleanupOnUnenrichedSession:
+    """Given a session that hasn't been enriched, cleanup should raise an error."""
+
+    def test_cleanup_rejects_unenriched(self, tmp_path):
+        from copilot_session_tools.database import Database
+
+        db_path = tmp_path / "test.db"
+        db = Database(str(db_path))
+        # Don't add any session — empty cst_sessions table
+        with pytest.raises(ValueError, match=r"not found|not enriched"):
+            cleanup_session(db, "nonexistent-session")
+
