@@ -165,8 +165,50 @@ Features:
 - **Enrichment status** — see which sessions have full detail vs. basic turns
 - **Copy Markdown** toolbar — select message range, include/exclude diffs, tool inputs, thinking
 - **Download** markdown or copy session URL
+- **Transcript cleanup** — clean up voice-dictated messages using LLM (see below)
 - **Dark mode** via CSS `prefers-color-scheme`
 - **Incremental refresh** without restarting
+
+## Transcript Cleanup
+
+Voice-dictated user messages often come out garbled (repeated words, filler words, broken sentences). Transcript cleanup uses an LLM to rewrite them, using the assistant's response and reasoning as context for what you actually meant.
+
+```bash
+# Clean up a single session (auto-detects voice-dictated messages)
+copilot-session-tools cleanup <session-id>
+
+# Preview changes without writing
+copilot-session-tools cleanup <session-id> --dry-run
+
+# Clean all user messages (skip auto-detection)
+copilot-session-tools cleanup <session-id> --all
+
+# Clean a specific message
+copilot-session-tools cleanup <session-id> --message 5
+
+# Revert all cleaned messages to originals
+copilot-session-tools cleanup-revert <session-id>
+
+# Revert a single message
+copilot-session-tools cleanup-revert <session-id> --message 5
+
+# List sessions with potential voice-dictated messages
+copilot-session-tools cleanup
+```
+
+Requires the `[llm]` extra (uses [LiteLLM](https://docs.litellm.ai/) with the [GitHub Copilot provider](https://docs.litellm.ai/docs/providers/github_copilot)):
+
+```bash
+pip install copilot-session-tools[llm]
+```
+
+**How it works:**
+1. A pure-Python heuristic pre-filter scores each user message (repeated words, filler density, missing punctuation)
+2. Messages above the threshold are batched into a single LLM call with context (assistant response + thinking traces + tool inputs)
+3. The LLM classifies each as typed or voice-dictated and cleans the voice-dictated ones
+4. Originals are preserved — you can always revert
+
+**Web viewer integration:** Each user message shows a 🎙️ mic icon — gray (not cleaned), green (cleaned), or amber (showing original). Click to open a popover with toggle/revert/clean actions. Session-level cleanup and revert-all buttons are in the toolbar.
 
 ## Session Sources
 
@@ -202,7 +244,7 @@ The tool writes to `cst_*` enrichment tables alongside the CLI's built-in tables
 | Table | Contents |
 |-------|----------|
 | `cst_sessions` | Enriched session metadata (workspace, edition, parser version, source format) |
-| `cst_messages` | Parsed messages with content blocks |
+| `cst_messages` | Parsed messages with content blocks, transcript cleanup (original_content, cleanup_model) |
 | `cst_messages_fts` | FTS5 full-text search index |
 | `cst_tool_invocations` | Tool calls (name, input, result, status) |
 | `cst_file_changes` | File edits with diffs |
@@ -222,7 +264,8 @@ copilot-session-tools scan --full
 ```bash
 pip install copilot-session-tools[cli]     # CLI only
 pip install copilot-session-tools[web]     # Web viewer only
-pip install copilot-session-tools[all]     # Both
+pip install copilot-session-tools[all]     # CLI + web + LLM
+pip install copilot-session-tools[llm]     # Optional: transcript cleanup via LiteLLM (GitHub Copilot API)
 pip install copilot-session-tools[vector]  # Optional: hybrid FTS5 + vector search (sqlite-vec + sentence-transformers)
 ```
 
