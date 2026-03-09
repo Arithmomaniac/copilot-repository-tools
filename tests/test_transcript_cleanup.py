@@ -545,16 +545,12 @@ class TestForceRecleanPreservesOriginal:
         mock_litellm = MagicMock()
 
         # First cleanup
-        mock_litellm.completion.return_value = self._mock_response(
-            [{"index": 0, "is_voice": True, "cleaned": "First cleanup"}]
-        )
+        mock_litellm.completion.return_value = self._mock_response([{"index": 0, "is_voice": True, "cleaned": "First cleanup"}])
         with patch.dict("sys.modules", {"litellm": mock_litellm}):
             cleanup_session(db_with_session, "force-test", message_index=0)
 
         # Second cleanup with force
-        mock_litellm.completion.return_value = self._mock_response(
-            [{"index": 0, "is_voice": True, "cleaned": "Second cleanup"}]
-        )
+        mock_litellm.completion.return_value = self._mock_response([{"index": 0, "is_voice": True, "cleaned": "Second cleanup"}])
         with patch.dict("sys.modules", {"litellm": mock_litellm}):
             cleanup_session(db_with_session, "force-test", message_index=0, force=True)
 
@@ -568,9 +564,7 @@ class TestForceRecleanPreservesOriginal:
 
         # Clean twice
         for text in ["First", "Second"]:
-            mock_litellm.completion.return_value = self._mock_response(
-                [{"index": 0, "is_voice": True, "cleaned": text}]
-            )
+            mock_litellm.completion.return_value = self._mock_response([{"index": 0, "is_voice": True, "cleaned": text}])
             with patch.dict("sys.modules", {"litellm": mock_litellm}):
                 cleanup_session(db_with_session, "force-test", message_index=0, force=True)
 
@@ -616,9 +610,7 @@ class TestPartialChunkFailure:
             call_count += 1
             if call_count == 1:
                 # First chunk succeeds
-                return self._mock_response(
-                    [{"index": i * 2, "is_voice": True, "cleaned": f"Cleaned {i}"} for i in range(10)]
-                )
+                return self._mock_response([{"index": i * 2, "is_voice": True, "cleaned": f"Cleaned {i}"} for i in range(10)])
             # Second chunk fails
             raise ConnectionError("Network error")
 
@@ -643,4 +635,3 @@ class TestCleanupOnUnenrichedSession:
         # Don't add any session — empty cst_sessions table
         with pytest.raises(ValueError, match=r"not found|not enriched"):
             cleanup_session(db, "nonexistent-session")
-
