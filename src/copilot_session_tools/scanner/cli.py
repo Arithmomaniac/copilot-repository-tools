@@ -557,6 +557,17 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                 content = event_data.get("content", "")
                 tool_requests = event_data.get("toolRequests", [])
 
+                # Add reasoning/thinking content before text (inline format)
+                reasoning_text = event_data.get("reasoningText", "")
+                if reasoning_text and reasoning_text.strip():
+                    builder.current_assistant_content_blocks.append(
+                        ContentBlock(
+                            kind="thinking",
+                            content=reasoning_text.strip(),
+                            description="reasoning",
+                        )
+                    )
+
                 # Add any text content first
                 if content and content.strip():
                     builder.current_assistant_content_blocks.append(
