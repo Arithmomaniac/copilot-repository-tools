@@ -2763,6 +2763,25 @@ class TestCLIv105EventHandlers:
         blocks = self._find_status_blocks(session, "usage")
         assert len(blocks) == 0
 
+    def test_assistant_usage_null_tokens(self, tmp_path):
+        """assistant.usage with null token fields should not crash."""
+        session = self._parse(
+            tmp_path,
+            {"type": "user.message", "data": {"content": "Help"}},
+            {"type": "assistant.message", "data": {"content": "Sure."}},
+            {
+                "type": "assistant.usage",
+                "data": {
+                    "model": "gpt-5",
+                    "inputTokens": None,
+                    "outputTokens": 100,
+                },
+            },
+        )
+        blocks = self._find_status_blocks(session, "usage")
+        assert len(blocks) == 1
+        assert "100 out" in blocks[0].content
+
     # ---- T4: session.start context fields ----
 
     def test_session_start_host_type_github(self, tmp_path):
@@ -2779,7 +2798,7 @@ class TestCLIv105EventHandlers:
         assert session.repository_url == "https://github.com/owner/repo"
 
     def test_session_start_host_type_ado(self, tmp_path):
-        """session.start with hostType=ado should NOT generate a github URL."""
+        """session.start with hostType=ado should NOT generate any repository URL."""
         session = self._parse(
             tmp_path,
             {"type": "user.message", "data": {"content": "Hello"}},
@@ -2789,8 +2808,8 @@ class TestCLIv105EventHandlers:
             },
         )
         assert session is not None
-        # ADO repos should not get a GitHub URL
-        assert session.repository_url is None or "github.com" not in session.repository_url
+        # ADO repos should not get any URL — no GitHub URL and no detect_repository_url fallback
+        assert session.repository_url is None
 
     def test_session_start_without_host_type(self, tmp_path):
         """session.start without hostType should default to github URL as before."""

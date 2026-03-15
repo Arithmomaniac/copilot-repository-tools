@@ -271,9 +271,9 @@ class _CliSessionBuilder:
 
         if cmd_run:
             # Add command run inline as a content block
-            # Use intentionSummary as title if available, otherwise fall back to existing title
-            if intention_summary and not cmd_run.title:
-                cmd_run.title = intention_summary
+            # Use intentionSummary/toolTitle as title if available
+            if (intention_summary or tool_title) and not cmd_run.title:
+                cmd_run.title = intention_summary or tool_title
             cmd_display = cmd_run.title or cmd_run.command
             if len(cmd_display) > 60:
                 cmd_display = cmd_display[:57] + "..."
@@ -281,7 +281,7 @@ class _CliSessionBuilder:
                 ContentBlock(
                     kind="toolInvocation",
                     content=f"$ {cmd_run.command}" if cmd_run.command else cmd_display,
-                    description=intention_summary or cmd_run.title,
+                    description=intention_summary or tool_title or cmd_run.title,
                 )
             )
             self.current_assistant_command_runs.append(cmd_run)
@@ -840,13 +840,13 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
 
             elif event_type == "assistant.usage":
                 model = event_data.get("model", "")
-                input_tokens = event_data.get("inputTokens", 0)
-                output_tokens = event_data.get("outputTokens", 0)
+                input_tokens = event_data.get("inputTokens") or 0
+                output_tokens = event_data.get("outputTokens") or 0
                 cost = event_data.get("cost")
                 duration = event_data.get("duration")
                 parts = [model] if model else []
                 if input_tokens or output_tokens:
-                    parts.append(f"{input_tokens:,} in → {output_tokens:,} out")
+                    parts.append(f"{int(input_tokens):,} in → {int(output_tokens):,} out")
                 if cost is not None:
                     parts.append(f"cost {cost}")
                 if duration is not None:
@@ -949,13 +949,9 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
 
         # Detect repository URL from session.start context or workspace path
         repository_url = None
-        if session_repository:
-            if host_type == "ado":
-                # ADO repos use "org/project/repo" format — no GitHub URL
-                repository_url = None
-            else:
-                repository_url = f"https://github.com/{session_repository}"
-        if not repository_url:
+        if session_repository and host_type != "ado":
+            repository_url = f"https://github.com/{session_repository}"
+        if not repository_url and host_type != "ado":
             repository_url = detect_repository_url(workspace_path)
 
         # Determine session title: prefer session.title_changed event, then workspace.yaml, then first intent
