@@ -2490,3 +2490,434 @@ class TestVSCodeRenderingAlignment:
         inv = _parse_tool_invocation_serialized(item)
         assert inv is not None
         assert inv.input == "/path/to/file.py"
+
+
+class TestCLIv105EventHandlers:
+    """Tests for CLI v1.0.5 scanner refresh: new events, new fields, expanded skip list."""
+
+    @staticmethod
+    def _make_events_jsonl(*events, start_data=None):
+        """Create JSONL string with session.start + given events.
+
+        Args:
+            *events: Event dicts to append after session.start.
+            start_data: Optional dict to merge into the session.start data.
+        """
+        import orjson
+
+        base_start = {
+            "sessionId": "test-session",
+            "startTime": "2026-01-01T00:00:00Z",
+        }
+        if start_data:
+            base_start.update(start_data)
+        lines = [orjson.dumps({"type": "session.start", "data": base_start}).decode()]
+        for evt in events:
+            lines.append(orjson.dumps(evt).decode())
+        return "\n".join(lines)
+
+    def _parse(self, tmp_path, *events, start_data=None):
+        """Write events to a temp file and parse them."""
+        from copilot_session_tools.scanner import _parse_cli_jsonl_file
+
+        f = tmp_path / "events.jsonl"
+        f.write_text(self._make_events_jsonl(*events, start_data=start_data), encoding="utf-8")
+        return _parse_cli_jsonl_file(f)
+
+    def _find_status_blocks(self, session, description=None):
+        """Return all status content blocks, optionally filtered by description."""
+        blocks = []
+        for msg in session.messages:
+            for cb in msg.content_blocks:
+                if cb.kind == "status" and (description is None or cb.description == description):
+                    blocks.append(cb)
+        return blocks
+
+    # ---- T1/T3: Skip list — ephemeral and internal events produce no output ----
+
+    @pytest.mark.parametrize(
+        "event_type",
+        [
+            "hook.start",
+            "hook.end",
+            "system.notification",
+            "assistant.message_delta",
+            "assistant.reasoning_delta",
+            "assistant.streaming_delta",
+            "assistant.intent",
+            "exit_plan_mode.requested",
+            "exit_plan_mode.completed",
+            "pending_messages.modified",
+            "session.background_tasks_changed",
+            "session.idle",
+            "session.import_legacy",
+            "session.snapshot_rewind",
+            "session.tools_updated",
+            "session.usage_info",
+            "tool.execution_partial_result",
+            "tool.execution_progress",
+            "subagent.selected",
+            "subagent.deselected",
+        ],
+    )
+    def test_skipped_events_produce_no_content(self, tmp_path, event_type):
+        """New skip-list events should produce no status blocks or content."""
+        session = self._parse(
+            tmp_path,
+            {"type": "user.message", "data": {"content": "Hello"}},
+            {"type": "assistant.message", "data": {"content": "Hi"}},
+            {"type": event_type, "data": {"some": "data"}},
+        )
+        assert session is not None
+        # Should have exactly user + assistant messages, no extra from skipped event
+        blocks = self._find_status_blocks(session)
+        # Skipped events should not generate status blocks
+        for b in blocks:
+            assert b.description != event_type, f"Skipped event {event_type} should not create a status block"
+
+    def test_hook_events_with_real_data_skipped(self, tmp_path):
+        """hook.start/end with realistic data should be silently skipped."""
+        session = self._parse(
+            tmp_path,
+            {"type": "user.message", "data": {"content": "Hello"}},
+            {"type": "assistant.message", "data": {"content": "Working..."}},
+            {
+                "type": "hook.start",
+                "data": {
+                    "hookInvocationId": "fe46353b-6596-40e5-9230-276a82390ca4",
+                    "hookType": "postToolUse",
+                    "input": {"toolName": "report_intent", "toolResult": {"resultType": "success"}},
+                },
+            },
+            {
+                "type": "hook.end",
+                "data": {
+                    "hookInvocationId": "fe46353b-6596-40e5-9230-276a82390ca4",
+                    "hookType": "postToolUse",
+                    "success": True,
+                },
+            },
+        )
+        assert session is not None
+        all_blocks = []
+        for msg in session.messages:
+            all_blocks.extend(msg.content_blocks)
+        # Only the text block from assistant.message, no hook-related blocks
+        status_blocks = [b for b in all_blocks if b.kind == "status"]
+        assert len(status_blocks) == 0
+
+    # ---- T7: session.title_changed ----
+
+    def test_title_changed_renders_status_block(self, tmp_path):
+        """session.title_changed should create a status block with the title."""
+        session = self._parse(
+            tmp_path,
+            {"type": "user.message", "data": {"content": "Fix the auth bug"}},
+            {"type": "assistant.message", "data": {"content": "On it."}},
+            {"type": "session.title_changed", "data": {"title": "Fix auth middleware bug"}},
+        )
+        blocks = self._find_status_blocks(session, "title-changed")
+        assert len(blocks) == 1
+        assert "Fix auth middleware bug" in blocks[0].content
+        assert "📝" in blocks[0].content
+
+    def test_title_changed_sets_custom_title(self, tmp_path):
+        """session.title_changed should override custom_title on the ChatSession."""
+        session = self._parse(
+            tmp_path,
+            {"type": "user.message", "data": {"content": "Help me"}},
+            {"type": "assistant.message", "data": {"content": "Sure."}},
+            {"type": "session.title_changed", "data": {"title": "Important Session Title"}},
+        )
+        assert session is not None
+        assert session.custom_title == "Important Session Title"
+
+    def test_title_changed_last_wins(self, tmp_path):
+        """If multiple session.title_changed events, the last one wins for custom_title."""
+        session = self._parse(
+            tmp_path,
+            {"type": "user.message", "data": {"content": "Help"}},
+            {"type": "assistant.message", "data": {"content": "Sure."}},
+            {"type": "session.title_changed", "data": {"title": "First Title"}},
+            {"type": "session.title_changed", "data": {"title": "Second Title"}},
+        )
+        assert session is not None
+        assert session.custom_title == "Second Title"
+        # Both should render as status blocks
+        blocks = self._find_status_blocks(session, "title-changed")
+        assert len(blocks) == 2
+
+    def test_title_changed_overrides_workspace_yaml(self, tmp_path):
+        """session.title_changed should take priority over workspace.yaml summary."""
+        import orjson
+
+        from copilot_session_tools.scanner import _parse_cli_jsonl_file
+
+        session_dir = tmp_path / "test-session"
+        session_dir.mkdir()
+        (session_dir / "workspace.yaml").write_text(
+            "id: test-id\ncwd: /home/user/project\nsummary: Workspace YAML Title\n",
+            encoding="utf-8",
+        )
+        events = [
+            {"type": "session.start", "data": {"sessionId": "test-session", "startTime": "2026-01-01T00:00:00Z"}},
+            {"type": "user.message", "data": {"content": "Help"}},
+            {"type": "assistant.message", "data": {"content": "Sure."}},
+            {"type": "session.title_changed", "data": {"title": "Event Title Wins"}},
+        ]
+        (session_dir / "events.jsonl").write_text("\n".join(orjson.dumps(e).decode() for e in events), encoding="utf-8")
+        session = _parse_cli_jsonl_file(session_dir / "events.jsonl")
+        assert session is not None
+        assert session.custom_title == "Event Title Wins"
+
+    def test_title_changed_empty_title_ignored(self, tmp_path):
+        """session.title_changed with empty title should not create a status block."""
+        session = self._parse(
+            tmp_path,
+            {"type": "user.message", "data": {"content": "Help"}},
+            {"type": "assistant.message", "data": {"content": "Sure."}},
+            {"type": "session.title_changed", "data": {"title": ""}},
+        )
+        blocks = self._find_status_blocks(session, "title-changed")
+        assert len(blocks) == 0
+
+    def test_title_changed_missing_title_ignored(self, tmp_path):
+        """session.title_changed with missing title field should not crash."""
+        session = self._parse(
+            tmp_path,
+            {"type": "user.message", "data": {"content": "Help"}},
+            {"type": "assistant.message", "data": {"content": "Sure."}},
+            {"type": "session.title_changed", "data": {}},
+        )
+        blocks = self._find_status_blocks(session, "title-changed")
+        assert len(blocks) == 0
+
+    # ---- T6: assistant.usage ----
+
+    def test_assistant_usage_renders_status_block(self, tmp_path):
+        """assistant.usage should render as a status block with token stats."""
+        session = self._parse(
+            tmp_path,
+            {"type": "user.message", "data": {"content": "Help"}},
+            {"type": "assistant.message", "data": {"content": "Sure."}},
+            {
+                "type": "assistant.usage",
+                "data": {
+                    "model": "claude-sonnet-4.5",
+                    "inputTokens": 1234,
+                    "outputTokens": 567,
+                    "cost": 2,
+                    "duration": 3200,
+                },
+            },
+        )
+        blocks = self._find_status_blocks(session, "usage")
+        assert len(blocks) == 1
+        assert "claude-sonnet-4.5" in blocks[0].content
+        assert "1,234 in" in blocks[0].content
+        assert "567 out" in blocks[0].content
+        assert "cost 2" in blocks[0].content
+        assert "3.2s" in blocks[0].content
+        assert "📊" in blocks[0].content
+
+    def test_assistant_usage_with_reasoning_effort(self, tmp_path):
+        """assistant.usage with reasoningEffort should include effort in display."""
+        session = self._parse(
+            tmp_path,
+            {"type": "user.message", "data": {"content": "Help"}},
+            {"type": "assistant.message", "data": {"content": "Thinking..."}},
+            {
+                "type": "assistant.usage",
+                "data": {
+                    "model": "claude-opus-4.6",
+                    "inputTokens": 5000,
+                    "outputTokens": 2000,
+                    "reasoningEffort": "high",
+                },
+            },
+        )
+        blocks = self._find_status_blocks(session, "usage")
+        assert len(blocks) == 1
+        assert "effort=high" in blocks[0].content
+
+    def test_assistant_usage_minimal_data(self, tmp_path):
+        """assistant.usage with only model should still render."""
+        session = self._parse(
+            tmp_path,
+            {"type": "user.message", "data": {"content": "Help"}},
+            {"type": "assistant.message", "data": {"content": "Sure."}},
+            {"type": "assistant.usage", "data": {"model": "gpt-5"}},
+        )
+        blocks = self._find_status_blocks(session, "usage")
+        assert len(blocks) == 1
+        assert "gpt-5" in blocks[0].content
+
+    def test_assistant_usage_empty_data(self, tmp_path):
+        """assistant.usage with empty data should not render."""
+        session = self._parse(
+            tmp_path,
+            {"type": "user.message", "data": {"content": "Help"}},
+            {"type": "assistant.message", "data": {"content": "Sure."}},
+            {"type": "assistant.usage", "data": {}},
+        )
+        blocks = self._find_status_blocks(session, "usage")
+        assert len(blocks) == 0
+
+    def test_assistant_usage_null_tokens(self, tmp_path):
+        """assistant.usage with null token fields should not crash."""
+        session = self._parse(
+            tmp_path,
+            {"type": "user.message", "data": {"content": "Help"}},
+            {"type": "assistant.message", "data": {"content": "Sure."}},
+            {
+                "type": "assistant.usage",
+                "data": {
+                    "model": "gpt-5",
+                    "inputTokens": None,
+                    "outputTokens": 100,
+                },
+            },
+        )
+        blocks = self._find_status_blocks(session, "usage")
+        assert len(blocks) == 1
+        assert "100 out" in blocks[0].content
+
+    # ---- T4: session.start context fields ----
+
+    def test_session_start_host_type_github(self, tmp_path):
+        """session.start with hostType=github should produce a github repo URL."""
+        session = self._parse(
+            tmp_path,
+            {"type": "user.message", "data": {"content": "Hello"}},
+            {"type": "assistant.message", "data": {"content": "Hi"}},
+            start_data={
+                "context": {"cwd": "/home/user/project", "hostType": "github", "repository": "owner/repo"},
+            },
+        )
+        assert session is not None
+        assert session.repository_url == "https://github.com/owner/repo"
+
+    def test_session_start_host_type_ado(self, tmp_path):
+        """session.start with hostType=ado should NOT generate any repository URL."""
+        session = self._parse(
+            tmp_path,
+            {"type": "user.message", "data": {"content": "Hello"}},
+            {"type": "assistant.message", "data": {"content": "Hi"}},
+            start_data={
+                "context": {"cwd": "/home/user/project", "hostType": "ado", "repository": "org/project/repo"},
+            },
+        )
+        assert session is not None
+        # ADO repos should not get any URL — no GitHub URL and no detect_repository_url fallback
+        assert session.repository_url is None
+
+    def test_session_start_without_host_type(self, tmp_path):
+        """session.start without hostType should default to github URL as before."""
+        session = self._parse(
+            tmp_path,
+            {"type": "user.message", "data": {"content": "Hello"}},
+            {"type": "assistant.message", "data": {"content": "Hi"}},
+            start_data={
+                "context": {"cwd": "/home/user/project", "repository": "owner/repo"},
+            },
+        )
+        assert session is not None
+        assert session.repository_url == "https://github.com/owner/repo"
+
+    # ---- T5: intentionSummary and toolTitle on toolRequests ----
+
+    def test_intention_summary_used_in_tool_display(self, tmp_path):
+        """intentionSummary from toolRequests should appear in the tool invocation display."""
+        session = self._parse(
+            tmp_path,
+            {"type": "user.message", "data": {"content": "Read the file"}},
+            {
+                "type": "assistant.message",
+                "data": {
+                    "content": "",
+                    "toolRequests": [
+                        {
+                            "toolCallId": "tc1",
+                            "name": "view",
+                            "arguments": {"path": "/home/user/project/src/auth.ts"},
+                            "intentionSummary": "view the auth middleware implementation",
+                        },
+                    ],
+                },
+            },
+            {
+                "type": "tool.execution_start",
+                "data": {"toolCallId": "tc1", "toolName": "view", "arguments": {"path": "/home/user/project/src/auth.ts"}},
+            },
+            {
+                "type": "tool.execution_complete",
+                "data": {"toolCallId": "tc1", "success": True, "result": {"content": "file contents"}},
+            },
+        )
+        assert session is not None
+        # Find the tool invocation content block
+        tool_blocks = []
+        for msg in session.messages:
+            for cb in msg.content_blocks:
+                if cb.kind == "toolInvocation":
+                    tool_blocks.append(cb)
+        assert len(tool_blocks) >= 1
+        # The intentionSummary should be used as the description
+        found = any("view the auth middleware" in (b.description or "") for b in tool_blocks)
+        assert found, f"intentionSummary should appear in tool block description. Got: {[(b.content, b.description) for b in tool_blocks]}"
+
+    def test_intention_summary_null_ignored(self, tmp_path):
+        """intentionSummary=null should not break or override normal display."""
+        session = self._parse(
+            tmp_path,
+            {"type": "user.message", "data": {"content": "Read"}},
+            {
+                "type": "assistant.message",
+                "data": {
+                    "content": "",
+                    "toolRequests": [
+                        {
+                            "toolCallId": "tc1",
+                            "name": "view",
+                            "arguments": {"path": "/src/file.py"},
+                            "intentionSummary": None,
+                        },
+                    ],
+                },
+            },
+            {"type": "tool.execution_start", "data": {"toolCallId": "tc1", "toolName": "view", "arguments": {"path": "/src/file.py"}}},
+            {"type": "tool.execution_complete", "data": {"toolCallId": "tc1", "success": True, "result": {"content": "ok"}}},
+        )
+        assert session is not None
+        # Should still render the tool, just without intentionSummary
+        tool_blocks = [cb for msg in session.messages for cb in msg.content_blocks if cb.kind == "toolInvocation"]
+        assert len(tool_blocks) >= 1
+
+    def test_tool_title_used_as_description_fallback(self, tmp_path):
+        """toolTitle from toolRequests should be used as description when intentionSummary is absent."""
+        session = self._parse(
+            tmp_path,
+            {"type": "user.message", "data": {"content": "Search"}},
+            {
+                "type": "assistant.message",
+                "data": {
+                    "content": "",
+                    "toolRequests": [
+                        {
+                            "toolCallId": "tc1",
+                            "name": "grep",
+                            "arguments": {"pattern": "TODO"},
+                            "toolTitle": "Search Code",
+                        },
+                    ],
+                },
+            },
+            {"type": "tool.execution_start", "data": {"toolCallId": "tc1", "toolName": "grep", "arguments": {"pattern": "TODO"}}},
+            {"type": "tool.execution_complete", "data": {"toolCallId": "tc1", "success": True, "result": {"content": "3 matches"}}},
+        )
+        assert session is not None
+        tool_blocks = [cb for msg in session.messages for cb in msg.content_blocks if cb.kind == "toolInvocation"]
+        assert len(tool_blocks) >= 1
+        # toolTitle should appear somewhere in the display
+        found = any("Search Code" in (b.description or "") or "Search Code" in b.content for b in tool_blocks)
+        assert found, f"toolTitle should appear in tool display. Got: {[(b.content, b.description) for b in tool_blocks]}"

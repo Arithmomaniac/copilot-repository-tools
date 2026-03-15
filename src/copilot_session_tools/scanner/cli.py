@@ -190,7 +190,7 @@ class _CliSessionBuilder:
                 source_type="mcp" if mcp_server_name else None,
             ), None
 
-    def add_tool_inline(self, tool_call_id: str, tool_name: str, arguments: dict) -> None:
+    def add_tool_inline(self, tool_call_id: str, tool_name: str, arguments: dict, *, intention_summary: str | None = None, tool_title: str | None = None) -> None:
         """Add a tool invocation inline in the current assistant message."""
         # Handle special meta-tools with pretty formatting
         if tool_name == "report_intent":
@@ -271,6 +271,9 @@ class _CliSessionBuilder:
 
         if cmd_run:
             # Add command run inline as a content block
+            # Use intentionSummary/toolTitle as title if available
+            if (intention_summary or tool_title) and not cmd_run.title:
+                cmd_run.title = intention_summary or tool_title
             cmd_display = cmd_run.title or cmd_run.command
             if len(cmd_display) > 60:
                 cmd_display = cmd_display[:57] + "..."
@@ -278,7 +281,7 @@ class _CliSessionBuilder:
                 ContentBlock(
                     kind="toolInvocation",
                     content=f"$ {cmd_run.command}" if cmd_run.command else cmd_display,
-                    description=cmd_run.title,
+                    description=intention_summary or tool_title or cmd_run.title,
                 )
             )
             self.current_assistant_command_runs.append(cmd_run)
@@ -290,11 +293,13 @@ class _CliSessionBuilder:
                 return
             # Add tool invocation inline as a content block
             display_text = tool_inv.invocation_message or tool_inv.name
+            # Use intentionSummary or toolTitle as enhanced description
+            enhanced_desc = intention_summary or tool_title or tool_inv.name
             self.current_assistant_content_blocks.append(
                 ContentBlock(
                     kind="toolInvocation",
                     content=display_text,
-                    description=tool_inv.name,
+                    description=enhanced_desc,
                 )
             )
             self.current_assistant_tool_invocations.append(tool_inv)
@@ -351,6 +356,7 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
         session_id = None
         created_at = None
         session_start_context: dict = {}
+        session_title_from_event: str | None = None
 
         for event in events:
             event_type = event.get("type", "")
@@ -596,7 +602,11 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                 if tool_name == "unknown" and req:
                     tool_name = req.get("name", tool_name)
 
-                builder.add_tool_inline(tool_call_id, tool_name, arguments)
+                # Extract intentionSummary/toolTitle from the tool request
+                intention_summary = req.get("intentionSummary") if req else None
+                tool_title = req.get("toolTitle") if req else None
+
+                builder.add_tool_inline(tool_call_id, tool_name, arguments, intention_summary=intention_summary, tool_title=tool_title)
 
             elif event_type == "abort":
                 # Session or turn was aborted - add as status block
@@ -822,6 +832,31 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                 if summary:
                     builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=summary, description="task-complete"))
 
+            elif event_type == "session.title_changed":
+                title = (event_data.get("title") or "").strip()
+                if title:
+                    session_title_from_event = title
+                    builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=f'📝 Session title: "{title}"', description="title-changed"))
+
+            elif event_type == "assistant.usage":
+                model = event_data.get("model", "")
+                input_tokens = event_data.get("inputTokens") or 0
+                output_tokens = event_data.get("outputTokens") or 0
+                cost = event_data.get("cost")
+                duration = event_data.get("duration")
+                parts = [model] if model else []
+                if input_tokens or output_tokens:
+                    parts.append(f"{int(input_tokens):,} in → {int(output_tokens):,} out")
+                if cost is not None:
+                    parts.append(f"cost {cost}")
+                if duration is not None:
+                    parts.append(f"{duration / 1000:.1f}s")
+                effort = event_data.get("reasoningEffort")
+                if effort:
+                    parts.append(f"effort={effort}")
+                if parts:
+                    builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content="📊 " + " · ".join(parts), description="usage"))
+
             elif event_type == "session.shutdown":
                 shutdown_type = event_data.get("shutdownType") or "unknown"
                 code_changes = event_data.get("codeChanges") or {}
@@ -866,6 +901,33 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                 "external_tool.completed",
                 "command.queued",
                 "command.completed",
+                # Hook lifecycle (noisy — results reflected in tool execution outcomes)
+                "hook.start",
+                "hook.end",
+                # Shell/task completion notifications (content duplicates tool results)
+                "system.notification",
+                # Streaming deltas (partial content, final is in assistant.message)
+                "assistant.message_delta",
+                "assistant.reasoning_delta",
+                "assistant.streaming_delta",
+                "assistant.intent",
+                # Plan mode lifecycle
+                "exit_plan_mode.requested",
+                "exit_plan_mode.completed",
+                # Internal state tracking
+                "pending_messages.modified",
+                "session.background_tasks_changed",
+                "session.idle",
+                "session.import_legacy",
+                "session.snapshot_rewind",
+                "session.tools_updated",
+                "session.usage_info",
+                # Streaming tool events (partial results, final is in tool.execution_complete)
+                "tool.execution_partial_result",
+                "tool.execution_progress",
+                # Agent selection (routing metadata)
+                "subagent.selected",
+                "subagent.deselected",
             ):
                 pass
 
@@ -882,18 +944,24 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
         # Get updated_at from last event timestamp
         updated_at = events[-1].get("timestamp") if events else None
 
+        # Extract additional context fields from session.start
+        host_type = session_start_context.get("hostType")  # "github" or "ado"
+
         # Detect repository URL from session.start context or workspace path
         repository_url = None
-        if session_repository:
+        if session_repository and host_type != "ado":
             repository_url = f"https://github.com/{session_repository}"
-        if not repository_url:
+        if not repository_url and host_type != "ado":
             repository_url = detect_repository_url(workspace_path)
 
-        # Determine session title: prefer workspace.yaml summary, fall back to first report_intent
+        # Determine session title: prefer session.title_changed event, then workspace.yaml, then first intent
         custom_title = None
-        workspace_meta = _parse_workspace_yaml(file_path.parent)
-        if workspace_meta.get("summary"):
-            custom_title = workspace_meta["summary"]
+        if session_title_from_event:
+            custom_title = session_title_from_event
+        if not custom_title:
+            workspace_meta = _parse_workspace_yaml(file_path.parent)
+            if workspace_meta.get("summary"):
+                custom_title = workspace_meta["summary"]
         if not custom_title:
             # Fall back to first report_intent content block
             for msg in messages:

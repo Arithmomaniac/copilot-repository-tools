@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] - 2026-03-15
+
+### Added
+
+- **Scanner**: Handle `session.title_changed` events — renders status block and sets session display title (highest priority over workspace.yaml and intent blocks)
+- **Scanner**: Handle `assistant.usage` events — renders per-API-call token stats (model, input/output tokens, cost, duration, reasoning effort)
+- **Scanner**: Extract `intentionSummary` and `toolTitle` from `assistant.message` tool requests for richer tool invocation display
+- **Scanner**: Extract `hostType`, `headCommit`, `baseCommit` from `session.start` context
+- **Scanner**: ADO sessions (`hostType=ado`) no longer receive incorrect GitHub repository URLs
+
+### Changed
+
+- **Scanner**: Expanded skip list with 22 new event types from CLI v1.0.5 schema (hooks, streaming deltas, plan mode lifecycle, agent selection, internal state tracking)
+
+### Fixed
+
+- **Scanner**: Guard against null token fields in `assistant.usage` events (prevents `TypeError` on nullable `Double` values from SDK)
+- **Scanner**: `toolTitle` now correctly used for shell command descriptions (was previously ignored in `cmd_run` branch)
+
 ## [0.6.0] - 2026-03-09
 
 ### Added
