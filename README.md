@@ -210,6 +210,8 @@ pip install copilot-session-tools[llm]
 
 **Web viewer integration:** Each user message shows a 🎙️ mic icon — gray (not cleaned), green (cleaned), or amber (showing original). Click to open a popover with toggle/revert/clean actions. Session-level cleanup and revert-all buttons are in the toolbar.
 
+![Transcript cleanup with Cleanup/Revert toolbar buttons](docs/screenshot-cleanup.png)
+
 ## Session Sources
 
 | Source | Format | Location |
