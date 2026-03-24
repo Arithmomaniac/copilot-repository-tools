@@ -693,8 +693,6 @@ def optimize_fts(conn: sqlite3.Connection) -> dict:
     # Also run integrity check
     cursor.execute("INSERT INTO cst_messages_fts(cst_messages_fts) VALUES('integrity-check')")
 
-    conn.commit()
-
     return {
         "segments_before": segments_before,
         "segments_after": segments_after,

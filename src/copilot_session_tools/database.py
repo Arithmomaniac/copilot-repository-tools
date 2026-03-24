@@ -108,8 +108,10 @@ class Database:
 
     def has_cst_tables(self) -> bool:
         """Check if cst_* extension tables exist in the database."""
+        if self.unenriched_only:
+            return False
         with self._get_connection() as conn:
-            return db_storage.has_cst_tables(conn, unenriched_only=self.unenriched_only)
+            return db_storage.has_cst_tables(conn)
 
     def discover_sessions_needing_enrichment(self) -> list[dict]:
         """Find CLI sessions needing enrichment by comparing built-in turns vs cst_messages."""
@@ -299,10 +301,11 @@ class Database:
         """
         from .db_retrieval import list_sessions
 
+        has_cst = self.has_cst_tables()
         with self._get_connection() as conn:
             return list_sessions(
                 conn,
-                has_cst=self.has_cst_tables(),
+                has_cst=has_cst,
                 workspace_name=workspace_name,
                 limit=limit,
                 offset=offset,
@@ -413,8 +416,9 @@ class Database:
         """Get database statistics."""
         from .db_retrieval import get_stats
 
+        has_cst = self.has_cst_tables()
         with self._get_connection() as conn:
-            return get_stats(conn, has_cst=self.has_cst_tables())
+            return get_stats(conn, has_cst=has_cst)
 
     def export_json(self) -> str:
         """Export all data as JSON."""
