@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.4] - 2026-03-24
+
+### Changed
+
+- **Architecture**: Split `database.py` monolith (2433L) into four focused modules aligned with pipeline stages:
+  - `db_search.py` (767L) — FTS5 search, query parsing, result merging
+  - `db_retrieval.py` (700L) — session reconstruction, listing, analytics, builtin accessors
+  - `db_storage.py` (760L) — schema, ingestion, enrichment, discovery, cleanup
+  - `database.py` (515L) — thin facade preserving full backward compatibility
+- **Architecture**: Added `db_schema.py` — centralized column-name constants and dataclass↔SQL mapping helpers (`session_to_row`, `row_to_tool`, etc.) closing the schema gap between `models.py` and SQL
+- **Architecture**: Decomposed `refresh.py` — extracted `_parse_files_parallel()`, `_classify_and_batch_write()`, `_enrich_session_batch()` from duplicated logic in `run_refresh()` and `run_enrichment()`
+
 ## [0.6.3] - 2026-03-23
 
 ### Changed
