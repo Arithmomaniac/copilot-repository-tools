@@ -60,6 +60,120 @@ class EnrichResult:
     orphaned: int
 
 
+def _parse_files_parallel(files: list[SessionFileInfo]) -> list[list]:
+    """Parse session files in parallel using a thread pool.
+
+    Args:
+        files: List of session file info objects to parse.
+
+    Returns:
+        List of parse results (each is a list of ChatSession objects).
+    """
+    if not files:
+        return []
+    with ThreadPoolExecutor(max_workers=PARSE_WORKERS) as executor:
+        return list(executor.map(parse_session_file, files))
+
+
+def _classify_and_batch_write(
+    database: Database,
+    parse_results: list[list],
+    existing_ids: set[str] | None,
+    on_progress: ProgressCallback | None = None,
+) -> tuple[int, int]:
+    """Classify parsed sessions as new/existing and batch-write to the database.
+
+    Args:
+        database: Open Database to write into.
+        parse_results: Nested list of parsed ChatSession objects.
+        existing_ids: Set of known session IDs (used for classification).
+            If None, each session is checked individually via database.get_session().
+        on_progress: Optional callback for add/update events.
+
+    Returns:
+        Tuple of (added_count, updated_count).
+    """
+    sessions_to_add = []
+    sessions_to_update = []
+
+    for sessions in parse_results:
+        for chat_session in sessions:
+            if existing_ids is not None:
+                is_existing = chat_session.session_id in existing_ids
+            else:
+                is_existing = database.get_session(chat_session.session_id) is not None
+            if is_existing:
+                sessions_to_update.append(chat_session)
+            else:
+                sessions_to_add.append(chat_session)
+
+    added = 0
+    if sessions_to_add:
+        batch_added, _batch_skipped = database.add_sessions_batch(sessions_to_add)
+        added += batch_added
+        if on_progress:
+            for s in sessions_to_add:
+                on_progress("added", s)
+
+    updated = 0
+    if sessions_to_update:
+        updated += database.update_sessions_batch(sessions_to_update)
+        if on_progress:
+            for s in sessions_to_update:
+                on_progress("updated", s)
+
+    return added, updated
+
+
+def _enrich_session_batch(
+    database: Database,
+    entries: list[dict],
+    *,
+    success_event: str,
+    stamp_version_on_failure: bool = True,
+    on_progress: ProgressCallback | None = None,
+    skip_ids: set[str] | None = None,
+) -> tuple[int, int]:
+    """Enrich a batch of sessions, handling errors and version stamping.
+
+    Shared loop body for the three enrichment phases (discovery, reparse,
+    version-refresh).
+
+    Args:
+        database: Open Database.
+        entries: List of dicts with at least a 'session_id' key.
+        success_event: Event name for on_progress on success (e.g. "enriched", "reparsed").
+        stamp_version_on_failure: If True, stamp enrichment_version on failure.
+        on_progress: Optional progress callback.
+        skip_ids: Session IDs to skip (already processed in a prior phase).
+
+    Returns:
+        Tuple of (success_count, failed_count).
+    """
+    from copilot_session_tools import __version__
+
+    success = 0
+    failed = 0
+
+    for entry in entries:
+        sid = entry["session_id"]
+        if skip_ids and sid in skip_ids:
+            continue
+        error = enrich_single_session(database, sid, validate=False)
+        if error is None:
+            success += 1
+            if on_progress:
+                on_progress(success_event, sid)
+        else:
+            if stamp_version_on_failure:
+                database.update_enrichment_version(sid, __version__)
+            failed += 1
+            if on_progress:
+                on_progress("enrich_failed", error)
+
+    return success, failed
+
+
 def run_refresh(
     database: Database,
     storage_paths: list[tuple[str, str]] | None,
@@ -90,38 +204,18 @@ def run_refresh(
     skipped = 0
 
     if full:
-        # Full mode: parse every discovered session file and upsert.
-        # Use the same parallel parsing and batch DB ops as incremental mode.
         all_files = list(scan_session_files(storage_paths, include_cli=False))
-
         if all_files:
-            with ThreadPoolExecutor(max_workers=PARSE_WORKERS) as executor:
-                parse_results = list(executor.map(parse_session_file, all_files))
-
-            # Load existing session IDs upfront to avoid per-session DB lookups
+            parse_results = _parse_files_parallel(all_files)
             existing_ids = set(database.get_all_session_ids())
-
-            sessions_to_add = []
-            sessions_to_update = []
-            for sessions in parse_results:
-                for chat_session in sessions:
-                    if chat_session.session_id in existing_ids:
-                        sessions_to_update.append(chat_session)
-                    else:
-                        sessions_to_add.append(chat_session)
-
-            if sessions_to_add:
-                batch_added, _batch_skipped = database.add_sessions_batch(sessions_to_add)
-                added += batch_added
-                if on_progress:
-                    for s in sessions_to_add:
-                        on_progress("added", s)
-
-            if sessions_to_update:
-                updated += database.update_sessions_batch(sessions_to_update)
-                if on_progress:
-                    for s in sessions_to_update:
-                        on_progress("updated", s)
+            batch_added, batch_updated = _classify_and_batch_write(
+                database,
+                parse_results,
+                existing_ids,
+                on_progress,
+            )
+            added += batch_added
+            updated += batch_updated
     else:
         # Incremental mode: load all stored file metadata upfront so we can
         # skip unchanged files without hitting the DB once per file.
@@ -144,31 +238,16 @@ def run_refresh(
                     on_progress("skipped", file_info)
 
         if files_to_update:
-            with ThreadPoolExecutor(max_workers=PARSE_WORKERS) as executor:
-                parse_results = list(executor.map(parse_session_file, files_to_update))
-
-            sessions_to_add = []
-            sessions_to_update = []
-
-            for sessions in parse_results:
-                for chat_session in sessions:
-                    if database.get_session(chat_session.session_id):
-                        sessions_to_update.append(chat_session)
-                    else:
-                        sessions_to_add.append(chat_session)
-
-            if sessions_to_add:
-                batch_added, _batch_skipped = database.add_sessions_batch(sessions_to_add)
-                added += batch_added
-                if on_progress:
-                    for chat_session in sessions_to_add:
-                        on_progress("added", chat_session)
-
-            if sessions_to_update:
-                updated += database.update_sessions_batch(sessions_to_update)
-                if on_progress:
-                    for chat_session in sessions_to_update:
-                        on_progress("updated", chat_session)
+            parse_results = _parse_files_parallel(files_to_update)
+            # No pre-loaded existing_ids — check each session individually
+            batch_added, batch_updated = _classify_and_batch_write(
+                database,
+                parse_results,
+                None,
+                on_progress,
+            )
+            added += batch_added
+            updated += batch_updated
 
     return RefreshResult(added=added, updated=updated, skipped=skipped, mode=RefreshMode.FULL if full else RefreshMode.INCREMENTAL)
 
@@ -194,92 +273,68 @@ def run_enrichment(
         An :class:`EnrichResult` with ``enriched``, ``reparsed``,
         ``failed``, and ``orphaned`` counts.
     """
+    from copilot_session_tools import __version__
+
     enriched = 0
     reparsed = 0
     failed = 0
 
-    from copilot_session_tools import __version__
-
-    # Discover sessions needing enrichment (new or stale)
+    # Phase 1: Discover sessions needing enrichment (new or stale)
     try:
         needing_enrichment = database.discover_sessions_needing_enrichment()
     except Exception:
         needing_enrichment = []  # Built-in sessions table may not exist
 
-    for entry in needing_enrichment:
-        sid = entry["session_id"]
-        error = enrich_single_session(database, sid, validate=False)
-        if error is None:
-            enriched += 1
-            if on_progress:
-                on_progress("enriched", sid)
-        else:
-            # Source file gone or unparseable — stamp version so session
-            # stops appearing in "needs enrichment" queries.
-            database.update_enrichment_version(sid, __version__)
-            failed += 1
-            if on_progress:
-                on_progress("enrich_failed", error)
+    phase1_ok, phase1_fail = _enrich_session_batch(
+        database,
+        needing_enrichment,
+        success_event="enriched",
+        on_progress=on_progress,
+    )
+    enriched += phase1_ok
+    failed += phase1_fail
 
-    # Reparse sessions with outdated parser version
+    # Phase 2: Reparse sessions with outdated parser version
     try:
         needing_reparse = database.get_sessions_needing_reparse(PARSER_VERSION)
     except Exception:
         needing_reparse = []
 
-    for entry in needing_reparse:
-        sid = entry["session_id"]
-        error = enrich_single_session(database, sid, validate=False)
-        if error is None:
-            reparsed += 1
-            if on_progress:
-                on_progress("reparsed", sid)
-        else:
-            # Source gone — stamp version so it stops reappearing
-            database.update_enrichment_version(sid, __version__)
-            failed += 1
-            if on_progress:
-                on_progress("enrich_failed", error)
+    already_processed = {e["session_id"] for e in needing_enrichment}
+    phase2_ok, phase2_fail = _enrich_session_batch(
+        database,
+        needing_reparse,
+        success_event="reparsed",
+        on_progress=on_progress,
+        skip_ids=already_processed,
+    )
+    reparsed += phase2_ok
+    failed += phase2_fail
 
-    # Re-enrich sessions with outdated enrichment_version
-
+    # Phase 3: Re-enrich sessions with outdated enrichment_version
     try:
         needing_version_refresh = database.get_sessions_needing_version_refresh(__version__)
     except Exception:
         needing_version_refresh = []
 
-    already_processed = {e["session_id"] for e in needing_enrichment} | {e["session_id"] for e in needing_reparse}
-    vscode_version_stale = 0
+    already_processed |= {e["session_id"] for e in needing_reparse}
+
+    # CLI sessions get re-enriched; VS Code sessions just get version-stamped
+    cli_entries = [e for e in needing_version_refresh if e.get("type", "") == "cli" and e["session_id"] not in already_processed]
+    phase3_ok, phase3_fail = _enrich_session_batch(
+        database,
+        cli_entries,
+        success_event="reparsed",
+        on_progress=on_progress,
+    )
+    reparsed += phase3_ok
+    failed += phase3_fail
+
+    # VS Code sessions: just stamp the version so the banner clears
     for entry in needing_version_refresh:
         sid = entry["session_id"]
-        if sid in already_processed:
-            continue
-        session_type = entry.get("type", "")
-        if session_type == "cli":
-            # CLI sessions: re-enrich from events.jsonl (may extract more data)
-            error = enrich_single_session(database, sid, validate=False)
-            if error is None:
-                reparsed += 1
-                if on_progress:
-                    on_progress("reparsed", sid)
-            else:
-                # Source file gone or unparseable — stamp version anyway so
-                # the "needs refresh" banner clears. The session data is
-                # already in cst_* tables from the original enrichment.
-                database.update_enrichment_version(sid, __version__)
-                failed += 1
-                if on_progress:
-                    on_progress("enrich_failed", error)
-        else:
-            # VS Code sessions: re-parsed via run_refresh(), which now stamps
-            # enrichment_version. Just stamp the version here so the banner
-            # clears. A full rebuild (run_refresh(full=True)) will re-parse
-            # source files if the parser actually changed.
+        if sid not in already_processed and entry.get("type", "") != "cli":
             database.update_enrichment_version(sid, __version__)
-            vscode_version_stale += 1
-
-    # vscode_version_stale are not truly reparsed — just version-stamped.
-    # Don't inflate reparsed count.
 
     # Cleanup orphaned cst_sessions
     try:
