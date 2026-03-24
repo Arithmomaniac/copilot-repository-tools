@@ -12,6 +12,19 @@ import json
 import sqlite3
 from datetime import UTC, datetime
 
+from .db_schema import (
+    CST_COMMAND_RUN_COLUMNS,
+    CST_CONTENT_BLOCK_COLUMNS,
+    CST_FILE_CHANGE_COLUMNS,
+    CST_MESSAGE_COLUMNS,
+    CST_SESSION_COLUMNS,
+    CST_TOOL_INVOCATION_COLUMNS,
+    command_to_row,
+    file_change_to_row,
+    insert_sql,
+    session_to_row,
+    tool_to_row,
+)
 from .markdown_exporter import message_to_markdown
 from .scanner import ChatSession, ContentBlock
 
@@ -358,33 +371,8 @@ def add_session_impl(cursor: sqlite3.Cursor, session: ChatSession) -> None:
 
     # Insert into cst_sessions table
     cursor.execute(
-        """
-        INSERT INTO cst_sessions 
-        (session_id, workspace_name, workspace_path, created_at, updated_at, 
-         source_file, vscode_edition, custom_title, requester_username, responder_username,
-         source_file_mtime, source_file_size, type, repository_url,
-         parser_version, source_format, enrichment_version)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            session.session_id,
-            session.workspace_name,
-            session.workspace_path,
-            session.created_at,
-            session.updated_at,
-            session.source_file,
-            session.vscode_edition,
-            session.custom_title,
-            session.requester_username,
-            session.responder_username,
-            session.source_file_mtime,
-            session.source_file_size,
-            session.type,
-            session.repository_url,
-            session.parser_version,
-            session.source_format,
-            __version__,
-        ),
+        insert_sql("cst_sessions", CST_SESSION_COLUMNS),
+        session_to_row(session, enrichment_version=__version__),
     )
 
     # Insert messages and related data
@@ -397,12 +385,7 @@ def add_session_impl(cursor: sqlite3.Cursor, session: ChatSession) -> None:
         )
 
         cursor.execute(
-            """
-            INSERT INTO cst_messages 
-            (session_id, message_index, role, content, timestamp, cached_markdown,
-             agent_id, agent_display_name, agent_nesting_level)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
+            insert_sql("cst_messages", CST_MESSAGE_COLUMNS),
             (
                 session.session_id,
                 idx,
@@ -420,72 +403,29 @@ def add_session_impl(cursor: sqlite3.Cursor, session: ChatSession) -> None:
         # Insert tool invocations
         for tool in msg.tool_invocations:
             cursor.execute(
-                """
-                INSERT INTO cst_tool_invocations
-                (message_id, name, input, result, status, start_time, end_time,
-                 source_type, invocation_message, subagent_invocation_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    message_id,
-                    tool.name,
-                    tool.input,
-                    tool.result,
-                    tool.status,
-                    tool.start_time,
-                    tool.end_time,
-                    tool.source_type,
-                    tool.invocation_message,
-                    tool.subagent_invocation_id,
-                ),
+                insert_sql("cst_tool_invocations", CST_TOOL_INVOCATION_COLUMNS),
+                tool_to_row(message_id, tool),
             )
 
         # Insert file changes
         for change in msg.file_changes:
             cursor.execute(
-                """
-                INSERT INTO cst_file_changes
-                (message_id, path, diff, content, explanation, language_id)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    message_id,
-                    change.path,
-                    change.diff,
-                    change.content,
-                    change.explanation,
-                    change.language_id,
-                ),
+                insert_sql("cst_file_changes", CST_FILE_CHANGE_COLUMNS),
+                file_change_to_row(message_id, change),
             )
 
         # Insert command runs
         for cmd in msg.command_runs:
             cursor.execute(
-                """
-                INSERT INTO cst_command_runs
-                (message_id, command, title, result, status, output, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    message_id,
-                    cmd.command,
-                    cmd.title,
-                    cmd.result,
-                    cmd.status,
-                    cmd.output,
-                    cmd.timestamp,
-                ),
+                insert_sql("cst_command_runs", CST_COMMAND_RUN_COLUMNS),
+                command_to_row(message_id, cmd),
             )
 
         # Insert content blocks
         for block_idx, block in enumerate(msg.content_blocks):
             nested_data = _serialize_nested_data(block) if block.kind in ("subagent", "subagent_failed", "subagent_incomplete") else None
             cursor.execute(
-                """
-                INSERT INTO cst_content_blocks
-                (message_id, block_index, kind, content, description, nested_data)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
+                insert_sql("cst_content_blocks", CST_CONTENT_BLOCK_COLUMNS),
                 (
                     message_id,
                     block_idx,
@@ -726,33 +666,8 @@ def enrich_session(conn: sqlite3.Connection, session: ChatSession) -> None:
 
     # Insert session
     cursor.execute(
-        """
-        INSERT INTO cst_sessions
-        (session_id, workspace_name, workspace_path, created_at, updated_at,
-         source_file, vscode_edition, custom_title, requester_username, responder_username,
-         source_file_mtime, source_file_size, type, repository_url,
-         parser_version, source_format, enrichment_version)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            session.session_id,
-            session.workspace_name,
-            session.workspace_path,
-            session.created_at,
-            session.updated_at or enriched_at,
-            session.source_file,
-            session.vscode_edition,
-            session.custom_title,
-            session.requester_username,
-            session.responder_username,
-            session.source_file_mtime,
-            session.source_file_size,
-            session.type,
-            session.repository_url,
-            session.parser_version,
-            session.source_format,
-            __version__,
-        ),
+        insert_sql("cst_sessions", CST_SESSION_COLUMNS),
+        session_to_row(session, enrichment_version=__version__, updated_at_fallback=enriched_at),
     )
 
     # Insert messages and related data
@@ -765,12 +680,7 @@ def enrich_session(conn: sqlite3.Connection, session: ChatSession) -> None:
         )
 
         cursor.execute(
-            """
-            INSERT INTO cst_messages
-            (session_id, message_index, role, content, timestamp, cached_markdown,
-             agent_id, agent_display_name, agent_nesting_level)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
+            insert_sql("cst_messages", CST_MESSAGE_COLUMNS),
             (
                 session.session_id,
                 idx,
@@ -789,72 +699,29 @@ def enrich_session(conn: sqlite3.Connection, session: ChatSession) -> None:
         for block_idx, block in enumerate(msg.content_blocks):
             nested_data = _serialize_nested_data(block) if block.kind in ("subagent", "subagent_failed", "subagent_incomplete") else None
             cursor.execute(
-                """
-                INSERT INTO cst_content_blocks
-                (message_id, block_index, kind, content, description, nested_data)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
+                insert_sql("cst_content_blocks", CST_CONTENT_BLOCK_COLUMNS),
                 (message_id, block_idx, block.kind, block.content, block.description, nested_data),
             )
 
         # Insert tool invocations
         for tool in msg.tool_invocations:
             cursor.execute(
-                """
-                INSERT INTO cst_tool_invocations
-                (message_id, name, input, result, status, start_time, end_time,
-                 source_type, invocation_message, subagent_invocation_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    message_id,
-                    tool.name,
-                    tool.input,
-                    tool.result,
-                    tool.status,
-                    tool.start_time,
-                    tool.end_time,
-                    tool.source_type,
-                    tool.invocation_message,
-                    tool.subagent_invocation_id,
-                ),
+                insert_sql("cst_tool_invocations", CST_TOOL_INVOCATION_COLUMNS),
+                tool_to_row(message_id, tool),
             )
 
         # Insert command runs
         for cmd in msg.command_runs:
             cursor.execute(
-                """
-                INSERT INTO cst_command_runs
-                (message_id, command, title, result, status, output, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    message_id,
-                    cmd.command,
-                    cmd.title,
-                    cmd.result,
-                    cmd.status,
-                    cmd.output,
-                    cmd.timestamp,
-                ),
+                insert_sql("cst_command_runs", CST_COMMAND_RUN_COLUMNS),
+                command_to_row(message_id, cmd),
             )
 
         # Insert file changes
         for change in msg.file_changes:
             cursor.execute(
-                """
-                INSERT INTO cst_file_changes
-                (message_id, path, diff, content, explanation, language_id)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    message_id,
-                    change.path,
-                    change.diff,
-                    change.content,
-                    change.explanation,
-                    change.language_id,
-                ),
+                insert_sql("cst_file_changes", CST_FILE_CHANGE_COLUMNS),
+                file_change_to_row(message_id, change),
             )
 
 

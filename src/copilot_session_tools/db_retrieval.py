@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import sqlite3
 
+from .db_schema import row_to_command, row_to_file_change, row_to_tool
 from .markdown_exporter import message_to_markdown
 from .scanner import (
     ChatMessage,
@@ -67,49 +68,15 @@ def reconstruct_message(cursor: sqlite3.Cursor, message_id: int, msg_row: sqlite
     """
     # Query tool_invocations for this message
     cursor.execute("SELECT * FROM cst_tool_invocations WHERE message_id = ?", (message_id,))
-    tool_invocations = []
-    for t in cursor.fetchall():
-        t_keys = t.keys()
-        tool_invocations.append(
-            ToolInvocation(
-                name=t["name"],
-                input=t["input"],
-                result=t["result"],
-                status=t["status"],
-                start_time=t["start_time"],
-                end_time=t["end_time"],
-                source_type=t["source_type"] if "source_type" in t_keys else None,
-                invocation_message=t["invocation_message"] if "invocation_message" in t_keys else None,
-                subagent_invocation_id=t["subagent_invocation_id"] if "subagent_invocation_id" in t_keys else None,
-            )
-        )
+    tool_invocations = [row_to_tool(t) for t in cursor.fetchall()]
 
     # Query file_changes
     cursor.execute("SELECT * FROM cst_file_changes WHERE message_id = ?", (message_id,))
-    file_changes = [
-        FileChange(
-            path=f["path"],
-            diff=f["diff"],
-            content=f["content"],
-            explanation=f["explanation"],
-            language_id=f["language_id"],
-        )
-        for f in cursor.fetchall()
-    ]
+    file_changes = [row_to_file_change(f) for f in cursor.fetchall()]
 
     # Query command_runs
     cursor.execute("SELECT * FROM cst_command_runs WHERE message_id = ?", (message_id,))
-    command_runs = [
-        CommandRun(
-            command=c["command"],
-            title=c["title"],
-            result=c["result"],
-            status=c["status"],
-            output=c["output"],
-            timestamp=c["timestamp"],
-        )
-        for c in cursor.fetchall()
-    ]
+    command_runs = [row_to_command(c) for c in cursor.fetchall()]
 
     # Query content_blocks
     cursor.execute("SELECT * FROM cst_content_blocks WHERE message_id = ? ORDER BY block_index", (message_id,))
