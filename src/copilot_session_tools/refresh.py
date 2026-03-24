@@ -130,7 +130,7 @@ def _enrich_session_batch(
     entries: list[dict],
     *,
     success_event: str,
-    stamp_version_on_failure: bool = True,
+    stamp_version_on_failure: bool = False,
     on_progress: ProgressCallback | None = None,
     skip_ids: set[str] | None = None,
 ) -> tuple[int, int]:
@@ -143,7 +143,8 @@ def _enrich_session_batch(
         database: Open Database.
         entries: List of dicts with at least a 'session_id' key.
         success_event: Event name for on_progress on success (e.g. "enriched", "reparsed").
-        stamp_version_on_failure: If True, stamp enrichment_version on failure.
+        stamp_version_on_failure: If True, stamp enrichment_version even on failure
+            (defaults to False so failed sessions remain retryable).
         on_progress: Optional progress callback.
         skip_ids: Session IDs to skip (already processed in a prior phase).
 
