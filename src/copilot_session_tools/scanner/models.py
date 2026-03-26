@@ -58,16 +58,19 @@ class ContentBlock:
     Each block has a kind (e.g., 'text', 'thinking', 'tool') and content.
     This allows differentiation between thinking/reasoning and regular output.
 
-    For subagent blocks (kind='subagent'), the interior can be rendered using
-    the structured fields (content_blocks, tool_invocations, etc.) with the
-    same rendering pipeline as the outer message. The 'content' field serves
-    as a markdown fallback for legacy data.
+    For subagent blocks (kind='subagent'), use child_message to access the
+    structured child ChatMessage containing content_blocks, tool_invocations,
+    etc. The 'content' field serves as a markdown fallback for legacy data.
+
+    Deprecated fields (use child_message instead):
+        content_blocks, tool_invocations, file_changes, command_runs
     """
 
     kind: str  # 'text', 'thinking', 'tool', 'promptFile', etc.
     content: str
     description: str | None = None  # Optional description (e.g., generatedTitle for thinking blocks)
-    # Structured sub-content for subagent blocks (recursive rendering)
+    child_message: "ChatMessage | None" = None  # For subagent blocks: the child message containing structured data
+    # Deprecated: use child_message instead. Kept for backward compatibility.
     content_blocks: list["ContentBlock"] = field(default_factory=list)
     tool_invocations: list[ToolInvocation] = field(default_factory=list)
     file_changes: list[FileChange] = field(default_factory=list)
@@ -92,8 +95,10 @@ class ChatMessage:
     agent_id: str | None = None  # toolCallId linking to parent task tool invocation
     agent_display_name: str | None = None  # "General Purpose Agent", "Explore Agent", etc.
     agent_nesting_level: int = 0  # 0=top-level, 1=inside agent, 2=nested agent, etc.
+    child_index: int | None = None  # Sibling ordering within parent (None for top-level messages)
     original_content: str | None = None  # Pre-cleanup content (None = not cleaned)
     cleanup_model: str | None = None  # LLM model used for cleanup
+    children: list["ChatMessage"] = field(default_factory=list)  # Child subagent messages
 
 
 @dataclass

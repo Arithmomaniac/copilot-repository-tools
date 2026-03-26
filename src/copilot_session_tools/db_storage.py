@@ -7,8 +7,6 @@ objects so they can be used both from the ``Database`` façade and from
 standalone tooling.
 """
 
-import contextlib
-import json
 import sqlite3
 from datetime import UTC, datetime
 
@@ -26,29 +24,9 @@ from .db_schema import (
     tool_to_row,
 )
 from .markdown_exporter import message_to_markdown
-from .scanner import ChatSession, ContentBlock
+from .scanner import ChatSession
 
-CST_SCHEMA_VERSION = 5
-
-
-def _serialize_nested_data(block: ContentBlock) -> str | None:
-    """Serialize a subagent ContentBlock's structured sub-content to JSON."""
-    if not (block.content_blocks or block.tool_invocations or block.file_changes or block.command_runs):
-        return None
-    from dataclasses import asdict
-
-    data: dict = {}
-    if block.content_blocks:
-        # Only serialize the fields deserialization actually uses (kind, content, description)
-        # to avoid silent data loss from asdict's deep recursion on nested ContentBlocks
-        data["content_blocks"] = [{"kind": cb.kind, "content": cb.content, "description": cb.description} for cb in block.content_blocks]
-    if block.tool_invocations:
-        data["tool_invocations"] = [{k: v for k, v in asdict(t).items() if v is not None} for t in block.tool_invocations]
-    if block.file_changes:
-        data["file_changes"] = [{k: v for k, v in asdict(f).items() if v is not None} for f in block.file_changes]
-    if block.command_runs:
-        data["command_runs"] = [{k: v for k, v in asdict(c).items() if v is not None} for c in block.command_runs]
-    return json.dumps(data)
+CST_SCHEMA_VERSION = 6
 
 
 CST_SCHEMA = """
@@ -88,9 +66,12 @@ CREATE TABLE IF NOT EXISTS cst_messages (
     agent_display_name TEXT,
     agent_nesting_level INTEGER DEFAULT 0,
     original_content TEXT,
-    cleanup_model TEXT
+    cleanup_model TEXT,
+    parent_message_id INTEGER REFERENCES cst_messages(id) ON DELETE CASCADE,
+    child_index INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_cst_messages_session ON cst_messages(session_id);
+CREATE INDEX IF NOT EXISTS idx_cst_messages_parent ON cst_messages(parent_message_id);
 
 CREATE TABLE IF NOT EXISTS cst_tool_invocations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -137,9 +118,53 @@ CREATE TABLE IF NOT EXISTS cst_content_blocks (
     kind TEXT NOT NULL DEFAULT 'text',
     content TEXT,
     description TEXT,
-    nested_data TEXT
+    child_message_id INTEGER REFERENCES cst_messages(id) ON DELETE SET NULL
 );
 CREATE INDEX IF NOT EXISTS idx_cst_content_blocks_message ON cst_content_blocks(message_id);
+
+CREATE VIEW IF NOT EXISTS cst_messages_tree AS
+SELECT
+    m.id,
+    m.session_id,
+    m.message_index,
+    m.role,
+    m.agent_display_name,
+    m.agent_nesting_level,
+    m.parent_message_id,
+    m.child_index,
+    pm.agent_display_name as parent_agent_name,
+    pm.message_index as parent_message_index
+FROM cst_messages m
+LEFT JOIN cst_messages pm ON m.parent_message_id = pm.id;
+
+CREATE VIEW IF NOT EXISTS cst_all_tool_invocations AS
+SELECT
+    t.id as tool_id,
+    t.name,
+    t.input,
+    t.result,
+    t.status,
+    t.invocation_message,
+    m.id as message_id,
+    m.session_id,
+    m.agent_display_name,
+    m.agent_nesting_level,
+    m.parent_message_id
+FROM cst_tool_invocations t
+JOIN cst_messages m ON t.message_id = m.id;
+
+CREATE VIEW IF NOT EXISTS cst_subagent_summary AS
+SELECT
+    m.id as message_id,
+    m.session_id,
+    m.agent_display_name,
+    m.parent_message_id,
+    (SELECT COUNT(*) FROM cst_tool_invocations t WHERE t.message_id = m.id) as tool_count,
+    (SELECT COUNT(*) FROM cst_file_changes f WHERE f.message_id = m.id) as file_change_count,
+    (SELECT COUNT(*) FROM cst_command_runs c WHERE c.message_id = m.id) as command_count,
+    (SELECT COUNT(*) FROM cst_content_blocks cb WHERE cb.message_id = m.id) as content_block_count
+FROM cst_messages m
+WHERE m.parent_message_id IS NOT NULL;
 """
 
 CST_FTS_SCHEMA = """
@@ -172,6 +197,38 @@ END;
 # ---------------------------------------------------------------------------
 
 
+def _drop_and_recreate_cst_tables(conn: sqlite3.Connection) -> None:
+    """Drop and recreate all cst_* tables for major schema migrations.
+
+    This is safe because cst_* tables are derived from source session files
+    and will be re-populated during the next enrichment pass.
+    """
+    cursor = conn.cursor()
+    # Drop views before tables
+    for view in ["cst_messages_tree", "cst_all_tool_invocations", "cst_subagent_summary"]:
+        cursor.execute(f"DROP VIEW IF EXISTS {view}")
+    # Drop in reverse dependency order
+    for table in [
+        "cst_messages_fts",  # Virtual table
+        "cst_content_blocks",
+        "cst_command_runs",
+        "cst_file_changes",
+        "cst_tool_invocations",
+        "cst_messages",
+        "cst_sessions",
+        "cst_schema_version",
+    ]:
+        cursor.execute(f"DROP TABLE IF EXISTS {table}")
+    # Drop triggers (they reference tables that no longer exist)
+    for trigger in ["cst_messages_ai", "cst_messages_ad", "cst_messages_au"]:
+        cursor.execute(f"DROP TRIGGER IF EXISTS {trigger}")
+    # Recreate with new schema
+    conn.executescript(CST_SCHEMA)
+    conn.executescript(CST_FTS_SCHEMA)
+    # Insert fresh schema version
+    cursor.execute("INSERT INTO cst_schema_version (version) VALUES (?)", (CST_SCHEMA_VERSION,))
+
+
 def ensure_schema(conn: sqlite3.Connection) -> None:
     """Ensure the cst_* schema exists in the database.
 
@@ -180,58 +237,43 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     """
     cursor = conn.cursor()
 
-    # Create cst_* tables
+    # Check if schema already exists and needs migration BEFORE creating tables.
+    # This is critical for v6+ because CST_SCHEMA includes views that reference
+    # new columns — running it against a v5 table would fail.
+    needs_migration = False
+    try:
+        cursor.execute("SELECT COUNT(*) FROM cst_schema_version")
+        has_schema = cursor.fetchone()[0] > 0
+        if has_schema:
+            cursor.execute("SELECT version FROM cst_schema_version LIMIT 1")
+            current_version = cursor.fetchone()[0]
+            if current_version < 6:
+                # v6 requires drop/recreate — do it before CST_SCHEMA runs
+                _drop_and_recreate_cst_tables(conn)
+                return  # _drop_and_recreate already creates schema + stamps version
+            needs_migration = current_version < CST_SCHEMA_VERSION
+    except sqlite3.OperationalError:
+        has_schema = False
+
+    # Create cst_* tables (safe: either fresh DB or already at v6+)
     conn.executescript(CST_SCHEMA)
     # Create FTS table and triggers
     conn.executescript(CST_FTS_SCHEMA)
 
-    # Insert or update schema version
-    cursor.execute("SELECT COUNT(*) FROM cst_schema_version")
-    if cursor.fetchone()[0] == 0:
-        cursor.execute(
-            "INSERT INTO cst_schema_version (version) VALUES (?)",
-            (CST_SCHEMA_VERSION,),
-        )
-    else:
-        # Migrate from older schema versions
-        cursor.execute("SELECT version FROM cst_schema_version LIMIT 1")
-        current_version = cursor.fetchone()[0]
-        if current_version < 2:
-            # v2: add agent metadata columns to cst_messages and subagent_invocation_id to cst_tool_invocations
-            for col_sql in [
-                "ALTER TABLE cst_messages ADD COLUMN agent_id TEXT",
-                "ALTER TABLE cst_messages ADD COLUMN agent_display_name TEXT",
-                "ALTER TABLE cst_messages ADD COLUMN agent_nesting_level INTEGER DEFAULT 0",
-                "ALTER TABLE cst_tool_invocations ADD COLUMN subagent_invocation_id TEXT",
-            ]:
-                with contextlib.suppress(Exception):
-                    cursor.execute(col_sql)
-        if current_version < 3:
-            # v3: add nested_data column to cst_content_blocks for structured subagent rendering
-            with contextlib.suppress(Exception):
-                cursor.execute("ALTER TABLE cst_content_blocks ADD COLUMN nested_data TEXT")
-            # v3: add enrichment_version column to cst_sessions
-            with contextlib.suppress(Exception):
-                cursor.execute("ALTER TABLE cst_sessions ADD COLUMN enrichment_version TEXT")
-        if current_version < 4:
-            # v4: catch-up for databases at v3 from either branch (suppress if already present)
-            with contextlib.suppress(Exception):
-                cursor.execute("ALTER TABLE cst_content_blocks ADD COLUMN nested_data TEXT")
-            with contextlib.suppress(Exception):
-                cursor.execute("ALTER TABLE cst_sessions ADD COLUMN enrichment_version TEXT")
-        if current_version < 5:
-            # v5: transcript cleanup columns for voice-dictated message cleanup
-            pass  # Handled by catch-up block below
-        # v5 catch-up: ensure columns exist even if version was already bumped
-        with contextlib.suppress(Exception):
-            cursor.execute("ALTER TABLE cst_messages ADD COLUMN original_content TEXT")
-        with contextlib.suppress(Exception):
-            cursor.execute("ALTER TABLE cst_messages ADD COLUMN cleanup_model TEXT")
-        if current_version < CST_SCHEMA_VERSION:
+    if not has_schema:
+        # Fresh database — stamp schema version
+        cursor.execute("SELECT COUNT(*) FROM cst_schema_version")
+        if cursor.fetchone()[0] == 0:
             cursor.execute(
-                "UPDATE cst_schema_version SET version = ?",
+                "INSERT INTO cst_schema_version (version) VALUES (?)",
                 (CST_SCHEMA_VERSION,),
             )
+    elif needs_migration:
+        # Future migrations (v7+) would go here
+        cursor.execute(
+            "UPDATE cst_schema_version SET version = ?",
+            (CST_SCHEMA_VERSION,),
+        )
 
 
 def check_builtin_schema_version(conn: sqlite3.Connection) -> None:
@@ -318,6 +360,34 @@ def discover_sessions_needing_enrichment(conn: sqlite3.Connection) -> list[dict]
 # ---------------------------------------------------------------------------
 
 
+def _delete_session_data(cursor: sqlite3.Cursor, session_id: str) -> None:
+    """Delete all cst_* rows for a session, including child-table artifacts.
+
+    Explicitly deletes from child tables (tool_invocations, file_changes,
+    command_runs, content_blocks) before deleting messages, rather than
+    relying on ``ON DELETE CASCADE`` — which only fires when
+    ``PRAGMA foreign_keys = ON``.  This is safe in all FK modes.
+    """
+    cursor.execute(
+        "DELETE FROM cst_content_blocks WHERE message_id IN (SELECT id FROM cst_messages WHERE session_id = ?)",
+        (session_id,),
+    )
+    cursor.execute(
+        "DELETE FROM cst_tool_invocations WHERE message_id IN (SELECT id FROM cst_messages WHERE session_id = ?)",
+        (session_id,),
+    )
+    cursor.execute(
+        "DELETE FROM cst_file_changes WHERE message_id IN (SELECT id FROM cst_messages WHERE session_id = ?)",
+        (session_id,),
+    )
+    cursor.execute(
+        "DELETE FROM cst_command_runs WHERE message_id IN (SELECT id FROM cst_messages WHERE session_id = ?)",
+        (session_id,),
+    )
+    cursor.execute("DELETE FROM cst_messages_fts WHERE session_id = ?", (session_id,))
+    cursor.execute("DELETE FROM cst_messages WHERE session_id = ?", (session_id,))
+
+
 def add_session(conn: sqlite3.Connection, session: ChatSession) -> bool:
     """Add a chat session to the database.
 
@@ -362,6 +432,71 @@ def add_sessions_batch(conn: sqlite3.Connection, sessions: list[ChatSession]) ->
     return added, skipped
 
 
+def _insert_content_blocks_recursive(
+    cursor: sqlite3.Cursor,
+    session_id: str,
+    parent_message_id: int,
+    msg_index: int,
+    content_blocks,
+) -> None:
+    """Insert content blocks, recursively handling child subagent messages."""
+    for block_idx, block in enumerate(content_blocks):
+        child_message_id = None
+
+        if block.child_message and block.kind in ("subagent", "subagent_failed", "subagent_incomplete"):
+            child = block.child_message
+            child_cached_md = message_to_markdown(child, message_number=msg_index + 1)
+            cursor.execute(
+                insert_sql("cst_messages", CST_MESSAGE_COLUMNS),
+                (
+                    session_id,
+                    msg_index,  # Same message_index as parent
+                    child.role,
+                    child.content,
+                    child.timestamp,
+                    child_cached_md,
+                    child.agent_id,
+                    child.agent_display_name,
+                    child.agent_nesting_level,
+                    parent_message_id,  # parent_message_id = parent's ID
+                    block_idx,  # child_index = block position for ordering
+                ),
+            )
+            child_message_id = cursor.lastrowid
+
+            # Insert child's artifacts
+            for tool in child.tool_invocations:
+                cursor.execute(
+                    insert_sql("cst_tool_invocations", CST_TOOL_INVOCATION_COLUMNS),
+                    tool_to_row(child_message_id, tool),
+                )
+            for change in child.file_changes:
+                cursor.execute(
+                    insert_sql("cst_file_changes", CST_FILE_CHANGE_COLUMNS),
+                    file_change_to_row(child_message_id, change),
+                )
+            for cmd in child.command_runs:
+                cursor.execute(
+                    insert_sql("cst_command_runs", CST_COMMAND_RUN_COLUMNS),
+                    command_to_row(child_message_id, cmd),
+                )
+
+            # Recurse into child's content blocks (handles grandchildren)
+            _insert_content_blocks_recursive(
+                cursor,
+                session_id,
+                child_message_id,
+                msg_index,
+                child.content_blocks,
+            )
+
+        # Insert this content block row (links to child_message_id if applicable)
+        cursor.execute(
+            insert_sql("cst_content_blocks", CST_CONTENT_BLOCK_COLUMNS),
+            (parent_message_id, block_idx, block.kind, block.content, block.description, child_message_id),
+        )
+
+
 def add_session_impl(cursor: sqlite3.Cursor, session: ChatSession) -> None:
     """Insert a ChatSession and all its child rows using an existing cursor.
 
@@ -396,6 +531,8 @@ def add_session_impl(cursor: sqlite3.Cursor, session: ChatSession) -> None:
                 msg.agent_id,
                 msg.agent_display_name,
                 msg.agent_nesting_level,
+                None,  # parent_message_id — set by db-insertion todo
+                msg.child_index,
             ),
         )
         message_id = cursor.lastrowid
@@ -421,20 +558,14 @@ def add_session_impl(cursor: sqlite3.Cursor, session: ChatSession) -> None:
                 command_to_row(message_id, cmd),
             )
 
-        # Insert content blocks
-        for block_idx, block in enumerate(msg.content_blocks):
-            nested_data = _serialize_nested_data(block) if block.kind in ("subagent", "subagent_failed", "subagent_incomplete") else None
-            cursor.execute(
-                insert_sql("cst_content_blocks", CST_CONTENT_BLOCK_COLUMNS),
-                (
-                    message_id,
-                    block_idx,
-                    block.kind,
-                    block.content,
-                    block.description,
-                    nested_data,
-                ),
-            )
+        # Insert content blocks (recursive for nested subagent children)
+        _insert_content_blocks_recursive(
+            cursor,
+            session.session_id,
+            message_id,
+            idx,
+            msg.content_blocks,
+        )
 
 
 def update_session(conn: sqlite3.Connection, session: ChatSession) -> None:
@@ -442,8 +573,8 @@ def update_session(conn: sqlite3.Connection, session: ChatSession) -> None:
     cursor = conn.cursor()
 
     # Delete existing session and related data atomically
-    cursor.execute("DELETE FROM cst_messages_fts WHERE session_id = ?", (session.session_id,))
-    cursor.execute("DELETE FROM cst_messages WHERE session_id = ?", (session.session_id,))
+    # Explicitly delete from child tables — required when FK enforcement is OFF.
+    _delete_session_data(cursor, session.session_id)
     cursor.execute("DELETE FROM cst_sessions WHERE session_id = ?", (session.session_id,))
 
     # Re-insert in the same transaction
@@ -460,8 +591,7 @@ def update_sessions_batch(conn: sqlite3.Connection, sessions: list[ChatSession])
         return 0
     cursor = conn.cursor()
     for session in sessions:
-        cursor.execute("DELETE FROM cst_messages_fts WHERE session_id = ?", (session.session_id,))
-        cursor.execute("DELETE FROM cst_messages WHERE session_id = ?", (session.session_id,))
+        _delete_session_data(cursor, session.session_id)
         cursor.execute("DELETE FROM cst_sessions WHERE session_id = ?", (session.session_id,))
         add_session_impl(cursor, session)
     return len(sessions)
@@ -558,7 +688,7 @@ def update_enrichment_version(conn: sqlite3.Connection, session_id: str, version
         # No cst_sessions row exists — create a minimal stub so the
         # session stops appearing in "needs enrichment" queries.
         conn.execute(
-            """INSERT OR IGNORE INTO cst_sessions 
+            """INSERT OR IGNORE INTO cst_sessions
                (session_id, type, enrichment_version, parser_version)
                VALUES (?, 'cli', ?, ?)""",
             (session_id, version, PARSER_VERSION),
@@ -660,8 +790,9 @@ def enrich_session(conn: sqlite3.Connection, session: ChatSession) -> None:
     cursor = conn.cursor()
 
     # Delete existing data for idempotency
-    cursor.execute("DELETE FROM cst_messages_fts WHERE session_id = ?", (session.session_id,))
-    cursor.execute("DELETE FROM cst_messages WHERE session_id = ?", (session.session_id,))
+    # Explicitly delete from child tables first — required because FK enforcement
+    # may be OFF (e.g. inside batch_connection), so CASCADE won't fire.
+    _delete_session_data(cursor, session.session_id)
     cursor.execute("DELETE FROM cst_sessions WHERE session_id = ?", (session.session_id,))
 
     # Insert session
@@ -691,17 +822,20 @@ def enrich_session(conn: sqlite3.Connection, session: ChatSession) -> None:
                 msg.agent_id,
                 msg.agent_display_name,
                 msg.agent_nesting_level,
+                None,  # parent_message_id — set by db-insertion todo
+                msg.child_index,
             ),
         )
         message_id = cursor.lastrowid
 
-        # Insert content blocks
-        for block_idx, block in enumerate(msg.content_blocks):
-            nested_data = _serialize_nested_data(block) if block.kind in ("subagent", "subagent_failed", "subagent_incomplete") else None
-            cursor.execute(
-                insert_sql("cst_content_blocks", CST_CONTENT_BLOCK_COLUMNS),
-                (message_id, block_idx, block.kind, block.content, block.description, nested_data),
-            )
+        # Insert content blocks (recursive for nested subagent children)
+        _insert_content_blocks_recursive(
+            cursor,
+            session.session_id,
+            message_id,
+            idx,
+            msg.content_blocks,
+        )
 
         # Insert tool invocations
         for tool in msg.tool_invocations:

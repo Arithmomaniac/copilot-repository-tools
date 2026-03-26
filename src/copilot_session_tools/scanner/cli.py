@@ -95,15 +95,21 @@ class _CliSessionBuilder:
         if not has_content:
             return
 
-        # Build flat content from content blocks
+        _SUBAGENT_KINDS = ("subagent", "subagent_failed", "subagent_incomplete")
+
+        # Build flat content from content blocks — exclude subagent blocks
+        # (their text lives in child_message.content instead)
         text_parts = []
         for block in self.current_assistant_content_blocks:
             if block.kind == "text" and block.content.strip():
                 text_parts.append(block.content)
-            elif block.kind in ("subagent", "subagent_failed", "subagent_incomplete") and block.content.strip():
-                # Include subagent content in flat text for FTS indexing
-                text_parts.append(block.content)
         flat_content = "\n\n".join(text_parts)
+
+        # Collect child messages from subagent blocks
+        children: list[ChatMessage] = []
+        for block in self.current_assistant_content_blocks:
+            if block.kind in _SUBAGENT_KINDS and block.child_message is not None:
+                children.append(block.child_message)
 
         self.messages.append(
             ChatMessage(
@@ -113,6 +119,7 @@ class _CliSessionBuilder:
                 tool_invocations=self.current_assistant_tool_invocations.copy(),
                 command_runs=self.current_assistant_command_runs.copy(),
                 content_blocks=self.current_assistant_content_blocks.copy(),
+                children=children,
             )
         )
 
@@ -407,6 +414,8 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
         subagent_failures: dict[str, str] = {}
         # Track which subagents completed successfully
         subagent_completions: set[str] = set()
+        # Track all subagent.started toolCallIds (for inferring completion)
+        subagent_started_ids: set[str] = set()
         # Map agent-N -> best result text from read_agent (for background agents)
         bg_agent_results: dict[str, str] = {}
         # Map task toolCallId -> agent-N id (parsed from background placeholder)
@@ -488,12 +497,22 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                     subagent_failures[tool_call_id] = error
 
             elif event_type == "subagent.started":
-                pass  # agent_display_names built from tool.execution_complete below
+                tool_call_id = event_data.get("toolCallId", "")
+                if tool_call_id:
+                    subagent_started_ids.add(tool_call_id)
 
             elif event_type == "subagent.completed":
                 tool_call_id = event_data.get("toolCallId", "")
                 if tool_call_id:
                     subagent_completions.add(tool_call_id)
+
+        # Infer subagent completion from tool.execution_complete when no
+        # explicit subagent.completed event was emitted (common in older CLI versions)
+        for tcid in subagent_started_ids:
+            if tcid not in subagent_completions and tcid not in subagent_failures:
+                exec_info = tool_executions.get(tcid, {})
+                if exec_info.get("complete") is not None:
+                    subagent_completions.add(tcid)
 
         # Build messages using VSCode-style rendering:
         # - Process events in order
@@ -770,7 +789,20 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                     error = builder.subagent_failures.get(tool_call_id, "Unknown error")
                     nested_blocks.append(ContentBlock(kind="text", content=f"**Error:** {error}" if error else "**Error:** Unknown error"))
 
-                block = ContentBlock(kind=kind, content=content, description=title)
+                # Create child ChatMessage for the subagent
+                child_msg = ChatMessage(
+                    role="assistant",
+                    content=content,
+                    agent_display_name=title,
+                    # TODO: For multi-level nesting, derive from parent's nesting level
+                    agent_nesting_level=1,
+                    tool_invocations=nested_tool_invocations,
+                    command_runs=nested_command_runs,
+                    content_blocks=nested_blocks,
+                )
+
+                block = ContentBlock(kind=kind, content=content, description=title, child_message=child_msg)
+                # Also set deprecated fields for backward compat during transition
                 block.content_blocks = nested_blocks
                 block.tool_invocations = nested_tool_invocations
                 block.command_runs = nested_command_runs
