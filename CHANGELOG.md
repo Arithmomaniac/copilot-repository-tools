@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-03-28
+
+### Changed
+
+- **Performance**: Replaced `orjson` with `ssrjson` (SIMD-accelerated JSON parser) — ~20% faster JSON parsing across all session sizes, benchmarked on 656 real sessions (1 GB)
+- **Performance**: Switched file parsing from `ThreadPoolExecutor` to `ProcessPoolExecutor` — bypasses GIL for C-extension JSON parsers, enabling true multi-core parallelism (~10× speedup on full scan)
+- **CLI**: Added `--workers` / `-w` flag to `scan` command to control parallel worker process count (default: `min(4, cores/2)`)
+
 ## [0.7.0] - 2026-03-27
 
 ### Added

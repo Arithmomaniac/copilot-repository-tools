@@ -3,7 +3,7 @@
 import sqlite3
 from pathlib import Path
 
-import orjson
+import ssrjson
 
 from copilot_session_tools.scanner import PARSER_VERSION
 
@@ -466,8 +466,8 @@ def _parse_chat_session_file(file_path: Path, workspace_name: str | None, worksp
     try:
         with file_path.open("rb") as f:
             raw_json_bytes = f.read()
-            data = orjson.loads(raw_json_bytes)
-    except (orjson.JSONDecodeError, OSError):
+            data = ssrjson.loads(raw_json_bytes)
+    except (ssrjson.JSONDecodeError, OSError):
         return None
 
     messages = []
@@ -607,7 +607,7 @@ def _parse_vscdb_file(file_path: Path, workspace_name: str | None, workspace_pat
         for _key, value in rows:
             if value:
                 try:
-                    data = orjson.loads(value)
+                    data = ssrjson.loads(value)
                     # Try to parse as session data
                     if isinstance(data, dict):
                         session = _extract_session_from_dict(data, workspace_name, workspace_path, edition, str(file_path))
@@ -619,7 +619,7 @@ def _parse_vscdb_file(file_path: Path, workspace_name: str | None, workspace_pat
                                 session = _extract_session_from_dict(item, workspace_name, workspace_path, edition, str(file_path))
                                 if session:
                                     sessions.append(session)
-                except (orjson.JSONDecodeError, TypeError):
+                except (ssrjson.JSONDecodeError, TypeError):
                     pass
 
         conn.close()
@@ -820,8 +820,8 @@ def _parse_vscode_jsonl_file(file_path: Path, workspace_name: str | None, worksp
         if not line:
             continue
         try:
-            entry = orjson.loads(line)
-        except orjson.JSONDecodeError:
+            entry = ssrjson.loads(line)
+        except ssrjson.JSONDecodeError:
             continue
 
         kind = entry.get("kind")

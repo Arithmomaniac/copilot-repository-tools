@@ -295,8 +295,8 @@ def create_app(
         if storage_paths is None:
             storage_paths = get_vscode_storage_paths()
 
-        result = run_refresh(db, storage_paths, full=full_refresh)
-        enrich_result = run_enrichment(db)
+        result = run_refresh(db, storage_paths, full=full_refresh, workers=1)
+        enrich_result = run_enrichment(db, workers=1)
 
         # Store refresh result in Flask session for display after redirect
         session["refresh_result"] = {
