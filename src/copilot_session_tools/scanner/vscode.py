@@ -369,8 +369,7 @@ def _process_response_items(
                     title = f"{agent_name}: {description}" if description else agent_name
                     # Store as structured tuple: (kind, content, title, nested_blocks, nested_tool_invocations, nested_file_changes, nested_command_runs)
                     raw_blocks.append(("subagent", content, title, nested_blocks, nested_tool_invocations, nested_file_changes, nested_command_runs))
-                    # Include subagent content in response_content for FTS indexing
-                    response_content.append(content)
+                    # Subagent content lives in the child ChatMessage; exclude from parent's flat content for FTS
                 # Also extract the invocation message as content (non-subagent)
                 elif item.get("invocationMessage"):
                     msg_text = item["invocationMessage"]
@@ -513,19 +512,21 @@ def _parse_chat_session_file(file_path: Path, workspace_name: str | None, worksp
                     if msg.get("fileChanges"):
                         file_changes.extend(_parse_file_changes(msg["fileChanges"]))
 
-                    if response_content or tool_invocations or file_changes or command_runs:
+                    if response_content or raw_blocks or tool_invocations or file_changes or command_runs:
                         # Merge consecutive text blocks for better markdown rendering
                         content_blocks = _merge_content_blocks(raw_blocks)
-                        messages.append(
-                            ChatMessage(
-                                role="assistant",
-                                content="".join(response_content),
-                                tool_invocations=tool_invocations,
-                                file_changes=file_changes,
-                                command_runs=command_runs,
-                                content_blocks=content_blocks,
-                            )
+                        # Collect child messages from subagent content blocks
+                        children = [cb.child_message for cb in content_blocks if cb.kind == "subagent" and cb.child_message is not None]
+                        assistant_msg = ChatMessage(
+                            role="assistant",
+                            content="".join(response_content),
+                            tool_invocations=tool_invocations,
+                            file_changes=file_changes,
+                            command_runs=command_runs,
+                            content_blocks=content_blocks,
+                            children=children,
                         )
+                        messages.append(assistant_msg)
             else:
                 # Standard message format
                 role = msg.get("role", msg.get("type", "unknown"))
@@ -666,19 +667,21 @@ def _extract_session_from_dict(data: dict, workspace_name: str | None, workspace
                 if response_items:
                     response_content, raw_blocks, tool_invocations, file_changes, command_runs = _process_response_items(response_items)
 
-                    if response_content or tool_invocations or file_changes or command_runs:
+                    if response_content or raw_blocks or tool_invocations or file_changes or command_runs:
                         # Merge consecutive text blocks for better markdown rendering
                         content_blocks = _merge_content_blocks(raw_blocks)
-                        messages.append(
-                            ChatMessage(
-                                role="assistant",
-                                content="".join(response_content),
-                                tool_invocations=tool_invocations,
-                                file_changes=file_changes,
-                                command_runs=command_runs,
-                                content_blocks=content_blocks,
-                            )
+                        # Collect child messages from subagent content blocks
+                        children = [cb.child_message for cb in content_blocks if cb.kind == "subagent" and cb.child_message is not None]
+                        assistant_msg = ChatMessage(
+                            role="assistant",
+                            content="".join(response_content),
+                            tool_invocations=tool_invocations,
+                            file_changes=file_changes,
+                            command_runs=command_runs,
+                            content_blocks=content_blocks,
+                            children=children,
                         )
+                        messages.append(assistant_msg)
             else:
                 # Standard format
                 role = msg.get("role", msg.get("type", "unknown"))

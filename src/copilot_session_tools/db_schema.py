@@ -45,6 +45,8 @@ CST_MESSAGE_COLUMNS = (
     "agent_id",
     "agent_display_name",
     "agent_nesting_level",
+    "parent_message_id",
+    "child_index",
 )
 
 CST_TOOL_INVOCATION_COLUMNS = (
@@ -85,7 +87,7 @@ CST_CONTENT_BLOCK_COLUMNS = (
     "kind",
     "content",
     "description",
-    "nested_data",
+    "child_message_id",
 )
 
 # ---------------------------------------------------------------------------

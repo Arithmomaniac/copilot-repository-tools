@@ -16,6 +16,7 @@ from typing import Any
 from copilot_session_tools import Database
 from copilot_session_tools.scanner import PARSER_VERSION, SessionFileInfo, parse_session_file, scan_session_files
 from copilot_session_tools.scanner.cli import _parse_cli_jsonl_file
+from copilot_session_tools.scanner.models import ChatSession
 
 # Regex for validating session IDs (hex + hyphens, i.e. UUIDs)
 _SESSION_ID_RE = re.compile(r"^[0-9a-fA-F-]+$")
@@ -130,20 +131,23 @@ def _enrich_session_batch(
     entries: list[dict],
     *,
     success_event: str,
-    stamp_version_on_failure: bool = True,
+    stamp_version_on_failure: bool = False,
     on_progress: ProgressCallback | None = None,
     skip_ids: set[str] | None = None,
 ) -> tuple[int, int]:
     """Enrich a batch of sessions, handling errors and version stamping.
 
     Shared loop body for the three enrichment phases (discovery, reparse,
-    version-refresh).
+    version-refresh).  Uses :meth:`Database.batch_connection` to hold a
+    single SQLite connection open for the entire batch, and parses
+    ``events.jsonl`` files in parallel before writing results serially.
 
     Args:
         database: Open Database.
         entries: List of dicts with at least a 'session_id' key.
         success_event: Event name for on_progress on success (e.g. "enriched", "reparsed").
-        stamp_version_on_failure: If True, stamp enrichment_version on failure.
+        stamp_version_on_failure: If True, stamp enrichment_version even on failure
+            (defaults to False so failed sessions remain retryable).
         on_progress: Optional progress callback.
         skip_ids: Session IDs to skip (already processed in a prior phase).
 
@@ -152,24 +156,54 @@ def _enrich_session_batch(
     """
     from copilot_session_tools import __version__
 
+    # Filter to actionable entries
+    actionable = [e for e in entries if not (skip_ids and e["session_id"] in skip_ids)]
+    if not actionable:
+        return 0, 0
+
+    import sqlite3 as _sqlite3
+
+    # Phase 1: Parse events.jsonl files in parallel (I/O + JSON, thread-safe).
+    # executor.map returns a lazy iterator — results are yielded as workers
+    # complete in order, bounding memory to ~PARSE_WORKERS sessions in flight.
+    def _parse_entry(entry: dict) -> tuple[str, ChatSession | str | None]:
+        """Return (session_id, parsed_session_or_error)."""
+        sid = entry["session_id"]
+        if not _SESSION_ID_RE.match(sid):
+            return sid, f"Invalid session ID format: {sid}"
+        events_file = SESSION_STATE_DIR / sid / "events.jsonl"
+        if not events_file.exists():
+            return sid, f"events.jsonl not found for session {sid}"
+        parsed = _parse_cli_jsonl_file(events_file)
+        if parsed is None:
+            return sid, f"Failed to parse events.jsonl for session {sid}"
+        return sid, parsed
+
+    # Phase 2: Parse in parallel, write serially (single connection, FK=OFF).
+    # Per-session try/except so one write failure doesn't roll back the batch.
     success = 0
     failed = 0
 
-    for entry in entries:
-        sid = entry["session_id"]
-        if skip_ids and sid in skip_ids:
-            continue
-        error = enrich_single_session(database, sid, validate=False)
-        if error is None:
-            success += 1
-            if on_progress:
-                on_progress(success_event, sid)
-        else:
-            if stamp_version_on_failure:
-                database.update_enrichment_version(sid, __version__)
-            failed += 1
-            if on_progress:
-                on_progress("enrich_failed", error)
+    with database.batch_connection(), ThreadPoolExecutor(max_workers=PARSE_WORKERS) as executor:
+        for sid, result in executor.map(_parse_entry, actionable):
+            if isinstance(result, str):
+                # Error string from parse phase
+                if stamp_version_on_failure:
+                    database.update_enrichment_version(sid, __version__)
+                failed += 1
+                if on_progress:
+                    on_progress("enrich_failed", result)
+            else:
+                try:
+                    database.enrich_session(result)
+                except _sqlite3.Error as exc:
+                    failed += 1
+                    if on_progress:
+                        on_progress("enrich_failed", f"DB error for {sid}: {exc}")
+                else:
+                    success += 1
+                    if on_progress:
+                        on_progress(success_event, sid)
 
     return success, failed
 
@@ -331,10 +365,11 @@ def run_enrichment(
     failed += phase3_fail
 
     # VS Code sessions: just stamp the version so the banner clears
-    for entry in needing_version_refresh:
-        sid = entry["session_id"]
-        if sid not in already_processed and entry.get("type", "") != "cli":
-            database.update_enrichment_version(sid, __version__)
+    vscode_entries = [e for e in needing_version_refresh if e["session_id"] not in already_processed and e.get("type", "") != "cli"]
+    if vscode_entries:
+        with database.batch_connection():
+            for entry in vscode_entries:
+                database.update_enrichment_version(entry["session_id"], __version__)
 
     # Cleanup orphaned cst_sessions
     try:

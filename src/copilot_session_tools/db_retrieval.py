@@ -11,7 +11,6 @@ Extracted from database.py to isolate read-path concerns:
 
 from __future__ import annotations
 
-import json
 import sqlite3
 
 from .db_schema import row_to_command, row_to_file_change, row_to_tool
@@ -19,52 +18,71 @@ from .markdown_exporter import message_to_markdown
 from .scanner import (
     ChatMessage,
     ChatSession,
-    CommandRun,
     ContentBlock,
-    FileChange,
-    ToolInvocation,
 )
 
 
-def _deserialize_content_block(row: sqlite3.Row) -> ContentBlock:
-    """Deserialize a content block row, including nested_data for subagent blocks."""
-    nested_data_str = row["nested_data"] if "nested_data" in row.keys() else None  # noqa: SIM118
+def _deserialize_content_block(row: sqlite3.Row) -> tuple[ContentBlock, int | None]:
+    """Deserialize a content block row.
+
+    Returns:
+        Tuple of (ContentBlock, child_message_id or None).
+        child_message is populated later during tree construction.
+    """
     block = ContentBlock(
         kind=row["kind"],
-        content=row["content"],
+        content=row["content"] or "",
         description=row["description"] if "description" in row.keys() else None,  # noqa: SIM118
     )
-    if nested_data_str:
-        data = json.loads(nested_data_str)
-        if "content_blocks" in data:
-            block.content_blocks = [
-                ContentBlock(
-                    kind=cb.get("kind", "text"),
-                    content=cb.get("content", ""),
-                    description=cb.get("description"),
-                )
-                for cb in data["content_blocks"]
-            ]
-        if "tool_invocations" in data:
-            block.tool_invocations = [ToolInvocation(**t) for t in data["tool_invocations"]]
-        if "file_changes" in data:
-            block.file_changes = [FileChange(**f) for f in data["file_changes"]]
-        if "command_runs" in data:
-            block.command_runs = [CommandRun(**c) for c in data["command_runs"]]
-    return block
+    child_message_id = row["child_message_id"] if "child_message_id" in row.keys() else None  # noqa: SIM118
+    return block, child_message_id
 
 
-def reconstruct_message(cursor: sqlite3.Cursor, message_id: int, msg_row: sqlite3.Row) -> ChatMessage:
+def _link_child_messages(
+    cursor: sqlite3.Cursor,
+    parent_msg: ChatMessage,
+    child_id_map: dict[int, int],
+) -> None:
+    """Recursively fetch and link child messages to parent content blocks."""
+    for block_idx, child_msg_id in child_id_map.items():
+        child_row = cursor.execute("SELECT * FROM cst_messages WHERE id = ?", (child_msg_id,)).fetchone()
+        if child_row and block_idx < len(parent_msg.content_blocks):
+            child_msg, _grandchild_map = reconstruct_message(
+                cursor,
+                child_msg_id,
+                child_row,
+                link_children=True,
+            )
+            parent_msg.content_blocks[block_idx].child_message = child_msg
+            # Populate deprecated fields for backward compat
+            parent_msg.content_blocks[block_idx].content_blocks = child_msg.content_blocks
+            parent_msg.content_blocks[block_idx].tool_invocations = child_msg.tool_invocations
+            parent_msg.content_blocks[block_idx].file_changes = child_msg.file_changes
+            parent_msg.content_blocks[block_idx].command_runs = child_msg.command_runs
+            parent_msg.children.append(child_msg)
+
+
+def reconstruct_message(
+    cursor: sqlite3.Cursor,
+    message_id: int,
+    msg_row: sqlite3.Row,
+    *,
+    link_children: bool = False,
+) -> tuple[ChatMessage, dict[int, int]]:
     """Reconstruct a ChatMessage from database rows by querying related tables.
 
     Args:
         cursor: SQLite cursor for querying related tables.
         message_id: The cst_messages.id of the message.
         msg_row: The cst_messages row for this message.
+        link_children: If True, recursively fetch and link child messages
+            to content blocks. Useful for callers that need the full tree
+            without doing their own tree assembly.
 
     Returns:
-        Fully hydrated ChatMessage with tool invocations, file changes,
-        command runs, and content blocks.
+        Tuple of (ChatMessage, child_id_map) where child_id_map is
+        {block_index: child_message_id} for content blocks that reference
+        child messages.
     """
     # Query tool_invocations for this message
     cursor.execute("SELECT * FROM cst_tool_invocations WHERE message_id = ?", (message_id,))
@@ -78,14 +96,20 @@ def reconstruct_message(cursor: sqlite3.Cursor, message_id: int, msg_row: sqlite
     cursor.execute("SELECT * FROM cst_command_runs WHERE message_id = ?", (message_id,))
     command_runs = [row_to_command(c) for c in cursor.fetchall()]
 
-    # Query content_blocks
+    # Query content_blocks — collect child_message_id mappings
     cursor.execute("SELECT * FROM cst_content_blocks WHERE message_id = ? ORDER BY block_index", (message_id,))
-    content_blocks = [_deserialize_content_block(b) for b in cursor.fetchall()]
+    content_blocks: list[ContentBlock] = []
+    child_id_map: dict[int, int] = {}
+    for idx, b in enumerate(cursor.fetchall()):
+        block, child_msg_id = _deserialize_content_block(b)
+        content_blocks.append(block)
+        if child_msg_id is not None:
+            child_id_map[idx] = child_msg_id
 
     # Get cached_markdown safely
     cached_md = msg_row["cached_markdown"] if "cached_markdown" in msg_row.keys() else None  # noqa: SIM118
 
-    return ChatMessage(
+    msg = ChatMessage(
         role=msg_row["role"],
         content=msg_row["content"],
         timestamp=msg_row["timestamp"],
@@ -100,10 +124,16 @@ def reconstruct_message(cursor: sqlite3.Cursor, message_id: int, msg_row: sqlite
         original_content=msg_row["original_content"] if "original_content" in msg_row.keys() else None,  # noqa: SIM118
         cleanup_model=msg_row["cleanup_model"] if "cleanup_model" in msg_row.keys() else None,  # noqa: SIM118
     )
+    if link_children and child_id_map:
+        _link_child_messages(cursor, msg, child_id_map)
+    return msg, child_id_map
 
 
 def get_cst_session(conn: sqlite3.Connection, session_id: str) -> ChatSession | None:
     """Get a session from cst_* tables by its ID.
+
+    Loads ALL messages and artifacts in bulk (5 queries total regardless
+    of message count), then builds the parent→child tree in memory.
 
     Args:
         conn: SQLite connection.
@@ -112,6 +142,8 @@ def get_cst_session(conn: sqlite3.Connection, session_id: str) -> ChatSession | 
     Returns:
         ChatSession if found, None otherwise.
     """
+    from collections import defaultdict
+
     cursor = conn.cursor()
 
     cursor.execute("SELECT * FROM cst_sessions WHERE session_id = ?", (session_id,))
@@ -119,24 +151,110 @@ def get_cst_session(conn: sqlite3.Connection, session_id: str) -> ChatSession | 
     if not row:
         return None
 
-    # Get messages with their IDs for fetching related data
+    # --- Bulk-fetch all data in 5 flat queries (O(1), not O(N)) ---
+
+    # 1) Messages
     cursor.execute(
-        """
-        SELECT id, role, content, timestamp, cached_markdown,
-               agent_id, agent_display_name, agent_nesting_level,
-               original_content, cleanup_model
-        FROM cst_messages
-        WHERE session_id = ?
-        ORDER BY message_index
-        """,
+        "SELECT * FROM cst_messages WHERE session_id = ? ORDER BY message_index, child_index",
         (session_id,),
     )
-    message_rows = cursor.fetchall()
+    msg_rows = cursor.fetchall()
+    msg_ids = [r["id"] for r in msg_rows]
 
-    messages = []
-    for msg_row in message_rows:
-        message_id = msg_row["id"]
-        messages.append(reconstruct_message(cursor, message_id, msg_row))
+    if not msg_ids:
+        # Edge case: session exists but has no messages
+        msg_ids_placeholder = "(NULL)"
+    else:
+        msg_ids_placeholder = f"({','.join(str(i) for i in msg_ids)})"
+
+    # 2) Tool invocations (bulk)
+    tools_by_msg: dict[int, list] = defaultdict(list)
+    for t in cursor.execute(f"SELECT * FROM cst_tool_invocations WHERE message_id IN {msg_ids_placeholder}").fetchall():  # noqa: S608
+        tools_by_msg[t["message_id"]].append(row_to_tool(t))
+
+    # 3) File changes (bulk)
+    files_by_msg: dict[int, list] = defaultdict(list)
+    for f in cursor.execute(f"SELECT * FROM cst_file_changes WHERE message_id IN {msg_ids_placeholder}").fetchall():  # noqa: S608
+        files_by_msg[f["message_id"]].append(row_to_file_change(f))
+
+    # 4) Command runs (bulk)
+    cmds_by_msg: dict[int, list] = defaultdict(list)
+    for c in cursor.execute(f"SELECT * FROM cst_command_runs WHERE message_id IN {msg_ids_placeholder}").fetchall():  # noqa: S608
+        cmds_by_msg[c["message_id"]].append(row_to_command(c))
+
+    # 5) Content blocks (bulk, ordered)
+    blocks_by_msg: dict[int, list[tuple[ContentBlock, int | None]]] = defaultdict(list)
+    for b in cursor.execute(
+        f"SELECT * FROM cst_content_blocks WHERE message_id IN {msg_ids_placeholder} ORDER BY message_id, block_index"  # noqa: S608
+    ).fetchall():
+        block, child_msg_id = _deserialize_content_block(b)
+        blocks_by_msg[b["message_id"]].append((block, child_msg_id))
+
+    # --- Reconstruct messages from pre-fetched data ---
+    messages_by_id: dict[int, ChatMessage] = {}
+    content_block_child_ids: dict[int, dict[int, int]] = {}
+
+    for msg_row in msg_rows:
+        msg_id = msg_row["id"]
+        content_blocks: list[ContentBlock] = []
+        child_id_map: dict[int, int] = {}
+        for idx, (block, child_msg_id) in enumerate(blocks_by_msg.get(msg_id, [])):
+            content_blocks.append(block)
+            if child_msg_id is not None:
+                child_id_map[idx] = child_msg_id
+
+        cached_md = msg_row["cached_markdown"] if "cached_markdown" in msg_row.keys() else None  # noqa: SIM118
+
+        msg = ChatMessage(
+            role=msg_row["role"],
+            content=msg_row["content"],
+            timestamp=msg_row["timestamp"],
+            tool_invocations=tools_by_msg.get(msg_id, []),
+            file_changes=files_by_msg.get(msg_id, []),
+            command_runs=cmds_by_msg.get(msg_id, []),
+            content_blocks=content_blocks,
+            cached_markdown=cached_md,
+            agent_id=msg_row["agent_id"] if "agent_id" in msg_row.keys() else None,  # noqa: SIM118
+            agent_display_name=msg_row["agent_display_name"] if "agent_display_name" in msg_row.keys() else None,  # noqa: SIM118
+            agent_nesting_level=msg_row["agent_nesting_level"] if "agent_nesting_level" in msg_row.keys() else 0,  # noqa: SIM118
+            original_content=msg_row["original_content"] if "original_content" in msg_row.keys() else None,  # noqa: SIM118
+            cleanup_model=msg_row["cleanup_model"] if "cleanup_model" in msg_row.keys() else None,  # noqa: SIM118
+        )
+        messages_by_id[msg_id] = msg
+        if child_id_map:
+            content_block_child_ids[msg_id] = child_id_map
+
+    # Build tree: link children to parents
+    for msg_row in msg_rows:
+        msg_id = msg_row["id"]
+        parent_id = msg_row["parent_message_id"] if "parent_message_id" in msg_row.keys() else None  # noqa: SIM118
+        if parent_id and parent_id in messages_by_id:
+            messages_by_id[parent_id].children.append(messages_by_id[msg_id])
+
+    # Link content blocks to child messages
+    for parent_msg_id, block_map in content_block_child_ids.items():
+        parent_msg = messages_by_id.get(parent_msg_id)
+        if not parent_msg:
+            continue
+        for block_idx, child_msg_id in block_map.items():
+            child_msg = messages_by_id.get(child_msg_id)
+            if child_msg and block_idx < len(parent_msg.content_blocks):
+                parent_msg.content_blocks[block_idx].child_message = child_msg
+                # Populate deprecated fields for backward compat
+                parent_msg.content_blocks[block_idx].content_blocks = child_msg.content_blocks
+                parent_msg.content_blocks[block_idx].tool_invocations = child_msg.tool_invocations
+                parent_msg.content_blocks[block_idx].file_changes = child_msg.file_changes
+                parent_msg.content_blocks[block_idx].command_runs = child_msg.command_runs
+
+    # Collect top-level messages only (no parent) in insertion order
+    top_level_ordered: list[ChatMessage] = []
+    seen: set[int] = set()
+    for msg_row in msg_rows:
+        parent_id = msg_row["parent_message_id"] if "parent_message_id" in msg_row.keys() else None  # noqa: SIM118
+        msg_id = msg_row["id"]
+        if parent_id is None and msg_id not in seen:
+            seen.add(msg_id)
+            top_level_ordered.append(messages_by_id[msg_id])
 
     # Helper to safely get optional fields from sqlite3.Row
     def safe_get(key):
@@ -149,7 +267,7 @@ def get_cst_session(conn: sqlite3.Connection, session_id: str) -> ChatSession | 
         session_id=row["session_id"],
         workspace_name=row["workspace_name"],
         workspace_path=row["workspace_path"],
-        messages=messages,
+        messages=top_level_ordered,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
         source_file=row["source_file"],
@@ -344,7 +462,7 @@ def get_messages_markdown(
 
     cursor = conn.cursor()
 
-    # Build query based on range
+    # Build query based on range (exclude child messages — they render through parents)
     if start is not None or end is not None:
         # Convert to 0-based indices
         start_idx = (start - 1) if start else 0
@@ -355,6 +473,7 @@ def get_messages_markdown(
             SELECT id, role, content, timestamp, cached_markdown, message_index
             FROM cst_messages
             WHERE session_id = ? AND message_index >= ? AND message_index <= ?
+                AND parent_message_id IS NULL
             ORDER BY message_index
             """,
             (session_id, start_idx, end_idx),
@@ -364,7 +483,7 @@ def get_messages_markdown(
             """
             SELECT id, role, content, timestamp, cached_markdown, message_index
             FROM cst_messages
-            WHERE session_id = ?
+            WHERE session_id = ? AND parent_message_id IS NULL
             ORDER BY message_index
             """,
             (session_id,),
@@ -387,8 +506,8 @@ def get_messages_markdown(
             message_id = row["id"]
             message_index = row["message_index"] + 1  # Convert to 1-based
 
-            # Create message object
-            message = reconstruct_message(cursor, message_id, row)
+            # Create message object with child messages linked
+            message, _ = reconstruct_message(cursor, message_id, row, link_children=True)
 
             include_diffs = "diffs" in content_set
             include_tool_inputs = "tool-inputs" in content_set
@@ -462,7 +581,7 @@ def list_sessions(
                 s.repository_url,
                 s.type as session_type,
                 s.source_format,
-                COUNT(m.id) as message_count,
+                COUNT(CASE WHEN m.parent_message_id IS NULL THEN 1 END) as message_count,
                 MAX(m.timestamp) as last_message_at,
                 (SELECT content FROM cst_messages m2
                  WHERE m2.session_id = s.session_id AND m2.role = 'user'
@@ -483,7 +602,7 @@ def list_sessions(
         if conditions:
             query += " WHERE " + " AND ".join(conditions)
 
-        query += " GROUP BY s.session_id HAVING COUNT(m.id) > 0 ORDER BY last_message_at DESC, s.created_at DESC"
+        query += " GROUP BY s.session_id HAVING COUNT(CASE WHEN m.parent_message_id IS NULL THEN 1 END) > 0 ORDER BY last_message_at DESC, s.created_at DESC"
 
         cursor.execute(query, params)
         for row in cursor.fetchall():
@@ -617,7 +736,7 @@ def get_stats(conn: sqlite3.Connection, *, has_cst: bool) -> dict:
         cursor.execute("SELECT COUNT(*) FROM cst_sessions")
         cst_session_count = cursor.fetchone()[0]
 
-        cursor.execute("SELECT COUNT(*) FROM cst_messages")
+        cursor.execute("SELECT COUNT(*) FROM cst_messages WHERE parent_message_id IS NULL")
         cst_message_count = cursor.fetchone()[0]
 
         cursor.execute("SELECT COUNT(DISTINCT workspace_name) FROM cst_sessions")

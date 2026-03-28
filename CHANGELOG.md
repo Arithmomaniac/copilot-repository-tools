@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-03-27
+
+### Added
+
+- **Schema v6**: Promote subagents to first-class database rows via self-join on `cst_messages` (`parent_message_id`, `child_index`) and `cst_content_blocks.child_message_id`, replacing opaque `nested_data` JSON blobs
+- **Schema**: SQL views `cst_messages_tree`, `cst_all_tool_invocations`, `cst_subagent_summary` for convenient querying of agent hierarchies
+- **Performance**: `batch_connection()` context manager — reuses a single SQLite connection with `PRAGMA foreign_keys = OFF` and 64MB cache during bulk operations, fixing pre-existing bottlenecks exposed by full re-enrichment (1GB rebuild completes in ~25s)
+- **Performance**: Parallel parsing with `ThreadPoolExecutor` (4 workers) — lazy iterator to bound memory, parse in parallel, write serially
+- **Performance**: Bulk-fetch in `get_cst_session()` — 5 queries total instead of O(N×4), using in-memory tree assembly
+- **Scanner**: Infer subagent completion from `tool.execution_complete` when `subagent.completed` event is absent (fixes all subagents showing "incomplete" in CLI sessions)
+- **Storage**: `_delete_session_data()` helper for FK-safe explicit child table deletion (required since CASCADE doesn't fire with FK=OFF)
+- **Storage**: Reentrancy guard on `batch_connection()` — raises `RuntimeError` on nested calls
+- **Storage**: Per-session error handling in enrichment loop — single failure no longer rolls back entire batch
+
+### Changed
+
+- **Schema**: Drop/recreate migration from v5 to v6 (safe — `cst_*` tables are derived from source files)
+- **Search**: FTS indexes all messages; search gates on `agent_nesting_level = 0` by default to avoid duplicate hits from child messages
+- **Scanner**: Recursive `_insert_content_blocks_recursive()` handles arbitrary nesting depth for agent-inside-agent patterns
+- **UI**: Tighter spacing for tool invocations, collapsibles, and message cards in web viewer
+
 ## [0.6.4] - 2026-03-24
 
 ### Changed

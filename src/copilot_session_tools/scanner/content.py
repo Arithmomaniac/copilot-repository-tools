@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from .models import ContentBlock
+from .models import ChatMessage, ContentBlock
 
 
 def _get_first_truthy_value(*values: str | int | None) -> str | None:
@@ -206,7 +206,22 @@ def _merge_content_blocks(blocks: list[tuple]) -> list[ContentBlock]:
                 current_kind = None
                 current_description = None
             # Add as standalone block, attaching nested data for subagent blocks
-            cb = ContentBlock(kind=kind, content=content, description=description)
+            if kind in ("subagent", "subagent_failed", "subagent_incomplete"):
+                child_msg = ChatMessage(
+                    role="assistant",
+                    content=content,
+                    agent_display_name=description,
+                    # TODO: For multi-level nesting, derive from parent's nesting level
+                    agent_nesting_level=1,
+                    tool_invocations=nested_tool_invocations or [],
+                    file_changes=nested_file_changes or [],
+                    command_runs=nested_command_runs or [],
+                    content_blocks=nested_blocks_data or [],
+                )
+                cb = ContentBlock(kind=kind, content=content, description=description, child_message=child_msg)
+            else:
+                cb = ContentBlock(kind=kind, content=content, description=description)
+            # Deprecated fields — kept for backward compat during transition
             if nested_blocks_data:
                 cb.content_blocks = nested_blocks_data
             if nested_tool_invocations:

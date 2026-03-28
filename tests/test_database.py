@@ -1661,6 +1661,111 @@ class TestRelevanceWithRecency:
         assert session_ids[0] == "newest", "Newest session should be first with date sorting"
 
 
+class TestSubagentSearchBehavior:
+    """Tests that FTS and search correctly handle parent/child (subagent) messages.
+
+    Parent message content should NOT contain subagent text.
+    Child messages are separate rows with agent_nesting_level=1 and parent_message_id set.
+    The agent-details search flag gates visibility of child content.
+    """
+
+    @pytest.fixture
+    def subagent_db(self, tmp_path):
+        """Database with a session containing a parent message and a subagent child."""
+        db = Database(tmp_path / "subagent_search.db")
+        child_msg = ChatMessage(
+            role="assistant",
+            content="unique_child_token_xyz from the subagent",
+            agent_nesting_level=1,
+            agent_id="task-agent-42",
+            agent_display_name="General Purpose Agent",
+            tool_invocations=[
+                ToolInvocation(
+                    name="grep",
+                    input="unique_tool_pattern_abc",
+                    result="found 3 matches",
+                ),
+            ],
+        )
+        session = ChatSession(
+            session_id="subagent-search-session",
+            workspace_name="subagent-project",
+            workspace_path="/home/user/subagent-project",
+            messages=[
+                ChatMessage(role="user", content="Please run the agent"),
+                ChatMessage(
+                    role="assistant",
+                    content="Parent says hello",
+                    content_blocks=[
+                        ContentBlock(kind="text", content="Parent says hello"),
+                        ContentBlock(
+                            kind="subagent",
+                            content="",
+                            child_message=child_msg,
+                        ),
+                    ],
+                ),
+            ],
+            created_at="2025-01-15T10:30:00Z",
+            vscode_edition="stable",
+        )
+        db.add_session(session)
+        return db
+
+    def test_parent_fts_content_excludes_subagent_text(self, subagent_db):
+        """FTS search for child-only text without agent-details returns nothing."""
+        results = subagent_db.search("unique_child_token_xyz", search_content_set={"messages"})
+        assert len(results) == 0
+
+    def test_child_fts_searchable_with_agent_details(self, subagent_db):
+        """FTS search for child text with agent-details finds the child message."""
+        results = subagent_db.search(
+            "unique_child_token_xyz",
+            search_content_set={"messages", "agent-details"},
+        )
+        msg_hits = [r for r in results if r["match_type"] == "message"]
+        assert len(msg_hits) > 0
+        assert "unique_child_token_xyz" in msg_hits[0]["content"]
+
+    def test_parent_text_still_searchable(self, subagent_db):
+        """Parent message text is searchable without agent-details."""
+        results = subagent_db.search("Parent says hello", search_content_set={"messages"})
+        msg_hits = [r for r in results if r["match_type"] == "message"]
+        assert len(msg_hits) > 0
+        assert "Parent says hello" in msg_hits[0]["content"]
+
+    def test_child_tool_invocations_searchable(self, subagent_db):
+        """Child tool invocations are gated by agent-details."""
+        # Without agent-details: child tools hidden
+        results_no_agent = subagent_db.search(
+            "unique_tool_pattern_abc",
+            search_content_set={"tools", "tool-inputs"},
+        )
+        tool_hits = [r for r in results_no_agent if r["match_type"] == "tool_invocation"]
+        assert len(tool_hits) == 0
+
+        # With agent-details: child tools visible
+        results_with_agent = subagent_db.search(
+            "unique_tool_pattern_abc",
+            search_content_set={"tools", "tool-inputs", "agent-details"},
+        )
+        tool_hits = [r for r in results_with_agent if r["match_type"] == "tool_invocation"]
+        assert len(tool_hits) > 0
+        assert "unique_tool_pattern_abc" in tool_hits[0]["content"]
+
+    def test_search_result_includes_parent_message_id(self, subagent_db):
+        """Child message search results include parent_message_id."""
+        results = subagent_db.search(
+            "unique_child_token_xyz",
+            search_content_set={"messages", "agent-details"},
+        )
+        msg_hits = [r for r in results if r["match_type"] == "message"]
+        assert len(msg_hits) > 0
+        hit = msg_hits[0]
+        assert "parent_message_id" in hit
+        assert hit["parent_message_id"] is not None
+
+
 # ---------------------------------------------------------------------------
 # Built-in schema SQL (mirrors Copilot CLI's own tables)
 # ---------------------------------------------------------------------------
@@ -1958,3 +2063,423 @@ class TestTwoTierRendering:
         matched = [s for s in sessions if s["session_id"] == "sess-un"]
         assert len(matched) == 1
         assert matched[0]["is_enriched"] is False
+
+
+class TestSchemaV6:
+    """Tests for the v6 schema and migration from v5."""
+
+    def test_v6_schema_has_new_columns(self):
+        """Fresh DB created via ensure_schema has all v6 columns and views."""
+        from copilot_session_tools.db_storage import ensure_schema
+
+        conn = sqlite3.connect(":memory:")
+        ensure_schema(conn)
+
+        # Verify parent_message_id and child_index on cst_messages
+        msg_cols = {row[1] for row in conn.execute("PRAGMA table_info(cst_messages)")}
+        assert "parent_message_id" in msg_cols
+        assert "child_index" in msg_cols
+
+        # Verify child_message_id on cst_content_blocks
+        cb_cols = {row[1] for row in conn.execute("PRAGMA table_info(cst_content_blocks)")}
+        assert "child_message_id" in cb_cols
+        # nested_data should NOT exist (removed in v6)
+        assert "nested_data" not in cb_cols
+
+        # Verify views exist by querying them (empty result is fine)
+        for view_name in ("cst_messages_tree", "cst_all_tool_invocations", "cst_subagent_summary"):
+            conn.execute(f"SELECT * FROM {view_name} LIMIT 0")  # noqa: S608
+
+        conn.close()
+
+    def test_v5_to_v6_migration(self):
+        """Simulating a v5 DB triggers drop/recreate migration to v6."""
+        from copilot_session_tools.db_storage import CST_SCHEMA_VERSION, ensure_schema
+
+        conn = sqlite3.connect(":memory:")
+        # Bootstrap a v6 schema first, then downgrade version to simulate v5
+        ensure_schema(conn)
+        conn.execute("UPDATE cst_schema_version SET version = 5")
+
+        # Insert dummy data that should be wiped by migration
+        conn.execute(
+            "INSERT INTO cst_sessions (session_id, parser_version) VALUES (?, ?)",
+            ("old-session", 1),
+        )
+        assert conn.execute("SELECT COUNT(*) FROM cst_sessions").fetchone()[0] == 1
+
+        # Re-run ensure_schema — should detect v5 and drop/recreate
+        ensure_schema(conn)
+
+        # Schema version should now be current (6)
+        version = conn.execute("SELECT version FROM cst_schema_version").fetchone()[0]
+        assert version == CST_SCHEMA_VERSION
+        assert version == 6
+
+        # Old data should be gone (drop/recreate wipes everything)
+        assert conn.execute("SELECT COUNT(*) FROM cst_sessions").fetchone()[0] == 0
+
+        # New columns should exist
+        msg_cols = {row[1] for row in conn.execute("PRAGMA table_info(cst_messages)")}
+        assert "parent_message_id" in msg_cols
+        assert "child_index" in msg_cols
+
+        conn.close()
+
+
+class TestEnrichmentFailureDefault:
+    """Verify that enrichment failures do not stamp the version by default."""
+
+    def test_stamp_version_on_failure_defaults_to_false(self):
+        """_enrich_session_batch must default stamp_version_on_failure to False."""
+        import inspect
+
+        from copilot_session_tools.refresh import _enrich_session_batch
+
+        sig = inspect.signature(_enrich_session_batch)
+        assert sig.parameters["stamp_version_on_failure"].default is False
+
+
+class TestSubagentChildMessages:
+    """Tests for subagent child message DB insertion → retrieval roundtrip."""
+
+    @pytest.fixture
+    def child_session_db(self, tmp_path):
+        """Database with a session containing parent + child subagent messages."""
+        db = Database(tmp_path / "child_msg.db")
+        child_msg = ChatMessage(
+            role="assistant",
+            content="Child found 3 files",
+            agent_display_name="Explore Agent: Find files",
+            agent_nesting_level=1,
+            tool_invocations=[ToolInvocation(name="grep", input="pattern", result="3 matches")],
+            command_runs=[CommandRun(command="uv run pytest", result="passed")],
+            content_blocks=[ContentBlock(kind="text", content="Child found 3 files")],
+        )
+        parent_msg = ChatMessage(
+            role="assistant",
+            content="Let me search for files.",
+            content_blocks=[
+                ContentBlock(kind="text", content="Let me search for files."),
+                ContentBlock(
+                    kind="subagent",
+                    content="Child found 3 files",
+                    description="Explore Agent: Find files",
+                    child_message=child_msg,
+                ),
+            ],
+            children=[child_msg],
+        )
+        session = ChatSession(
+            session_id="test-child-roundtrip",
+            workspace_name="test",
+            workspace_path="/tmp/test",
+            messages=[
+                ChatMessage(role="user", content="Find files"),
+                parent_msg,
+            ],
+            created_at="2025-06-01T10:00:00Z",
+            vscode_edition="stable",
+        )
+        db.add_session(session)
+        return db
+
+    def test_child_message_roundtrip(self, child_session_db):
+        """Insert session with child message, retrieve via get_session, verify tree."""
+        retrieved = child_session_db.get_session("test-child-roundtrip")
+        assert retrieved is not None
+        assert len(retrieved.messages) == 2  # user + parent assistant
+
+        parent_msg = retrieved.messages[1]
+        assert len(parent_msg.children) == 1
+
+        # ContentBlock has child_message populated
+        subagent_block = parent_msg.content_blocks[1]
+        assert subagent_block.kind == "subagent"
+        assert subagent_block.child_message is not None
+
+        child = subagent_block.child_message
+        assert child.agent_nesting_level == 1
+        assert child.agent_display_name == "Explore Agent: Find files"
+
+        # Tool invocations preserved
+        assert len(child.tool_invocations) == 1
+        assert child.tool_invocations[0].name == "grep"
+        assert child.tool_invocations[0].input == "pattern"
+        assert child.tool_invocations[0].result == "3 matches"
+
+        # Command runs preserved
+        assert len(child.command_runs) == 1
+        assert child.command_runs[0].command == "uv run pytest"
+        assert child.command_runs[0].result == "passed"
+
+    def test_child_message_parent_link(self, child_session_db):
+        """Verify parent_message_id linkage at the DB level."""
+        with sqlite3.connect(str(child_session_db.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT id, parent_message_id, child_index, agent_nesting_level FROM cst_messages WHERE session_id = ? ORDER BY id",
+                ("test-child-roundtrip",),
+            )
+            rows = [dict(r) for r in cursor.fetchall()]
+
+        # Should have 3 rows: user, parent assistant, child assistant
+        assert len(rows) == 3
+
+        # User and parent have no parent_message_id
+        parents = [r for r in rows if r["parent_message_id"] is None]
+        children = [r for r in rows if r["parent_message_id"] is not None]
+        assert len(parents) == 2  # user + parent assistant
+        assert len(children) == 1
+
+        child_row = children[0]
+        next(r for r in parents if (r["agent_nesting_level"] == 0 and r["id"] != parents[0]["id"]) or r == parents[1])
+        # The child's parent_message_id should point to the assistant parent
+        assert child_row["parent_message_id"] == parents[1]["id"]
+        assert child_row["agent_nesting_level"] == 1
+        assert child_row["child_index"] is not None
+
+    def test_content_block_child_message_id(self, child_session_db):
+        """Verify cst_content_blocks has child_message_id set on subagent blocks."""
+        with sqlite3.connect(str(child_session_db.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            # Get the parent assistant message id
+            cursor.execute(
+                "SELECT id FROM cst_messages WHERE session_id = ? AND parent_message_id IS NULL AND role = 'assistant'",
+                ("test-child-roundtrip",),
+            )
+            parent_id = cursor.fetchone()["id"]
+
+            # Get the child message id
+            cursor.execute(
+                "SELECT id FROM cst_messages WHERE session_id = ? AND parent_message_id IS NOT NULL",
+                ("test-child-roundtrip",),
+            )
+            child_id = cursor.fetchone()["id"]
+
+            # Check content block for subagent kind
+            cursor.execute(
+                "SELECT child_message_id FROM cst_content_blocks WHERE kind = 'subagent' AND message_id = ?",
+                (parent_id,),
+            )
+            block_row = cursor.fetchone()
+            assert block_row is not None
+            assert block_row["child_message_id"] == child_id
+
+            # Non-subagent blocks should have NULL child_message_id
+            cursor.execute(
+                "SELECT child_message_id FROM cst_content_blocks WHERE kind = 'text' AND message_id = ?",
+                (parent_id,),
+            )
+            text_block = cursor.fetchone()
+            assert text_block is not None
+            assert text_block["child_message_id"] is None
+
+    def test_message_count_excludes_children(self, tmp_path):
+        """list_sessions and get_stats should count only parent messages, not children."""
+        db = Database(tmp_path / "count_test.db")
+        child_msg = ChatMessage(
+            role="assistant",
+            content="child work",
+            agent_nesting_level=1,
+            agent_display_name="Task Agent",
+            content_blocks=[ContentBlock(kind="text", content="child work")],
+        )
+        session = ChatSession(
+            session_id="count-test",
+            workspace_name="test",
+            workspace_path="/tmp/test",
+            messages=[
+                ChatMessage(role="user", content="msg1"),
+                ChatMessage(
+                    role="assistant",
+                    content="parent1",
+                    content_blocks=[
+                        ContentBlock(kind="text", content="parent1"),
+                        ContentBlock(kind="subagent", content="", child_message=child_msg),
+                    ],
+                ),
+                ChatMessage(role="user", content="msg2"),
+                ChatMessage(role="assistant", content="parent2"),
+            ],
+            created_at="2025-06-01T10:00:00Z",
+            vscode_edition="stable",
+        )
+        db.add_session(session)
+
+        # list_sessions should count 4 top-level messages (not 5)
+        sessions = db.list_sessions()
+        target = [s for s in sessions if s["session_id"] == "count-test"]
+        assert len(target) == 1
+        assert target[0]["message_count"] == 4
+
+        # get_stats should also exclude children
+        stats = db.get_stats()
+        assert stats["message_count"] >= 4
+        # Verify by direct query
+        with sqlite3.connect(str(db.db_path)) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM cst_messages WHERE session_id = 'count-test'")
+            total_rows = cursor.fetchone()[0]
+            cursor.execute("SELECT COUNT(*) FROM cst_messages WHERE session_id = 'count-test' AND parent_message_id IS NULL")
+            parent_rows = cursor.fetchone()[0]
+        assert total_rows == 5  # 4 top-level + 1 child
+        assert parent_rows == 4
+
+    def test_get_messages_markdown_excludes_children(self, child_session_db):
+        """get_messages_markdown should not render child messages as separate top-level sections."""
+        md = child_session_db.get_messages_markdown("test-child-roundtrip")
+        assert md is not None
+        assert len(md) > 0
+
+        # Count top-level message sections ("## Message N:")
+        # Should have 2 top-level messages, not 3
+        lines = md.split("\n")
+        header_lines = [line for line in lines if line.startswith("## Message")]
+        assert len(header_lines) == 2
+
+    def test_sql_views(self, child_session_db):
+        """Verify SQL views return correct data for parent/child messages."""
+        with sqlite3.connect(str(child_session_db.db_path)) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.cursor()
+
+            # -- cst_messages_tree --
+            cursor.execute(
+                "SELECT * FROM cst_messages_tree WHERE session_id = ? ORDER BY id",
+                ("test-child-roundtrip",),
+            )
+            tree_rows = [dict(r) for r in cursor.fetchall()]
+            assert len(tree_rows) == 3  # user, parent, child
+
+            child_tree = [r for r in tree_rows if r["parent_message_id"] is not None]
+            assert len(child_tree) == 1
+            assert child_tree[0]["agent_display_name"] == "Explore Agent: Find files"
+            assert child_tree[0]["parent_agent_name"] is None  # parent is a plain assistant (no agent_display_name)
+            assert child_tree[0]["agent_nesting_level"] == 1
+
+            parent_tree = [r for r in tree_rows if r["parent_message_id"] is None and r["role"] == "assistant"]
+            assert len(parent_tree) == 1
+            assert parent_tree[0]["parent_agent_name"] is None
+
+            # -- cst_all_tool_invocations --
+            cursor.execute(
+                "SELECT * FROM cst_all_tool_invocations WHERE session_id = ?",
+                ("test-child-roundtrip",),
+            )
+            tool_rows = [dict(r) for r in cursor.fetchall()]
+            assert len(tool_rows) == 1
+            assert tool_rows[0]["name"] == "grep"
+            assert tool_rows[0]["agent_display_name"] == "Explore Agent: Find files"
+            assert tool_rows[0]["agent_nesting_level"] == 1
+            assert tool_rows[0]["parent_message_id"] is not None
+
+            # -- cst_subagent_summary --
+            cursor.execute(
+                "SELECT * FROM cst_subagent_summary WHERE session_id = ?",
+                ("test-child-roundtrip",),
+            )
+            summary_rows = [dict(r) for r in cursor.fetchall()]
+            assert len(summary_rows) == 1
+            assert summary_rows[0]["agent_display_name"] == "Explore Agent: Find files"
+            assert summary_rows[0]["tool_count"] == 1
+            assert summary_rows[0]["command_count"] == 1
+            assert summary_rows[0]["content_block_count"] == 1
+
+    def test_grandchild_message_roundtrip(self, tmp_path):
+        """Test recursive child→grandchild nesting survives insert and retrieval."""
+        db = Database(tmp_path / "grandchild_msg.db")
+
+        # Create grandchild message (nesting_level=2)
+        grandchild_msg = ChatMessage(
+            role="assistant",
+            content="Grandchild result",
+            agent_display_name="Deep Agent",
+            agent_nesting_level=2,
+            content_blocks=[ContentBlock(kind="text", content="Grandchild result")],
+        )
+
+        # Create child message containing grandchild
+        child_msg = ChatMessage(
+            role="assistant",
+            content="Child delegated work",
+            agent_display_name="Mid Agent",
+            agent_nesting_level=1,
+            content_blocks=[
+                ContentBlock(kind="text", content="Child delegated work"),
+                ContentBlock(
+                    kind="subagent",
+                    content="Grandchild result",
+                    description="Deep Agent",
+                    child_message=grandchild_msg,
+                ),
+            ],
+            children=[grandchild_msg],
+        )
+
+        # Create parent message containing child
+        parent_msg = ChatMessage(
+            role="assistant",
+            content="Starting search",
+            content_blocks=[
+                ContentBlock(kind="text", content="Starting search"),
+                ContentBlock(
+                    kind="subagent",
+                    content="Child delegated work",
+                    description="Mid Agent",
+                    child_message=child_msg,
+                ),
+            ],
+            children=[child_msg],
+        )
+
+        session = ChatSession(
+            session_id="test-grandchild",
+            workspace_name="test",
+            workspace_path="/test",
+            messages=[
+                ChatMessage(role="user", content="Go deep"),
+                parent_msg,
+            ],
+            created_at="2025-06-01T10:00:00Z",
+            vscode_edition="stable",
+        )
+        db.add_session(session)
+
+        # Retrieve and verify the full tree
+        retrieved = db.get_session("test-grandchild")
+        assert retrieved is not None
+        assert len(retrieved.messages) == 2  # user + parent
+
+        parent = retrieved.messages[1]
+        assert len(parent.children) == 1
+
+        child = parent.children[0]
+        assert child.agent_display_name == "Mid Agent"
+        assert child.agent_nesting_level == 1
+        assert len(child.children) == 1
+
+        grandchild = child.children[0]
+        assert grandchild.agent_display_name == "Deep Agent"
+        assert grandchild.agent_nesting_level == 2
+        assert grandchild.content == "Grandchild result"
+
+        # Verify content block linkage at each level
+        child_block = parent.content_blocks[1]
+        assert child_block.kind == "subagent"
+        assert child_block.child_message is not None
+        assert child_block.child_message.agent_display_name == "Mid Agent"
+
+        grandchild_block = child_block.child_message.content_blocks[1]
+        assert grandchild_block.kind == "subagent"
+        assert grandchild_block.child_message is not None
+        assert grandchild_block.child_message.agent_display_name == "Deep Agent"
+
+        # Verify DB row count: user + parent + child + grandchild = 4
+        with sqlite3.connect(str(db.db_path)) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM cst_messages WHERE session_id = 'test-grandchild'")
+            assert cursor.fetchone()[0] == 4

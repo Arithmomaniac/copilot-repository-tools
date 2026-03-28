@@ -394,9 +394,9 @@ header h1 {
 }
 
 .message {
-    padding: 9px 14px;
-    margin-bottom: 6px;
-    border-radius: 8px;
+    padding: 8px 12px;
+    margin-bottom: 8px;
+    border-radius: 6px;
     border: 1px solid var(--border-color);
 }
 
@@ -449,9 +449,9 @@ header h1 {
 .message-header {
     display: flex;
     align-items: center;
-    gap: 8px;
-    margin-bottom: 6px;
-    padding: 2px 0 4px 0;
+    gap: 6px;
+    margin-bottom: 4px;
+    padding: 1px 0 3px 0;
     border-bottom: 1px solid var(--border-color);
     position: sticky;
     top: 38px;
@@ -494,20 +494,21 @@ header h1 {
 
 /* Collapsible sections */
 .collapsible {
-    margin-top: 12px;
+    margin-top: 6px;
     border: 1px solid var(--border-color);
-    border-radius: 6px;
+    border-radius: 4px;
     background-color: var(--bg-tertiary);
 }
 
 .collapsible summary {
-    padding: 6px 10px;
+    padding: 4px 8px;
     cursor: pointer;
     font-weight: 500;
     color: var(--text-secondary);
+    font-size: 0.85em;
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     user-select: none;
 }
 
@@ -521,7 +522,7 @@ header h1 {
 }
 
 .collapsible-content {
-    padding: 8px 10px;
+    padding: 6px 8px;
     border-top: 1px solid var(--border-color);
 }
 
@@ -942,27 +943,38 @@ header h1 {
 
 /* Tool invocations */
 .tool-summary {
-    margin: 8px 0;
+    margin: 4px 0;
     color: var(--text-secondary);
-    font-size: 0.9em;
+    font-size: 0.85em;
 }
 
 /* Individual tool collapsible container */
 .tool-invocation-wrapper {
-    margin: 8px 0;
+    margin: 4px 0;
     border: 1px solid var(--border-color);
-    border-radius: 6px;
+    border-radius: 4px;
     background-color: var(--bg-tertiary);
 }
 
+/* Stack consecutive tool wrappers tighter — merge borders */
+.tool-invocation-wrapper + .tool-invocation-wrapper {
+    margin-top: -1px;
+    border-top-left-radius: 0;
+    border-top-right-radius: 0;
+}
+.tool-invocation-wrapper:has(+ .tool-invocation-wrapper) {
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+}
+
 .tool-invocation-wrapper summary {
-    padding: 10px 14px;
+    padding: 5px 10px;
     cursor: pointer;
-    font-size: 0.9em;
+    font-size: 0.85em;
     color: var(--text-primary);
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     user-select: none;
     flex-wrap: wrap;
 }
@@ -998,13 +1010,13 @@ header h1 {
 }
 
 .tool-invocation-content {
-    padding: 12px 14px;
+    padding: 8px 10px;
     border-top: 1px solid var(--border-color);
 }
 
 .tool-invocation {
-    margin-bottom: 16px;
-    padding-bottom: 16px;
+    margin-bottom: 10px;
+    padding-bottom: 10px;
     border-bottom: 1px solid var(--border-color);
 }
 

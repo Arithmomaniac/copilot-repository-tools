@@ -82,4 +82,9 @@ tests/snapshots/fixtures/
 tests/snapshots/baselines/
 
 # Machine-specific skill config (contains local paths)
-.claude/skills/*/config.local.json
+.claude/skills/*/config.local.json069be695-2026-03-08.png
+82ae2595-2026-03-08.png
+d7a4dea0-2026-03-08.png
+e0ba8138-2026-03-08.png
+demo.md
+=
