@@ -10,7 +10,7 @@ Works out of the box with the Copilot CLI's built-in session store (Chronicle). 
 
 ## Prerequisites
 
-**Copilot CLI v0.0.412+** is required. This version introduced cross-session memory ("Chronicle"), which creates the `~/.copilot/session-store.db` database that this tool extends. Update with:
+**Copilot CLI v0.0.412+** is recommended. This version introduced cross-session memory ("Chronicle"), which creates `~/.copilot/session-store.db`. When present, copilot-session-tools can discover CLI sessions from Chronicle for enrichment. Update with:
 
 ```bash
 copilot --update
@@ -77,14 +77,14 @@ Under the hood, the skill calls `copilot-session-tools search` and `export-markd
 
 ## How It Works
 
-This tool extends `~/.copilot/session-store.db` — the Copilot CLI's own database — by adding `cst_*`-prefixed enrichment tables. The built-in tables are **never modified**.
+This tool stores enriched session data in its own database (`~/.copilot/copilot-session-tools.db`), separate from the Copilot CLI's Chronicle database (`session-store.db`). Chronicle is optionally read for CLI session discovery and unenriched fallback — but is never modified.
 
 **Two-tier rendering:**
 
 | Tier | Data Source | What You See | When |
 |------|-----------|-------------|------|
-| **Unenriched** | Built-in `sessions` + `turns` tables | Session title, user messages, assistant text | Immediately, no scan needed |
-| **Enriched** | `cst_*` tables | Tool invocations, file diffs, command output, thinking blocks, content blocks | After running `scan` or `enrich` |
+| **Unenriched** | Chronicle `sessions` + `turns` tables | Session title, user messages, assistant text | Immediately, no scan needed (requires Chronicle) |
+| **Enriched** | `cst_*` tables in `copilot-session-tools.db` | Tool invocations, file diffs, command output, thinking blocks, content blocks | After running `scan` or `enrich` |
 
 If new turns arrive after enrichment (e.g., you continued a conversation), the web viewer appends them below the enriched messages with a "new since last scan" divider.
 
@@ -252,12 +252,10 @@ The tool writes to `cst_*` enrichment tables alongside the CLI's built-in tables
 | `cst_file_changes` | File edits with diffs |
 | `cst_command_runs` | Shell commands and output |
 
-**Recovery:** If `cst_*` tables get corrupted, delete them and re-scan. Built-in data is unaffected:
+**Recovery:** If `cst_*` tables get corrupted, just delete the database and re-scan. Chronicle data is completely unaffected since it lives in a separate file:
 
 ```bash
-sqlite3 ~/.copilot/session-store.db \
-  "SELECT 'DROP TABLE ' || name || ';' FROM sqlite_master WHERE name LIKE 'cst_%';" \
-  | sqlite3 ~/.copilot/session-store.db
+rm ~/.copilot/copilot-session-tools.db
 copilot-session-tools scan --full
 ```
 
