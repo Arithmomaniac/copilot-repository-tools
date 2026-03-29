@@ -88,8 +88,11 @@ class Database:
             self.chronicle_db_path: Path | None = Path(chronicle_db_path)
         else:
             candidate = self.db_path.parent / "session-store.db"
-            # Only use auto-detected path if it's a different file from db_path
-            self.chronicle_db_path = candidate if candidate != self.db_path else None
+            # If db_path IS session-store.db (backward compat), use it as Chronicle too
+            if candidate.resolve() == self.db_path.resolve():
+                self.chronicle_db_path = self.db_path
+            else:
+                self.chronicle_db_path = candidate
 
         self._ensure_schema()
 
@@ -104,7 +107,7 @@ class Database:
         if self._batch_conn is not None:
             yield self._batch_conn
             return
-        conn = sqlite3.connect(str(self.db_path))
+        conn = sqlite3.connect(str(self.db_path), uri=True)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA busy_timeout = 5000")
@@ -124,21 +127,33 @@ class Database:
     def _attach_chronicle(self, conn: sqlite3.Connection) -> bool:
         """ATTACH the Chronicle DB as ``chronicle`` schema on *conn*.
 
-        Returns True if attached successfully, False if Chronicle DB
-        is unavailable or attachment failed.
+        Uses a read-only URI to prevent accidental writes to Chronicle.
+        The connection must be opened with ``uri=True`` for this to work.
+        Returns True if attached successfully (or already attached),
+        False if Chronicle DB is unavailable or attachment failed.
         """
         if not self._has_chronicle():
             return False
+        # Check if chronicle is already attached (e.g., inside batch_connection)
         try:
-            conn.execute("ATTACH DATABASE ? AS chronicle", (str(self.chronicle_db_path),))
+            attached_dbs = [row[1] for row in conn.execute("PRAGMA database_list").fetchall()]
+            if "chronicle" in attached_dbs:
+                return True
+        except sqlite3.Error:
+            pass
+        try:
+            # ATTACH read-only via URI to prevent accidental writes.
+            # Forward slashes required for URI paths on all platforms.
+            chronicle_posix = str(self.chronicle_db_path).replace("\\", "/")
+            conn.execute(f"ATTACH DATABASE 'file:{chronicle_posix}?mode=ro' AS chronicle")
             return True
-        except sqlite3.OperationalError:
+        except sqlite3.Error:
             return False
 
     @staticmethod
     def _detach_chronicle(conn: sqlite3.Connection) -> None:
         """DETACH the ``chronicle`` schema from *conn*.  Safe to call even if not attached."""
-        with contextlib.suppress(sqlite3.OperationalError):
+        with contextlib.suppress(sqlite3.Error):
             conn.execute("DETACH DATABASE chronicle")
 
     @contextmanager
@@ -148,18 +163,18 @@ class Database:
         Yields ``(conn, has_chronicle)`` so callers know whether
         ``chronicle.*`` tables are accessible.
 
-        If a batch connection is active, ATTACHes on it (and detaches
-        when the context exits).
+        If a batch connection is active, ATTACHes on it.  DETACH is
+        skipped inside a batch (SQLite rejects it mid-transaction);
+        Chronicle stays attached for the batch's lifetime and is
+        released when the batch connection closes.
         """
         if self._batch_conn is not None:
             attached = self._attach_chronicle(self._batch_conn)
-            try:
-                yield self._batch_conn, attached
-            finally:
-                if attached:
-                    self._detach_chronicle(self._batch_conn)
+            # Don't detach inside batch — DETACH fails mid-transaction,
+            # and re-attach is idempotent (checked via pragma_database_list)
+            yield self._batch_conn, attached
             return
-        conn = sqlite3.connect(str(self.db_path))
+        conn = sqlite3.connect(str(self.db_path), uri=True)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA busy_timeout = 5000")
@@ -197,7 +212,7 @@ class Database:
         """
         if self._batch_conn is not None:
             raise RuntimeError("batch_connection() is not reentrant — already inside a batch")
-        conn = sqlite3.connect(str(self.db_path))
+        conn = sqlite3.connect(str(self.db_path), uri=True)
         conn.row_factory = sqlite3.Row
         # FK enforcement OFF for batch perf — CASCADE checks cause ~38x slowdown
         conn.execute("PRAGMA foreign_keys = OFF")
@@ -219,6 +234,11 @@ class Database:
         """Ensure the cst_* schema exists in the database."""
         with self._get_connection() as conn:
             db_storage.ensure_schema(conn)
+        # Check Chronicle schema version (warns if incompatible)
+        if self._has_chronicle():
+            with self._get_chronicle_connection() as (conn, has_chronicle):
+                if has_chronicle:
+                    db_storage.check_builtin_schema_version(conn)
 
     def has_cst_tables(self) -> bool:
         """Check if cst_* extension tables exist in the database."""
