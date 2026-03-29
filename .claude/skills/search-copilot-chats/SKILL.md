@@ -1,22 +1,13 @@
 ---
 name: search-copilot-chats
-description: Search across archived Copilot chat sessions (VS Code + CLI) using the copilot-session-tools CLI. Use when the user says "search my chats", "find in chat history", "what did we discuss about X", "look up past sessions", "scan chats", or references a session-state path or session GUID. Also covers exporting sessions as markdown or HTML and launching the web viewer.
+description: Search across archived Copilot chat sessions (VS Code + CLI) using the copilot-session-tools CLI. Use when the user says "search my chats", "find in chat history", "what did we discuss about X", "look up past sessions", "scan chats", "session history", "recent session where", "earlier conversation", "previous session", "that session where", or references a session-state path or session GUID. Also covers exporting sessions as markdown or HTML and launching the web viewer.
 ---
 
 # Search Copilot Chats
 
-Search, browse, and export archived GitHub Copilot chat sessions from VS Code (Stable & Insiders) and the Copilot CLI. Uses the **copilot-session-tools** CLI backed by a local SQLite database with FTS5 full-text search.
+Search, browse, and export archived GitHub Copilot chat sessions from VS Code (Stable & Insiders) and the Copilot CLI. Uses the **copilot-session-tools** CLI backed by a local SQLite database with FTS5 full-text search. Requires Copilot CLI v0.0.412+ (`uv tool install copilot-session-tools[all]` if not on PATH).
 
-## Command discovery
-
-**Do not memorize flags.** Always run `--help` to discover available commands and options:
-
-```powershell
-copilot-session-tools --help                    # list all commands
-copilot-session-tools <command> --help          # flags for a specific command
-```
-
-The CLI is self-documenting. If a command or flag doesn't appear in `--help`, it doesn't exist. This skill only documents **domain knowledge that `--help` cannot teach** — search strategy, gotchas, database schema, and workflows.
+**Do not memorize flags.** Run `copilot-session-tools <command> --help` for flags and examples. This skill only documents **domain knowledge that `--help` cannot teach**.
 
 ## When to use
 
@@ -25,14 +16,6 @@ The CLI is self-documenting. If a command or flag doesn't appear in `--help`, it
 - User pastes a web viewer URL like `http://127.0.0.1:5000/session/{uuid}`
 - User wants to find prior decisions, code patterns, or troubleshooting steps from past sessions
 - User asks to export a session as markdown, HTML, or JSON
-- User wants to refresh the chat archive (scan for new sessions)
-- User wants to clean up voice-dictated messages in a session
-
-## Prerequisites
-
-The CLI must be installed and on PATH. It uses `~/.copilot/session-store.db` (requires Copilot CLI v0.0.412+).
-
-If not found, install with: `uv tool install copilot-session-tools[all]` (or `pipx` / `pip`). The `[all]` extra includes web viewer dependencies.
 
 ## Favor CLI over Python
 
@@ -139,19 +122,15 @@ The tool extends `~/.copilot/session-store.db` with `cst_*` enrichment tables. B
 
 1. Extract the session GUID from the user's input (see table above)
 2. Export: `copilot-session-tools export-markdown --session-id <guid> -o .`
-3. Read the exported file to understand context
-4. Summarize what was done and what remains
-5. Continue the work in the current session
+3. Read the exported file and continue the work
 
 ## Workflow: "Find how we solved X before"
 
 1. Search: `copilot-session-tools search "<topic>" --full --limit 30`
 2. Identify the most relevant session from results
 3. Export: `copilot-session-tools export-markdown --session-id <guid> -o .`
-4. Extract the relevant technique/solution
-5. Apply it to the current situation
 
 ## Known issues
 
-- **Rich console crashes on pipe**: The CLI uses Rich for console output, which can crash on Unicode box-drawing characters when piped. Workaround: don't pipe output; read it directly.
+- **Use `--json` for piped output.** The default Rich console output garbles Unicode box-drawing characters on Windows when piped. `--json` bypasses Rich entirely and is the preferred format for programmatic consumption.
 - **Missing sessions**: If a session doesn't appear after scanning, check that the source file exists and wasn't cleaned up by VS Code. Use `--full` scan to force reimport.

@@ -12,7 +12,7 @@ This project borrows patterns from several open-source projects:
 - tad-hq/universal-session-viewer: FTS5 full-text search design
 """
 
-__version__ = "0.6.4"
+__version__ = "0.8.0"
 
 from .content_types import (
     CONTENT_TYPES,

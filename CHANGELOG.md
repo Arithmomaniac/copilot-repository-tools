@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-03-29
+
+### Added
+
+- **CLI**: `--json` / `-j` flag on `search` and `stats` commands for structured output — bypasses Rich formatting, safe for piping to `jq` or programmatic parsing
+- **CLI**: `Examples:` block in `--help` for all 12 subcommands with real invocations
+- **CLI**: Actionable error messages — validation errors now include example invocations showing how to fix the issue
+
+### Changed
+
+- **Skill**: Expanded `search-copilot-chats` trigger phrases to cover "session history", "recent session where", "earlier conversation", "previous session", "that session where" (3 missed invocations found in skill audit)
+- **Skill**: Trimmed `search-copilot-chats` to domain knowledge only — removed sections now covered by the self-documenting CLI (`--help`, `--json`, actionable errors)
+- **CLI**: Refactored `_ensure_db_exists` to eliminate duplicated try/except branches
+
 ## [0.7.1] - 2026-03-28
 
 ### Changed

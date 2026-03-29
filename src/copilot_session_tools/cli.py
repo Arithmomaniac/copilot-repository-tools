@@ -59,20 +59,20 @@ _DEFAULT_DB = _DEFAULT_DB_PATH
 def _ensure_db_exists(db: Path) -> None:
     """Check that the database file exists, with a friendly error if not."""
     try:
-        if not db.exists():
-            typer.echo(f"Error: Session store database not found at {db}", err=True)
-            typer.echo(
-                "The Copilot CLI must be installed and used at least once to create this database.",
-                err=True,
-            )
-            raise typer.Exit(code=2)
+        exists = db.exists()
     except FileNotFoundError:
+        exists = False
+    if not exists:
         typer.echo(f"Error: Session store database not found at {db}", err=True)
         typer.echo(
             "The Copilot CLI must be installed and used at least once to create this database.",
             err=True,
         )
-        raise typer.Exit(code=2) from None
+        typer.echo(
+            "  After using the CLI, run: copilot-session-tools scan",
+            err=True,
+        )
+        raise typer.Exit(code=2)
 
 
 app = typer.Typer(
@@ -189,9 +189,18 @@ def scan(
     By default, uses incremental refresh: only updates sessions whose source files
     have changed (based on file mtime and size). Use --full to force a complete
     re-import of all sessions.
+
+    \b
+    Examples:
+      copilot-session-tools scan
+      copilot-session-tools scan --edition stable
+      copilot-session-tools scan --full --verbose
+      copilot-session-tools scan --storage-path /custom/path
+      copilot-session-tools scan --workers 8
     """
     if edition not in ("stable", "insider", "both"):
         console.print("[red]Error: edition must be 'stable', 'insider', or 'both'[/red]")
+        console.print("[dim]  copilot-session-tools scan --edition stable[/dim]")
         raise typer.Exit(1)
 
     db.parent.mkdir(parents=True, exist_ok=True)
@@ -282,7 +291,12 @@ def enrich(
         ),
     ] = _DEFAULT_DB,
 ):
-    """Enrich a single CLI session from its events.jsonl file."""
+    """Enrich a single CLI session from its events.jsonl file.
+
+    \b
+    Examples:
+      copilot-session-tools enrich a1b2c3d4-e5f6-7890-abcd-ef1234567890
+    """
     _ensure_db_exists(db)
     database = Database(db, unenriched_only=_unenriched_only)
 
@@ -381,6 +395,14 @@ def search(
             help="Sort results by relevance (default) or date.",
         ),
     ] = "relevance",
+    json_output: Annotated[
+        bool,
+        typer.Option(
+            "--json",
+            "-j",
+            help="Output results as JSON for programmatic consumption.",
+        ),
+    ] = False,
 ):
     """Search chat messages in the database.
 
@@ -401,6 +423,7 @@ def search(
       copilot-session-tools search "repo:github.com/owner/repo"
       copilot-session-tools search "start_date:2024-01-01 end_date:2024-06-30"
       copilot-session-tools search '"exact phrase"'
+      copilot-session-tools search "python function" --json
 
     Use --role to filter by user requests or assistant responses.
     Use --title to filter by session/workspace name.
@@ -409,14 +432,17 @@ def search(
     Use --include / --exclude to control which content types are searched.
     Use --full to show complete content instead of truncated snippets.
     Use --sort to sort by relevance (default) or date.
+    Use --json to output results as JSON for programmatic consumption.
     """
     _ensure_db_exists(db)
     if role and role not in ("user", "assistant"):
         console.print("[red]Error: role must be 'user' or 'assistant'[/red]")
+        console.print('[dim]  copilot-session-tools search "query" --role user[/dim]')
         raise typer.Exit(1)
 
     if sort_by not in ("relevance", "date"):
         console.print("[red]Error: sort must be 'relevance' or 'date'[/red]")
+        console.print('[dim]  copilot-session-tools search "query" --sort relevance[/dim]')
         raise typer.Exit(1)
 
     search_content_set = resolve_search_content_set(include, exclude)
@@ -432,6 +458,12 @@ def search(
         sort_by=sort_by,
         repository=repository_filter,
     )
+
+    if json_output:
+        import json
+
+        print(json.dumps(results, ensure_ascii=False, default=str))
+        return
 
     if not results:
         console.print(f"[yellow]No results found for '{query}'[/yellow]")
@@ -479,11 +511,39 @@ def stats(
             help="Path to SQLite database file.",
         ),
     ] = _DEFAULT_DB,
+    json_output: Annotated[
+        bool,
+        typer.Option(
+            "--json",
+            "-j",
+            help="Output statistics as JSON for programmatic consumption.",
+        ),
+    ] = False,
 ):
-    """Show database statistics."""
+    """Show database statistics.
+
+    \b
+    Examples:
+      copilot-session-tools stats
+      copilot-session-tools stats --json
+      copilot-session-tools stats --json | jq '.workspaces'
+    """
     _ensure_db_exists(db)
     database = Database(db, unenriched_only=_unenriched_only)
     stats_data = database.get_stats()
+
+    if json_output:
+        import json
+
+        workspaces = database.get_workspaces()
+        repositories = database.get_repositories()
+        output = {
+            **stats_data,
+            "workspaces": workspaces,
+            "repositories": repositories,
+        }
+        print(json.dumps(output, ensure_ascii=False, default=str))
+        return
 
     console.print("[bold]Database Statistics:[/bold]")
     console.print(f"  Sessions: {stats_data['session_count']}")
@@ -531,7 +591,14 @@ def export(
         ),
     ] = "-",
 ):
-    """Export the database as JSON."""
+    """Export the database as JSON.
+
+    \b
+    Examples:
+      copilot-session-tools export
+      copilot-session-tools export -o sessions.json
+      copilot-session-tools export -o - | jq '.[] | .session_id'
+    """
     _ensure_db_exists(db)
     database = Database(db, unenriched_only=_unenriched_only)
     json_data = database.export_json()
@@ -605,6 +672,12 @@ def export_markdown(
 
     Use --include / --exclude to control which content types appear.
     Default includes: agent-details.
+
+    \b
+    Examples:
+      copilot-session-tools export-markdown -o ./exports
+      copilot-session-tools export-markdown --session-id a1b2c3d4-... -o .
+      copilot-session-tools export-markdown --exclude tool-results,thinking
     """
     _ensure_db_exists(db)
     database = Database(db, unenriched_only=_unenriched_only)
@@ -617,6 +690,7 @@ def export_markdown(
         session = database.get_session(session_id)
         if session is None:
             console.print(f"[red]Error: Session '{session_id}' not found.[/red]")
+            console.print("[dim]  List sessions: copilot-session-tools stats[/dim]")
             raise typer.Exit(1)
 
         filename = generate_session_filename(session)
@@ -700,6 +774,12 @@ def export_html(
 
     Use --include / --exclude to control which content types appear.
     Default includes: agent-details.
+
+    \b
+    Examples:
+      copilot-session-tools export-html -o ./exports
+      copilot-session-tools export-html --session-id a1b2c3d4-... -o .
+      copilot-session-tools export-html --exclude tool-results,thinking
     """
     _ensure_db_exists(db)
     database = Database(db, unenriched_only=_unenriched_only)
@@ -712,6 +792,7 @@ def export_html(
         session = database.get_session(session_id)
         if session is None:
             console.print(f"[red]Error: Session '{session_id}' not found.[/red]")
+            console.print("[dim]  List sessions: copilot-session-tools stats[/dim]")
             raise typer.Exit(1)
 
         filename = generate_session_html_filename(session)
@@ -753,7 +834,13 @@ def import_json(
         ),
     ] = _DEFAULT_DB,
 ):
-    """Import sessions from a JSON file."""
+    """Import sessions from a JSON file.
+
+    \b
+    Examples:
+      copilot-session-tools import-json sessions.json
+      copilot-session-tools import-json exported.json --db custom.db
+    """
     import json
 
     db.parent.mkdir(parents=True, exist_ok=True)
@@ -764,6 +851,7 @@ def import_json(
 
     if not isinstance(data, list):
         console.print("[red]Error: JSON file must contain an array of sessions.[/red]")
+        console.print("[dim]  Export first: copilot-session-tools export -o sessions.json[/dim]")
         raise typer.Exit(1)
 
     added = 0
@@ -821,6 +909,11 @@ def migrate(
     was created by an older version or a migration was interrupted.
 
     Safe to run multiple times — already-applied migrations are skipped.
+
+    \b
+    Examples:
+      copilot-session-tools migrate
+      copilot-session-tools migrate --db custom.db
     """
     _ensure_db_exists(db)
 
@@ -893,6 +986,11 @@ def optimize(
     The optimization process:
     1. Merges all FTS index segments into fewer, larger segments
     2. Runs an integrity check to verify index consistency
+
+    \b
+    Examples:
+      copilot-session-tools optimize
+      copilot-session-tools optimize --db custom.db
     """
     _ensure_db_exists(db)
     database = Database(db, unenriched_only=_unenriched_only)
@@ -920,7 +1018,14 @@ def web(
     title: Annotated[str, typer.Option("--title", "-t", help="Title for the archive.")] = "Copilot Session Tools",
     debug: Annotated[bool, typer.Option("--debug", help="Enable debug mode.")] = False,
 ):
-    """Start the web viewer for browsing chat sessions."""
+    """Start the web viewer for browsing chat sessions.
+
+    \b
+    Examples:
+      copilot-session-tools web
+      copilot-session-tools web --port 8080
+      copilot-session-tools web --host 0.0.0.0 --port 3000
+    """
     try:
         from copilot_session_tools.web import run_server
     except ImportError as err:
@@ -1015,6 +1120,13 @@ def cleanup(
     (via LiteLLM) for cleanup. Original content is preserved for revert.
 
     Requires the [llm] extra: pip install copilot-session-tools[llm]
+
+    \b
+    Examples:
+      copilot-session-tools cleanup
+      copilot-session-tools cleanup a1b2c3d4-... --dry-run
+      copilot-session-tools cleanup a1b2c3d4-... --all --force
+      copilot-session-tools cleanup a1b2c3d4-... --message 3
     """
     try:
         from copilot_session_tools.transcript_cleanup import cleanup_session
@@ -1127,7 +1239,13 @@ def cleanup_revert(
         ),
     ] = None,
 ):
-    """Revert cleaned messages back to their original voice-dictated content."""
+    """Revert cleaned messages back to their original voice-dictated content.
+
+    \b
+    Examples:
+      copilot-session-tools cleanup-revert a1b2c3d4-...
+      copilot-session-tools cleanup-revert a1b2c3d4-... --message 3
+    """
     from copilot_session_tools.transcript_cleanup import revert_message, revert_session
 
     _ensure_db_exists(db)
