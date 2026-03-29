@@ -9,6 +9,16 @@ from copilot_session_tools import ChatMessage, ChatSession, Database
 from copilot_session_tools.refresh import RefreshMode, run_refresh
 from copilot_session_tools.scanner.models import SessionFileInfo
 
+# Force sequential parsing in tests so that mocked parse_session_file
+# (a MagicMock) doesn't need to be pickled across process boundaries.
+pytestmark = pytest.mark.usefixtures("_sequential_parse_workers")
+
+
+@pytest.fixture(autouse=True)
+def _sequential_parse_workers():
+    with patch("copilot_session_tools.refresh.DEFAULT_PARSE_WORKERS", 1):
+        yield
+
 
 @pytest.fixture
 def temp_db(tmp_path):

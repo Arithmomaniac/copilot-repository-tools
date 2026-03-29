@@ -39,7 +39,7 @@ def all_sample_session_paths():
 @pytest.fixture
 def sample_session_data(sample_session_path):
     """Load and return parsed JSON from first available VS Code JSON session."""
-    import orjson
+    import ssrjson
 
     with open(sample_session_path, "rb") as f:
-        return orjson.loads(f.read())
+        return ssrjson.loads(f.read())

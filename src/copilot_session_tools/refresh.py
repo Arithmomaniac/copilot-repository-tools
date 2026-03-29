@@ -5,9 +5,10 @@ workflow so that the ``scan`` CLI command and the web ``/refresh`` endpoint
 both exercise the same code path.
 """
 
+import os
 import re
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -24,8 +25,12 @@ _SESSION_ID_RE = re.compile(r"^[0-9a-fA-F-]+$")
 # Default location of CLI session-state directories
 SESSION_STATE_DIR = Path.home() / ".copilot" / "session-state"
 
-# Number of threads for parallel file parsing
-PARSE_WORKERS = 4
+# Default number of parallel workers for file parsing.
+# ProcessPoolExecutor is used so that C-extension JSON parsers (which hold
+# the GIL) can run on separate cores.  4 workers is the sweet-spot on most
+# machines — beyond that, process-spawn overhead on Windows and I/O
+# contention eat into the gains.
+DEFAULT_PARSE_WORKERS = min(4, max(1, (os.cpu_count() or 2) // 2))
 
 #: Callback signature: ``(event, item)`` where *event* is one of
 #: ``"skipped"``, ``"added"``, ``"updated"``, ``"enriched"``, ``"reparsed"``,
@@ -61,18 +66,28 @@ class EnrichResult:
     orphaned: int
 
 
-def _parse_files_parallel(files: list[SessionFileInfo]) -> list[list]:
-    """Parse session files in parallel using a thread pool.
+def _parse_files_parallel(files: list[SessionFileInfo], workers: int | None = None) -> list[list]:
+    """Parse session files in parallel using a process pool.
+
+    Uses :class:`ProcessPoolExecutor` so that C-extension JSON parsers
+    (which hold the GIL) can run across multiple cores.  Falls back to
+    sequential execution when *workers* is 1 (avoids pickling overhead
+    and keeps test-friendly when ``parse_session_file`` is mocked).
 
     Args:
         files: List of session file info objects to parse.
+        workers: Number of worker processes.  Defaults to
+            :data:`DEFAULT_PARSE_WORKERS`.
 
     Returns:
         List of parse results (each is a list of ChatSession objects).
     """
     if not files:
         return []
-    with ThreadPoolExecutor(max_workers=PARSE_WORKERS) as executor:
+    n = workers if workers is not None else DEFAULT_PARSE_WORKERS
+    if n <= 1:
+        return [parse_session_file(f) for f in files]
+    with ProcessPoolExecutor(max_workers=n) as executor:
         return list(executor.map(parse_session_file, files))
 
 
@@ -126,6 +141,27 @@ def _classify_and_batch_write(
     return added, updated
 
 
+def _parse_cli_entry(entry: dict) -> tuple[str, ChatSession | str | None]:
+    """Parse a single CLI session's ``events.jsonl``.  Runs in a worker process.
+
+    Must be at module level for :class:`ProcessPoolExecutor` pickling on
+    Windows (``spawn`` start method).
+
+    Returns:
+        ``(session_id, parsed_session_or_error_string)``
+    """
+    sid = entry["session_id"]
+    if not _SESSION_ID_RE.match(sid):
+        return sid, f"Invalid session ID format: {sid}"
+    events_file = SESSION_STATE_DIR / sid / "events.jsonl"
+    if not events_file.exists():
+        return sid, f"events.jsonl not found for session {sid}"
+    parsed = _parse_cli_jsonl_file(events_file)
+    if parsed is None:
+        return sid, f"Failed to parse events.jsonl for session {sid}"
+    return sid, parsed
+
+
 def _enrich_session_batch(
     database: Database,
     entries: list[dict],
@@ -134,6 +170,7 @@ def _enrich_session_batch(
     stamp_version_on_failure: bool = False,
     on_progress: ProgressCallback | None = None,
     skip_ids: set[str] | None = None,
+    executor: ProcessPoolExecutor | None = None,
 ) -> tuple[int, int]:
     """Enrich a batch of sessions, handling errors and version stamping.
 
@@ -150,6 +187,7 @@ def _enrich_session_batch(
             (defaults to False so failed sessions remain retryable).
         on_progress: Optional progress callback.
         skip_ids: Session IDs to skip (already processed in a prior phase).
+        executor: Shared :class:`ProcessPoolExecutor` (caller manages lifetime).
 
     Returns:
         Tuple of (success_count, failed_count).
@@ -163,29 +201,13 @@ def _enrich_session_batch(
 
     import sqlite3 as _sqlite3
 
-    # Phase 1: Parse events.jsonl files in parallel (I/O + JSON, thread-safe).
-    # executor.map returns a lazy iterator — results are yielded as workers
-    # complete in order, bounding memory to ~PARSE_WORKERS sessions in flight.
-    def _parse_entry(entry: dict) -> tuple[str, ChatSession | str | None]:
-        """Return (session_id, parsed_session_or_error)."""
-        sid = entry["session_id"]
-        if not _SESSION_ID_RE.match(sid):
-            return sid, f"Invalid session ID format: {sid}"
-        events_file = SESSION_STATE_DIR / sid / "events.jsonl"
-        if not events_file.exists():
-            return sid, f"events.jsonl not found for session {sid}"
-        parsed = _parse_cli_jsonl_file(events_file)
-        if parsed is None:
-            return sid, f"Failed to parse events.jsonl for session {sid}"
-        return sid, parsed
-
-    # Phase 2: Parse in parallel, write serially (single connection, FK=OFF).
+    # Parse in parallel, write serially (single connection, FK=OFF).
     # Per-session try/except so one write failure doesn't roll back the batch.
     success = 0
     failed = 0
 
-    with database.batch_connection(), ThreadPoolExecutor(max_workers=PARSE_WORKERS) as executor:
-        for sid, result in executor.map(_parse_entry, actionable):
+    with database.batch_connection():
+        for sid, result in executor.map(_parse_cli_entry, actionable):
             if isinstance(result, str):
                 # Error string from parse phase
                 if stamp_version_on_failure:
@@ -213,6 +235,7 @@ def run_refresh(
     storage_paths: list[tuple[str, str]] | None,
     full: bool = False,
     on_progress: ProgressCallback | None = None,
+    workers: int | None = None,
 ) -> RefreshResult:
     """Scan for VS Code Copilot chat sessions and import them into *database*.
 
@@ -228,6 +251,8 @@ def run_refresh(
             default) only files whose ``mtime`` or ``size`` differ from the
             stored metadata are re-imported.
         on_progress: Optional callback invoked for every add/update/skip event.
+        workers: Number of worker processes for parallel parsing.
+            Defaults to :data:`DEFAULT_PARSE_WORKERS`.
 
     Returns:
         A :class:`RefreshResult` with ``added``, ``updated``,
@@ -240,7 +265,7 @@ def run_refresh(
     if full:
         all_files = list(scan_session_files(storage_paths, include_cli=False))
         if all_files:
-            parse_results = _parse_files_parallel(all_files)
+            parse_results = _parse_files_parallel(all_files, workers=workers)
             existing_ids = set(database.get_all_session_ids())
             batch_added, batch_updated = _classify_and_batch_write(
                 database,
@@ -272,7 +297,7 @@ def run_refresh(
                     on_progress("skipped", file_info)
 
         if files_to_update:
-            parse_results = _parse_files_parallel(files_to_update)
+            parse_results = _parse_files_parallel(files_to_update, workers=workers)
             # No pre-loaded existing_ids — check each session individually
             batch_added, batch_updated = _classify_and_batch_write(
                 database,
@@ -289,6 +314,7 @@ def run_refresh(
 def run_enrichment(
     database: Database,
     on_progress: ProgressCallback | None = None,
+    workers: int | None = None,
 ) -> EnrichResult:
     """Enrich CLI sessions from Chronicle's built-in session store.
 
@@ -302,6 +328,8 @@ def run_enrichment(
         database: Open :class:`~copilot_session_tools.Database`.
         on_progress: Optional callback invoked per enrichment event.
             Event names: ``"enriched"``, ``"reparsed"``, ``"enrich_failed"``.
+        workers: Number of worker processes for parallel parsing.
+            Defaults to :data:`DEFAULT_PARSE_WORKERS`.
 
     Returns:
         An :class:`EnrichResult` with ``enriched``, ``reparsed``,
@@ -313,56 +341,64 @@ def run_enrichment(
     reparsed = 0
     failed = 0
 
-    # Phase 1: Discover sessions needing enrichment (new or stale)
-    try:
-        needing_enrichment = database.discover_sessions_needing_enrichment()
-    except Exception:
-        needing_enrichment = []  # Built-in sessions table may not exist
+    n = workers if workers is not None else DEFAULT_PARSE_WORKERS
 
-    phase1_ok, phase1_fail = _enrich_session_batch(
-        database,
-        needing_enrichment,
-        success_event="enriched",
-        on_progress=on_progress,
-    )
-    enriched += phase1_ok
-    failed += phase1_fail
+    # Share a single process pool across all enrichment phases to avoid
+    # repeated spawn/teardown overhead (significant on Windows).
+    with ProcessPoolExecutor(max_workers=n) as pool:
+        # Phase 1: Discover sessions needing enrichment (new or stale)
+        try:
+            needing_enrichment = database.discover_sessions_needing_enrichment()
+        except Exception:
+            needing_enrichment = []  # Built-in sessions table may not exist
 
-    # Phase 2: Reparse sessions with outdated parser version
-    try:
-        needing_reparse = database.get_sessions_needing_reparse(PARSER_VERSION)
-    except Exception:
-        needing_reparse = []
+        phase1_ok, phase1_fail = _enrich_session_batch(
+            database,
+            needing_enrichment,
+            success_event="enriched",
+            on_progress=on_progress,
+            executor=pool,
+        )
+        enriched += phase1_ok
+        failed += phase1_fail
 
-    already_processed = {e["session_id"] for e in needing_enrichment}
-    phase2_ok, phase2_fail = _enrich_session_batch(
-        database,
-        needing_reparse,
-        success_event="reparsed",
-        on_progress=on_progress,
-        skip_ids=already_processed,
-    )
-    reparsed += phase2_ok
-    failed += phase2_fail
+        # Phase 2: Reparse sessions with outdated parser version
+        try:
+            needing_reparse = database.get_sessions_needing_reparse(PARSER_VERSION)
+        except Exception:
+            needing_reparse = []
 
-    # Phase 3: Re-enrich sessions with outdated enrichment_version
-    try:
-        needing_version_refresh = database.get_sessions_needing_version_refresh(__version__)
-    except Exception:
-        needing_version_refresh = []
+        already_processed = {e["session_id"] for e in needing_enrichment}
+        phase2_ok, phase2_fail = _enrich_session_batch(
+            database,
+            needing_reparse,
+            success_event="reparsed",
+            on_progress=on_progress,
+            skip_ids=already_processed,
+            executor=pool,
+        )
+        reparsed += phase2_ok
+        failed += phase2_fail
 
-    already_processed |= {e["session_id"] for e in needing_reparse}
+        # Phase 3: Re-enrich sessions with outdated enrichment_version
+        try:
+            needing_version_refresh = database.get_sessions_needing_version_refresh(__version__)
+        except Exception:
+            needing_version_refresh = []
 
-    # CLI sessions get re-enriched; VS Code sessions just get version-stamped
-    cli_entries = [e for e in needing_version_refresh if e.get("type", "") == "cli" and e["session_id"] not in already_processed]
-    phase3_ok, phase3_fail = _enrich_session_batch(
-        database,
-        cli_entries,
-        success_event="reparsed",
-        on_progress=on_progress,
-    )
-    reparsed += phase3_ok
-    failed += phase3_fail
+        already_processed |= {e["session_id"] for e in needing_reparse}
+
+        # CLI sessions get re-enriched; VS Code sessions just get version-stamped
+        cli_entries = [e for e in needing_version_refresh if e.get("type", "") == "cli" and e["session_id"] not in already_processed]
+        phase3_ok, phase3_fail = _enrich_session_batch(
+            database,
+            cli_entries,
+            success_event="reparsed",
+            on_progress=on_progress,
+            executor=pool,
+        )
+        reparsed += phase3_ok
+        failed += phase3_fail
 
     # VS Code sessions: just stamp the version so the banner clears
     vscode_entries = [e for e in needing_version_refresh if e["session_id"] not in already_processed and e.get("type", "") != "cli"]

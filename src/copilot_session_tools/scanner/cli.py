@@ -3,7 +3,7 @@
 import json
 from pathlib import Path
 
-import orjson
+import ssrjson
 
 from copilot_session_tools.scanner import PARSER_VERSION
 
@@ -351,9 +351,9 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                     continue
 
                 try:
-                    data = orjson.loads(line)
+                    data = ssrjson.loads(line)
                     events.append(data)
-                except orjson.JSONDecodeError:
+                except ssrjson.JSONDecodeError:
                     continue
 
         if not events:

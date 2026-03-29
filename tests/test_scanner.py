@@ -395,22 +395,22 @@ class TestPerformanceBenchmarks:
             assert elapsed_time < max_time, f"Parsing took {elapsed_time:.2f}s, expected < {max_time:.2f}s"
 
     @requires_sample_files
-    def test_orjson_parse_performance(self, sample_session_path):
-        """Test raw orjson parsing performance."""
-        import orjson
+    def test_json_parse_performance(self, sample_session_path):
+        """Test raw ssrjson parsing performance."""
+        import ssrjson
 
         file_size = sample_session_path.stat().st_size
 
         start_time = time.perf_counter()
         with open(sample_session_path, "rb") as f:
-            data = orjson.loads(f.read())
+            data = ssrjson.loads(f.read())
         elapsed_time = time.perf_counter() - start_time
 
         file_size_mb = file_size / (1024 * 1024)
-        print(f"\norjson parsed {sample_session_path.name}: {file_size_mb:.2f}MB in {elapsed_time:.3f}s")
+        print(f"\nssrjson parsed {sample_session_path.name}: {file_size_mb:.2f}MB in {elapsed_time:.3f}s")
 
         assert data is not None
-        # orjson should be very fast - less than 1 second per MB
+        # ssrjson should be very fast - less than 1 second per MB
         max_time = max(1.0, file_size_mb * 1)
         assert elapsed_time < max_time
 
@@ -596,7 +596,7 @@ class TestWorkspaceYamlParsing:
 
     def test_cli_session_title_from_workspace_yaml(self, tmp_path):
         """Test that CLI session title is extracted from workspace.yaml summary."""
-        import orjson
+        import ssrjson
 
         from copilot_session_tools.scanner import _parse_cli_jsonl_file
 
@@ -610,7 +610,7 @@ class TestWorkspaceYamlParsing:
 
         events_file = session_dir / "events.jsonl"
         events_file.write_text(
-            "\n".join(orjson.dumps(e).decode() for e in self._make_cli_session_events()),
+            "\n".join(ssrjson.dumps(e) for e in self._make_cli_session_events()),
             encoding="utf-8",
         )
 
@@ -620,13 +620,13 @@ class TestWorkspaceYamlParsing:
 
     def test_cli_session_title_fallback_to_intent(self, tmp_path):
         """Test that CLI session title falls back to first report_intent when no workspace.yaml."""
-        import orjson
+        import ssrjson
 
         from copilot_session_tools.scanner import _parse_cli_jsonl_file
 
         events_file = tmp_path / "test-session.jsonl"
         events_file.write_text(
-            "\n".join(orjson.dumps(e).decode() for e in self._make_cli_session_events(intent="Fix failing unit tests")),
+            "\n".join(ssrjson.dumps(e) for e in self._make_cli_session_events(intent="Fix failing unit tests")),
             encoding="utf-8",
         )
 
@@ -636,7 +636,7 @@ class TestWorkspaceYamlParsing:
 
     def test_cli_session_title_workspace_yaml_over_intent(self, tmp_path):
         """Test that workspace.yaml summary takes priority over report_intent."""
-        import orjson
+        import ssrjson
 
         from copilot_session_tools.scanner import _parse_cli_jsonl_file
 
@@ -650,7 +650,7 @@ class TestWorkspaceYamlParsing:
 
         events_file = session_dir / "events.jsonl"
         events_file.write_text(
-            "\n".join(orjson.dumps(e).decode() for e in self._make_cli_session_events(intent="Intent Title Loses")),
+            "\n".join(ssrjson.dumps(e) for e in self._make_cli_session_events(intent="Intent Title Loses")),
             encoding="utf-8",
         )
 
@@ -660,13 +660,13 @@ class TestWorkspaceYamlParsing:
 
     def test_cli_session_title_none_when_no_sources(self, tmp_path):
         """Test that custom_title is None when neither workspace.yaml nor intent exists."""
-        import orjson
+        import ssrjson
 
         from copilot_session_tools.scanner import _parse_cli_jsonl_file
 
         events_file = tmp_path / "test-session.jsonl"
         events_file.write_text(
-            "\n".join(orjson.dumps(e).decode() for e in self._make_cli_session_events()),
+            "\n".join(ssrjson.dumps(e) for e in self._make_cli_session_events()),
             encoding="utf-8",
         )
 
@@ -1291,10 +1291,10 @@ class TestCLINewEventHandlers:
     @staticmethod
     def _make_events_jsonl(*events):
         """Create JSONL string with session.start + given events."""
-        import orjson
+        import ssrjson
 
         lines = [
-            orjson.dumps(
+            ssrjson.dumps(
                 {
                     "type": "session.start",
                     "data": {
@@ -1302,10 +1302,10 @@ class TestCLINewEventHandlers:
                         "startTime": "2026-01-01T00:00:00Z",
                     },
                 }
-            ).decode()
+            )
         ]
         for evt in events:
-            lines.append(orjson.dumps(evt).decode())
+            lines.append(ssrjson.dumps(evt))
         return "\n".join(lines)
 
     def _parse(self, tmp_path, *events):
@@ -1614,10 +1614,10 @@ class TestCLISubagentBrackets:
     @staticmethod
     def _make_events_jsonl(*events):
         """Create JSONL string with session.start + given events."""
-        import orjson
+        import ssrjson
 
         lines = [
-            orjson.dumps(
+            ssrjson.dumps(
                 {
                     "type": "session.start",
                     "data": {
@@ -1625,10 +1625,10 @@ class TestCLISubagentBrackets:
                         "startTime": "2026-01-01T00:00:00Z",
                     },
                 }
-            ).decode()
+            )
         ]
         for evt in events:
-            lines.append(orjson.dumps(evt).decode())
+            lines.append(ssrjson.dumps(evt))
         return "\n".join(lines)
 
     def _parse(self, tmp_path, *events):
@@ -2097,10 +2097,10 @@ class TestCLIStructuredSubagentContent:
     """Tests for structured content_blocks, tool_invocations, file_changes on subagent blocks."""
 
     def _make_events_jsonl(self, *events):
-        import orjson
+        import ssrjson
 
         lines = [
-            orjson.dumps(
+            ssrjson.dumps(
                 {
                     "type": "session.start",
                     "data": {
@@ -2108,10 +2108,10 @@ class TestCLIStructuredSubagentContent:
                         "startTime": "2026-01-01T00:00:00Z",
                     },
                 }
-            ).decode()
+            )
         ]
         for evt in events:
-            lines.append(orjson.dumps(evt).decode())
+            lines.append(ssrjson.dumps(evt))
         return "\n".join(lines)
 
     def _parse(self, tmp_path, *events):
@@ -2514,7 +2514,7 @@ class TestCLIv105EventHandlers:
             *events: Event dicts to append after session.start.
             start_data: Optional dict to merge into the session.start data.
         """
-        import orjson
+        import ssrjson
 
         base_start = {
             "sessionId": "test-session",
@@ -2522,9 +2522,9 @@ class TestCLIv105EventHandlers:
         }
         if start_data:
             base_start.update(start_data)
-        lines = [orjson.dumps({"type": "session.start", "data": base_start}).decode()]
+        lines = [ssrjson.dumps({"type": "session.start", "data": base_start})]
         for evt in events:
-            lines.append(orjson.dumps(evt).decode())
+            lines.append(ssrjson.dumps(evt))
         return "\n".join(lines)
 
     def _parse(self, tmp_path, *events, start_data=None):
@@ -2660,7 +2660,7 @@ class TestCLIv105EventHandlers:
 
     def test_title_changed_overrides_workspace_yaml(self, tmp_path):
         """session.title_changed should take priority over workspace.yaml summary."""
-        import orjson
+        import ssrjson
 
         from copilot_session_tools.scanner import _parse_cli_jsonl_file
 
@@ -2676,7 +2676,7 @@ class TestCLIv105EventHandlers:
             {"type": "assistant.message", "data": {"content": "Sure."}},
             {"type": "session.title_changed", "data": {"title": "Event Title Wins"}},
         ]
-        (session_dir / "events.jsonl").write_text("\n".join(orjson.dumps(e).decode() for e in events), encoding="utf-8")
+        (session_dir / "events.jsonl").write_text("\n".join(ssrjson.dumps(e) for e in events), encoding="utf-8")
         session = _parse_cli_jsonl_file(session_dir / "events.jsonl")
         assert session is not None
         assert session.custom_title == "Event Title Wins"

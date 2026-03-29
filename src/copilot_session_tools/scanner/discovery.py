@@ -6,7 +6,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from urllib.parse import unquote
 
-import orjson
+import ssrjson
 
 from .cli import _parse_cli_jsonl_file
 from .models import ChatSession, SessionFileInfo
@@ -103,7 +103,7 @@ def _parse_workspace_json(workspace_dir: Path) -> tuple[str | None, str | None]:
     if workspace_json.exists():
         try:
             with workspace_json.open("rb") as f:
-                data = orjson.loads(f.read())
+                data = ssrjson.loads(f.read())
                 folder = data.get("folder", "")
                 # folder is often a URI like file:///path/to/workspace
                 if folder.startswith("file://"):
@@ -115,7 +115,7 @@ def _parse_workspace_json(workspace_dir: Path) -> tuple[str | None, str | None]:
                 folder = unquote(folder) if folder else ""
                 workspace_name = Path(folder).name if folder else None
                 return workspace_name, folder if folder else None
-        except (orjson.JSONDecodeError, OSError):
+        except (ssrjson.JSONDecodeError, OSError):
             pass
     return None, None
 

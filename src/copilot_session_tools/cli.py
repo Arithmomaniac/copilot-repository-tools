@@ -28,7 +28,12 @@ from copilot_session_tools.content_types import (
     resolve_content_set,
     resolve_search_content_set,
 )
-from copilot_session_tools.refresh import enrich_single_session, run_enrichment, run_refresh
+from copilot_session_tools.refresh import (
+    DEFAULT_PARSE_WORKERS,
+    enrich_single_session,
+    run_enrichment,
+    run_refresh,
+)
 
 # On Windows, reconfigure stdout/stderr to UTF-8 when piped to prevent
 # Rich from falling back to cp1252 which can't handle Unicode output
@@ -169,6 +174,15 @@ def scan(
             help="Full scan: update all sessions regardless of file changes.",
         ),
     ] = False,
+    workers: Annotated[
+        int | None,
+        typer.Option(
+            "--workers",
+            "-w",
+            help="Number of parallel worker processes for parsing. Default: min(4, cores/2).",
+            min=1,
+        ),
+    ] = None,
 ):
     """Scan for and import Copilot chat sessions, enriching them into the built-in store.
 
@@ -193,11 +207,15 @@ def scan(
         else:
             paths = [(p, e) for p, e in all_paths if e == edition]
 
+    # Resolve worker count
+    n_workers = workers if workers is not None else DEFAULT_PARSE_WORKERS
+
     console.print("Scanning for Copilot chat sessions...")
     if full:
         console.print("  (Full mode: will update all sessions)")
     else:
         console.print("  (Incremental mode: skipping unchanged sessions)")
+    console.print(f"  Using {n_workers} worker process(es)")
     if verbose:
         for path, ed in paths:
             console.print(f"  Checking: {path} ({ed})")
@@ -221,7 +239,7 @@ def scan(
 
     progress_cb = _verbose_progress if verbose else None
 
-    result = run_refresh(database, paths, full=full, on_progress=progress_cb)
+    result = run_refresh(database, paths, full=full, on_progress=progress_cb, workers=n_workers)
     added = result.added
     updated = result.updated
     skipped = result.skipped
@@ -233,7 +251,7 @@ def scan(
 
     # --- CLI session enrichment from Chronicle's built-in session store ---
     console.print("\n[cyan]Enriching CLI sessions...[/cyan]")
-    enrich_result = run_enrichment(database, on_progress=progress_cb)
+    enrich_result = run_enrichment(database, on_progress=progress_cb, workers=n_workers)
 
     console.print(f"  Enriched: {enrich_result.enriched} sessions")
     if enrich_result.reparsed:
