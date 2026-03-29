@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-03-29
+
+### Changed
+
+- **Database**: CST enrichment tables now live in their own database file (`~/.copilot/copilot-session-tools.db`) instead of sharing the Copilot CLI's `session-store.db`. Chronicle corruption can no longer take down CST data, and vice versa. No migration needed — just re-run `scan` to populate the new database.
+- **Database**: Chronicle's `session-store.db` is ATTACHed read-only for CLI session discovery and unenriched fallback display. Auto-detected as sibling file; gracefully degrades when absent.
+- **Performance**: Wrapped VS Code session import in `batch_connection()` — FK=OFF + 64MB cache reduces 100-file update from 35s to 0.6s (57× speedup)
+- **CLI**: Default `--db` path changed from `session-store.db` to `copilot-session-tools.db`
+- **CLI**: New `--chronicle-db` global option to explicitly specify the Chronicle database path (auto-detected by default)
+- **Recovery**: Simplified — just delete `copilot-session-tools.db` and re-scan (no more surgical SQL drops needed)
+
 ## [0.8.0] - 2026-03-29
 
 ### Added

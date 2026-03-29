@@ -124,19 +124,21 @@ def _classify_and_batch_write(
                 sessions_to_add.append(chat_session)
 
     added = 0
-    if sessions_to_add:
-        batch_added, _batch_skipped = database.add_sessions_batch(sessions_to_add)
-        added += batch_added
-        if on_progress:
-            for s in sessions_to_add:
-                on_progress("added", s)
-
     updated = 0
-    if sessions_to_update:
-        updated += database.update_sessions_batch(sessions_to_update)
-        if on_progress:
-            for s in sessions_to_update:
-                on_progress("updated", s)
+
+    with database.batch_connection():
+        if sessions_to_add:
+            batch_added, _batch_skipped = database.add_sessions_batch(sessions_to_add)
+            added += batch_added
+            if on_progress:
+                for s in sessions_to_add:
+                    on_progress("added", s)
+
+        if sessions_to_update:
+            updated += database.update_sessions_batch(sessions_to_update)
+            if on_progress:
+                for s in sessions_to_update:
+                    on_progress("updated", s)
 
     return added, updated
 

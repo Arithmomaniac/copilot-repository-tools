@@ -277,9 +277,12 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
 
 
 def check_builtin_schema_version(conn: sqlite3.Connection) -> None:
-    """Warn if the built-in session store schema has been updated beyond our known version."""
+    """Warn if the Chronicle session store schema has been updated beyond our known version.
+
+    Expects Chronicle to be ATTACHed as ``chronicle`` schema.
+    """
     try:
-        row = conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
+        row = conn.execute("SELECT version FROM chronicle.schema_version LIMIT 1").fetchone()
         if row and row[0] > 1:
             import warnings
 
@@ -288,7 +291,7 @@ def check_builtin_schema_version(conn: sqlite3.Connection) -> None:
                 stacklevel=2,
             )
     except Exception:  # noqa: S110
-        pass  # Table might not exist if DB is not a session-store.db
+        pass  # Table might not exist or chronicle not attached
 
 
 # ---------------------------------------------------------------------------
@@ -307,10 +310,13 @@ def has_cst_tables(conn: sqlite3.Connection, *, unenriched_only: bool = False) -
         return False
 
 
-def discover_sessions_needing_enrichment(conn: sqlite3.Connection) -> list[dict]:
-    """Find CLI sessions needing enrichment by comparing built-in turns vs cst_messages.
+def discover_sessions_needing_enrichment(conn: sqlite3.Connection, *, has_chronicle: bool = False) -> list[dict]:
+    """Find CLI sessions needing enrichment by comparing Chronicle turns vs cst_messages.
 
-    Compares built-in turns count against cst_messages user-role count for each session.
+    When Chronicle is ATTACHed (``has_chronicle=True``), compares
+    ``chronicle.sessions``/``chronicle.turns`` against ``cst_messages``.
+    Without Chronicle, returns an empty list (no discovery source).
+
     Returns sessions where:
     - No cst_sessions row exists (new, never enriched)
     - Turn count differs (session has new messages since last enrichment)
@@ -318,6 +324,9 @@ def discover_sessions_needing_enrichment(conn: sqlite3.Connection) -> list[dict]
     Uses direct sqlite_master probe (not has_cst_tables()) so this works
     correctly even when --unenriched-only is set — scan should still enrich.
     """
+    if not has_chronicle:
+        return []
+
     try:
         # Check physical table existence, not the unenriched_only flag
         cst_exists = conn.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='cst_sessions'").fetchone()[0] > 0
@@ -331,8 +340,8 @@ def discover_sessions_needing_enrichment(conn: sqlite3.Connection) -> list[dict]
                      WHERE cm.session_id = s.id AND cm.role = 'user') as cst_user_msgs,
                     CASE WHEN cs.session_id IS NULL THEN 'new'
                          ELSE 'stale' END as status
-                FROM sessions s
-                LEFT JOIN turns t ON s.id = t.session_id
+                FROM chronicle.sessions s
+                LEFT JOIN chronicle.turns t ON s.id = t.session_id
                 LEFT JOIN cst_sessions cs ON s.id = cs.session_id
                 GROUP BY s.id
                 HAVING cst_user_msgs != builtin_turns
@@ -345,8 +354,8 @@ def discover_sessions_needing_enrichment(conn: sqlite3.Connection) -> list[dict]
                     COUNT(DISTINCT t.turn_index) as builtin_turns,
                     0 as cst_user_msgs,
                     'new' as status
-                FROM sessions s
-                LEFT JOIN turns t ON s.id = t.session_id
+                FROM chronicle.sessions s
+                LEFT JOIN chronicle.turns t ON s.id = t.session_id
                 GROUP BY s.id
             """).fetchall()
 
@@ -864,15 +873,21 @@ def enrich_session(conn: sqlite3.Connection, session: ChatSession) -> None:
 # ---------------------------------------------------------------------------
 
 
-def cleanup_orphaned_cst_sessions(conn: sqlite3.Connection) -> list[str]:
-    """Find and delete cst_sessions whose session_id doesn't exist in the built-in sessions table.
+def cleanup_orphaned_cst_sessions(conn: sqlite3.Connection, *, has_chronicle: bool = False) -> list[str]:
+    """Find and delete cst_sessions whose session_id doesn't exist in Chronicle's sessions table.
 
     Only targets CLI sessions (source_type='cli') since VS Code sessions
     only exist in cst_* tables.
 
+    Requires Chronicle to be ATTACHed as ``chronicle`` schema.
+    Without Chronicle, orphan detection is skipped (returns empty list).
+
     Returns:
         List of deleted session_ids.
     """
+    if not has_chronicle:
+        return []
+
     cursor = conn.cursor()
 
     # Find orphaned CLI sessions
@@ -880,7 +895,7 @@ def cleanup_orphaned_cst_sessions(conn: sqlite3.Connection) -> list[str]:
         """
         SELECT cs.session_id FROM cst_sessions cs
         WHERE cs.type = 'cli'
-        AND cs.session_id NOT IN (SELECT id FROM sessions)
+        AND cs.session_id NOT IN (SELECT id FROM chronicle.sessions)
         """,
     ).fetchall()
 

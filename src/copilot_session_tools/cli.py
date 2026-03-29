@@ -49,7 +49,7 @@ from copilot_session_tools.utils import format_timestamp
 
 
 def _default_db_path() -> Path:
-    """Return the default database path: ~/.copilot/session-store.db"""
+    """Return the default database path: ~/.copilot/copilot-session-tools.db"""
     return _DEFAULT_DB_PATH
 
 
@@ -63,13 +63,9 @@ def _ensure_db_exists(db: Path) -> None:
     except FileNotFoundError:
         exists = False
     if not exists:
-        typer.echo(f"Error: Session store database not found at {db}", err=True)
+        typer.echo(f"Error: Database not found at {db}", err=True)
         typer.echo(
-            "The Copilot CLI must be installed and used at least once to create this database.",
-            err=True,
-        )
-        typer.echo(
-            "  After using the CLI, run: copilot-session-tools scan",
+            "Run 'copilot-session-tools scan' first to create the database.",
             err=True,
         )
         raise typer.Exit(code=2)
@@ -84,6 +80,12 @@ console = Console()
 
 # Module-level state set by the app callback
 _unenriched_only: bool = False
+_chronicle_db: Path | None = None
+
+
+def _make_database(db: str | Path) -> "Database":
+    """Create a Database with the current global settings."""
+    return Database(db, unenriched_only=_unenriched_only, chronicle_db_path=_chronicle_db)
 
 
 def version_callback(value: bool):
@@ -121,13 +123,21 @@ def main(
         bool,
         typer.Option(
             "--unenriched-only",
-            help="Disable cst_* table reads; use built-in tables only.",
+            help="Disable cst_* table reads; use Chronicle tables only.",
         ),
     ] = False,
+    chronicle_db: Annotated[
+        Path | None,
+        typer.Option(
+            "--chronicle-db",
+            help="Path to Copilot CLI Chronicle session-store.db (auto-detected by default).",
+        ),
+    ] = None,
 ):
     """Copilot Session Tools - Create a searchable archive of VS Code GitHub Copilot chats."""
-    global _unenriched_only  # noqa: PLW0603
+    global _unenriched_only, _chronicle_db  # noqa: PLW0603
     _unenriched_only = unenriched_only
+    _chronicle_db = chronicle_db
 
 
 @app.command()
@@ -204,7 +214,7 @@ def scan(
         raise typer.Exit(1)
 
     db.parent.mkdir(parents=True, exist_ok=True)
-    database = Database(db, unenriched_only=_unenriched_only)
+    database = _make_database(db)
 
     # Determine storage paths
     if storage_path:
@@ -298,7 +308,7 @@ def enrich(
       copilot-session-tools enrich a1b2c3d4-e5f6-7890-abcd-ef1234567890
     """
     _ensure_db_exists(db)
-    database = Database(db, unenriched_only=_unenriched_only)
+    database = _make_database(db)
 
     error = enrich_single_session(database, session_id)
     if error:
@@ -447,7 +457,7 @@ def search(
 
     search_content_set = resolve_search_content_set(include, exclude)
 
-    database = Database(db, unenriched_only=_unenriched_only)
+    database = _make_database(db)
     results = database.search(
         query,
         limit=limit,
@@ -529,7 +539,7 @@ def stats(
       copilot-session-tools stats --json | jq '.workspaces'
     """
     _ensure_db_exists(db)
-    database = Database(db, unenriched_only=_unenriched_only)
+    database = _make_database(db)
     stats_data = database.get_stats()
 
     if json_output:
@@ -600,7 +610,7 @@ def export(
       copilot-session-tools export -o - | jq '.[] | .session_id'
     """
     _ensure_db_exists(db)
-    database = Database(db, unenriched_only=_unenriched_only)
+    database = _make_database(db)
     json_data = database.export_json()
 
     if output == "-":
@@ -680,7 +690,7 @@ def export_markdown(
       copilot-session-tools export-markdown --exclude tool-results,thinking
     """
     _ensure_db_exists(db)
-    database = Database(db, unenriched_only=_unenriched_only)
+    database = _make_database(db)
 
     content_set = resolve_content_set(include, exclude)
 
@@ -782,7 +792,7 @@ def export_html(
       copilot-session-tools export-html --exclude tool-results,thinking
     """
     _ensure_db_exists(db)
-    database = Database(db, unenriched_only=_unenriched_only)
+    database = _make_database(db)
 
     content_set = resolve_content_set(include, exclude)
 
@@ -844,7 +854,7 @@ def import_json(
     import json
 
     db.parent.mkdir(parents=True, exist_ok=True)
-    database = Database(db, unenriched_only=_unenriched_only)
+    database = _make_database(db)
 
     with json_file.open(encoding="utf-8") as f:
         data = json.load(f)
@@ -931,7 +941,7 @@ def migrate(
     conn.close()
 
     # Force schema migration by instantiating Database
-    database = Database(db, unenriched_only=_unenriched_only)
+    database = _make_database(db)
 
     # Read version after
     from copilot_session_tools.database import CST_SCHEMA_VERSION
@@ -993,7 +1003,7 @@ def optimize(
       copilot-session-tools optimize --db custom.db
     """
     _ensure_db_exists(db)
-    database = Database(db, unenriched_only=_unenriched_only)
+    database = _make_database(db)
 
     console.print("Optimizing FTS5 search index...")
 
@@ -1035,7 +1045,7 @@ def web(
 
     _ensure_db_exists(db)
 
-    database = Database(str(db), unenriched_only=_unenriched_only)
+    database = _make_database(str(db))
     db_stats = database.get_stats()
 
     if db_stats["session_count"] == 0:
@@ -1056,6 +1066,7 @@ def web(
         db_path=str(db),
         title=title,
         debug=debug,
+        chronicle_db_path=str(_chronicle_db) if _chronicle_db else None,
     )
 
 
@@ -1137,12 +1148,12 @@ def cleanup(
 
     if session_id is None:
         _ensure_db_exists(db)
-        database = Database(db, unenriched_only=_unenriched_only)
+        database = _make_database(db)
         _list_cleanup_candidates(database, threshold)
         return
 
     _ensure_db_exists(db)
-    database = Database(db, unenriched_only=_unenriched_only)
+    database = _make_database(db)
 
     if dry_run:
         console.print("[yellow]DRY RUN — no changes will be written[/yellow]\n")
@@ -1249,7 +1260,7 @@ def cleanup_revert(
     from copilot_session_tools.transcript_cleanup import revert_message, revert_session
 
     _ensure_db_exists(db)
-    database = Database(db, unenriched_only=_unenriched_only)
+    database = _make_database(db)
 
     try:
         if message is not None:

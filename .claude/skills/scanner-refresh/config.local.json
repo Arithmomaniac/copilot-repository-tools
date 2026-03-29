@@ -1,0 +1,6 @@
+{
+  "shadowCli": {
+    "localPath": "C:\\_SRC\\copilot-cli-shadow",
+    "description": "Beautified/decompiled mirror of @github/copilot CLI releases, synced via Sync-CopilotShadow.ps1"
+  }
+}

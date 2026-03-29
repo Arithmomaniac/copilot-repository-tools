@@ -1840,23 +1840,34 @@ def _insert_builtin_turn(
 
 
 class TestTwoTierRendering:
-    """Tests for the two-tier (built-in + cst_*) rendering architecture."""
+    """Tests for the two-tier (CST + Chronicle) rendering architecture.
+
+    CST tables live in copilot-session-tools.db, Chronicle tables in
+    session-store.db (same directory).  The Database class auto-detects
+    the Chronicle sibling.
+    """
 
     # -- fixtures ----------------------------------------------------------
 
     @pytest.fixture
-    def builtin_only_db(self, tmp_path):
-        """DB with only built-in tables (no cst_* enrichment)."""
-        db_path = str(tmp_path / "builtin_only.db")
-        _create_builtin_only_db(db_path)
+    def chronicle_db(self, tmp_path):
+        """Create a Chronicle DB with built-in tables in tmp_path."""
+        chronicle_path = str(tmp_path / "session-store.db")
+        _create_builtin_only_db(chronicle_path)
+        return chronicle_path
+
+    @pytest.fixture
+    def builtin_only_db(self, tmp_path, chronicle_db):
+        """DB path for CST, with Chronicle sibling (no cst_* enrichment)."""
+        db_path = str(tmp_path / "copilot-session-tools.db")
         return db_path
 
     @pytest.fixture
-    def full_db(self, tmp_path):
-        """DB with both built-in tables AND cst_* tables (via Database constructor)."""
-        db_path = str(tmp_path / "full.db")
-        _create_builtin_only_db(db_path)
+    def full_db(self, tmp_path, chronicle_db):
+        """DB with CST tables AND a Chronicle sibling with built-in tables."""
+        db_path = str(tmp_path / "copilot-session-tools.db")
         # Database() constructor creates cst_* tables automatically
+        # Auto-detects session-store.db as sibling
         db = Database(db_path)
         return db
 
@@ -1876,9 +1887,10 @@ class TestTwoTierRendering:
     # -- 3. list_sessions unenriched ---------------------------------------
 
     def test_list_sessions_unenriched(self, full_db):
-        """A session in built-in only (no cst_sessions row) is listed with is_enriched=False."""
-        _insert_builtin_session(str(full_db.db_path), "sess-builtin-1")
-        _insert_builtin_turn(str(full_db.db_path), "sess-builtin-1", 0, "hello", "hi there")
+        """A session in Chronicle only (no cst_sessions row) is listed with is_enriched=False."""
+        chronicle_path = str(full_db.chronicle_db_path)
+        _insert_builtin_session(chronicle_path, "sess-builtin-1")
+        _insert_builtin_turn(chronicle_path, "sess-builtin-1", 0, "hello", "hi there")
 
         sessions = full_db.list_sessions()
         matched = [s for s in sessions if s["session_id"] == "sess-builtin-1"]
@@ -1890,7 +1902,6 @@ class TestTwoTierRendering:
 
     def test_list_sessions_enriched(self, full_db):
         """A session present in cst_sessions is listed with is_enriched=True."""
-        _insert_builtin_session(str(full_db.db_path), "sess-enriched-1")
         full_db.add_session(
             ChatSession(
                 session_id="sess-enriched-1",
@@ -1910,21 +1921,22 @@ class TestTwoTierRendering:
     # -- 5. get_session unenriched -----------------------------------------
 
     def test_get_session_unenriched(self, full_db):
-        """get_session falls back to built-in tables when no cst_sessions row exists."""
+        """get_session falls back to Chronicle tables when no cst_sessions row exists."""
+        chronicle_path = str(full_db.chronicle_db_path)
         _insert_builtin_session(
-            str(full_db.db_path),
+            chronicle_path,
             "sess-unenriched",
             summary="Unenriched session",
             repository="owner/repo",
         )
-        _insert_builtin_turn(str(full_db.db_path), "sess-unenriched", 0, "Q1", "A1")
-        _insert_builtin_turn(str(full_db.db_path), "sess-unenriched", 1, "Q2", "A2")
+        _insert_builtin_turn(chronicle_path, "sess-unenriched", 0, "Q1", "A1")
+        _insert_builtin_turn(chronicle_path, "sess-unenriched", 1, "Q2", "A2")
 
         session = full_db.get_session("sess-unenriched")
         assert session is not None
         assert session.session_id == "sess-unenriched"
         assert session.type == "cli"
-        # Built-in turns become messages (user+assistant pairs)
+        # Chronicle turns become messages (user+assistant pairs)
         assert len(session.messages) == 4
         assert session.messages[0].role == "user"
         assert session.messages[0].content == "Q1"
@@ -1933,7 +1945,6 @@ class TestTwoTierRendering:
 
     def test_get_session_enriched(self, full_db):
         """get_session returns enriched cst_* data when available."""
-        _insert_builtin_session(str(full_db.db_path), "sess-rich")
         full_db.add_session(
             ChatSession(
                 session_id="sess-rich",
@@ -1957,14 +1968,15 @@ class TestTwoTierRendering:
     # -- 7. discover_sessions_needing_enrichment ---------------------------
 
     def test_discover_sessions_needing_enrichment(self, full_db):
-        """Sessions in built-in but not in cst_sessions are discovered as needing enrichment."""
-        # Session A: in built-in only → needs enrichment
-        _insert_builtin_session(str(full_db.db_path), "sess-a", summary="A")
-        _insert_builtin_turn(str(full_db.db_path), "sess-a", 0, "q", "a")
+        """Sessions in Chronicle but not in cst_sessions are discovered as needing enrichment."""
+        chronicle_path = str(full_db.chronicle_db_path)
+        # Session A: in Chronicle only → needs enrichment
+        _insert_builtin_session(chronicle_path, "sess-a", summary="A")
+        _insert_builtin_turn(chronicle_path, "sess-a", 0, "q", "a")
 
-        # Session B: in both built-in and cst_sessions → already enriched
-        _insert_builtin_session(str(full_db.db_path), "sess-b", summary="B")
-        _insert_builtin_turn(str(full_db.db_path), "sess-b", 0, "q", "a")
+        # Session B: in both Chronicle and cst_sessions → already enriched
+        _insert_builtin_session(chronicle_path, "sess-b", summary="B")
+        _insert_builtin_turn(chronicle_path, "sess-b", 0, "q", "a")
         full_db.add_session(
             ChatSession(
                 session_id="sess-b",
@@ -1983,9 +1995,10 @@ class TestTwoTierRendering:
     # -- 8. delete_cst_session ---------------------------------------------
 
     def test_delete_cst_session(self, full_db):
-        """Deleting a cst_session removes it; get_session still falls back to built-in."""
-        _insert_builtin_session(str(full_db.db_path), "sess-del")
-        _insert_builtin_turn(str(full_db.db_path), "sess-del", 0, "hi", "hello")
+        """Deleting a cst_session removes it; get_session still falls back to Chronicle."""
+        chronicle_path = str(full_db.chronicle_db_path)
+        _insert_builtin_session(chronicle_path, "sess-del")
+        _insert_builtin_turn(chronicle_path, "sess-del", 0, "hi", "hello")
         full_db.add_session(
             ChatSession(
                 session_id="sess-del",
@@ -2000,7 +2013,7 @@ class TestTwoTierRendering:
         assert full_db.delete_cst_session("sess-del") is True
         # Second delete returns False (already gone)
         assert full_db.delete_cst_session("sess-del") is False
-        # list_sessions should still find it via built-in (unenriched)
+        # list_sessions should still find it via Chronicle (unenriched)
         sessions = full_db.list_sessions()
         matched = [s for s in sessions if s["session_id"] == "sess-del"]
         assert len(matched) == 1
@@ -2010,15 +2023,16 @@ class TestTwoTierRendering:
 
     def test_builtin_read_methods(self, full_db):
         """list_builtin_sessions, get_builtin_session, get_builtin_turns, count_builtin_turns."""
+        chronicle_path = str(full_db.chronicle_db_path)
         _insert_builtin_session(
-            str(full_db.db_path),
+            chronicle_path,
             "sess-read",
             summary="Read test",
             repository="org/repo",
             cwd="/tmp/proj",
         )
-        _insert_builtin_turn(str(full_db.db_path), "sess-read", 0, "Q0", "A0")
-        _insert_builtin_turn(str(full_db.db_path), "sess-read", 1, "Q1", "A1")
+        _insert_builtin_turn(chronicle_path, "sess-read", 0, "Q0", "A0")
+        _insert_builtin_turn(chronicle_path, "sess-read", 1, "Q1", "A1")
 
         # list_builtin_sessions
         listed = full_db.list_builtin_sessions()
@@ -2045,8 +2059,11 @@ class TestTwoTierRendering:
 
     def test_unenriched_only_mode(self, tmp_path):
         """unenriched_only=True makes has_cst_tables return False even when tables exist."""
-        db_path = str(tmp_path / "unenriched_mode.db")
-        _create_builtin_only_db(db_path)
+        # Create Chronicle sibling
+        chronicle_path = str(tmp_path / "session-store.db")
+        _create_builtin_only_db(chronicle_path)
+
+        db_path = str(tmp_path / "copilot-session-tools.db")
 
         # Normal mode — cst_* tables ARE created by constructor
         db_normal = Database(db_path)
@@ -2056,9 +2073,9 @@ class TestTwoTierRendering:
         db_unonly = Database(db_path, unenriched_only=True)
         assert db_unonly.has_cst_tables() is False
 
-        # list_sessions still returns built-in sessions
-        _insert_builtin_session(db_path, "sess-un", summary="Unenriched only")
-        _insert_builtin_turn(db_path, "sess-un", 0, "q", "a")
+        # list_sessions still returns Chronicle sessions
+        _insert_builtin_session(chronicle_path, "sess-un", summary="Unenriched only")
+        _insert_builtin_turn(chronicle_path, "sess-un", 0, "q", "a")
         sessions = db_unonly.list_sessions()
         matched = [s for s in sessions if s["session_id"] == "sess-un"]
         assert len(matched) == 1

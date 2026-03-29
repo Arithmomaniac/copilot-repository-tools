@@ -1144,10 +1144,10 @@ class TestNewTurnsAfterEnrichment:
     """Tests for rendering new turns that arrived after enrichment."""
 
     @pytest.fixture
-    def stale_enrichment_db(self):
-        """Create a DB with enriched session + newer built-in turns."""
-        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-            db_path = f.name
+    def stale_enrichment_db(self, tmp_path):
+        """Create a CST DB with enriched session + newer Chronicle turns in sibling DB."""
+        db_path = str(tmp_path / "copilot-session-tools.db")
+        chronicle_path = str(tmp_path / "session-store.db")
 
         db = Database(db_path)
 
@@ -1166,10 +1166,10 @@ class TestNewTurnsAfterEnrichment:
         )
         db.add_session(session)
 
-        # Now add built-in sessions/turns tables with MORE turns than enriched
+        # Now add Chronicle sessions/turns tables in sibling DB with MORE turns than enriched
         import sqlite3
 
-        conn = sqlite3.connect(db_path)
+        conn = sqlite3.connect(chronicle_path)
         conn.execute("CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, cwd TEXT, repository TEXT, branch TEXT, summary TEXT, created_at TEXT, updated_at TEXT)")
         conn.execute(
             "INSERT OR REPLACE INTO sessions (id, cwd, summary, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
@@ -1190,11 +1190,11 @@ class TestNewTurnsAfterEnrichment:
         conn.close()
 
         yield db_path
-        Path(db_path).unlink(missing_ok=True)
 
     @pytest.fixture
     def stale_client(self, stale_enrichment_db):
-        app = create_app(stale_enrichment_db, title="Test Archive", storage_paths=[])
+        chronicle_path = str(Path(stale_enrichment_db).parent / "session-store.db")
+        app = create_app(stale_enrichment_db, title="Test Archive", storage_paths=[], chronicle_db_path=chronicle_path)
         app.config["TESTING"] = True
         return app.test_client()
 

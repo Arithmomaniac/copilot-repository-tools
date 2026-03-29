@@ -25,8 +25,11 @@ MILLISECONDS_THRESHOLD = 1e12
 DEFAULT_DB_DIR = Path.home() / ".copilot"
 """Directory containing the session-store database."""
 
-DEFAULT_DB_PATH = DEFAULT_DB_DIR / "session-store.db"
-"""Default path to the SQLite session-store database."""
+DEFAULT_DB_PATH = DEFAULT_DB_DIR / "copilot-session-tools.db"
+"""Default path to the copilot-session-tools enrichment database."""
+
+DEFAULT_CHRONICLE_DB_PATH = DEFAULT_DB_DIR / "session-store.db"
+"""Default path to the Copilot CLI Chronicle session-store (read-only)."""
 
 # ---------------------------------------------------------------------------
 # Timestamp formatting

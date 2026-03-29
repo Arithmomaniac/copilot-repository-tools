@@ -323,10 +323,12 @@ def _append_session_filters(
 
 
 def _search_builtin_index(conn: sqlite3.Connection, fts_query: str, limit: int) -> dict[str, dict]:
-    """Search the built-in search_index FTS table for unenriched results.
+    """Search the Chronicle search_index FTS table for unenriched results.
+
+    Expects Chronicle to be ATTACHed as ``chronicle`` schema.
 
     Args:
-        conn: SQLite connection.
+        conn: SQLite connection (with chronicle attached).
         fts_query: FTS5 query string.
         limit: Maximum results.
 
@@ -336,7 +338,7 @@ def _search_builtin_index(conn: sqlite3.Connection, fts_query: str, limit: int) 
     builtin_results: dict[str, dict] = {}
     try:
         rows = conn.execute(
-            "SELECT session_id, content, rank FROM search_index WHERE search_index MATCH ? ORDER BY rank LIMIT ?",
+            "SELECT session_id, content, rank FROM chronicle.search_index WHERE chronicle.search_index MATCH ? ORDER BY rank LIMIT ?",
             (fts_query, limit * 2),
         ).fetchall()
         for row in rows:
@@ -351,7 +353,7 @@ def _search_builtin_index(conn: sqlite3.Connection, fts_query: str, limit: int) 
                     "rank": row["rank"],
                 }
     except Exception:  # noqa: S110
-        pass  # search_index might not exist
+        pass  # search_index might not exist or chronicle not attached
     return builtin_results
 
 
@@ -629,8 +631,9 @@ def execute_search(
     repository: str | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
+    has_chronicle: bool = False,
 ) -> list[dict]:
-    """Execute full-text search across cst_* tables and built-in search_index.
+    """Execute full-text search across cst_* tables and Chronicle search_index.
 
     This is the main search entry point, called by Database.search().
     It handles query parsing, content-type dispatch, filter application,
@@ -689,9 +692,9 @@ def execute_search(
         "effective_end_date": effective_end_date,
     }
 
-    # Search built-in search_index FTS table for unenriched results
+    # Search Chronicle search_index FTS table for unenriched results
     builtin_results: dict[str, dict] = {}
-    if fts_query and include_msgs:
+    if has_chronicle and fts_query and include_msgs:
         builtin_results = _search_builtin_index(conn, fts_query, limit)
 
     has_filters = bool(effective_role or effective_title or effective_workspace or effective_repository or effective_edition or effective_start_date or effective_end_date)

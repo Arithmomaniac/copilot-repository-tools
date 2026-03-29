@@ -4,11 +4,13 @@ Schema design inspired by:
 - tad-hq/universal-session-viewer: FTS5 full-text search
 - jazzyalex/agent-sessions: SQLite indexing patterns
 
-The database is ~/.copilot/session-store.db which already has built-in tables
-(sessions, turns, checkpoints, session_files, session_refs, search_index,
-schema_version) managed by Copilot CLI. We add our own cst_* tables alongside.
+The CST enrichment tables (cst_*) live in their own database file
+(~/.copilot/copilot-session-tools.db).  The Copilot CLI's built-in
+Chronicle database (~/.copilot/session-store.db) is optionally ATTACHed
+read-only when needed for enrichment discovery and unenriched fallback.
 """
 
+import contextlib
 import json
 import sqlite3
 from contextlib import contextmanager
@@ -38,8 +40,9 @@ class Database:
 
     Uses FTS5 for full-text search (inspired by tad-hq/universal-session-viewer).
 
-    Adds cst_* tables alongside the built-in Copilot CLI tables
-    (sessions, turns, checkpoints, etc.) in ~/.copilot/session-store.db.
+    CST enrichment tables live in their own database file.  The Copilot CLI's
+    Chronicle database is optionally ATTACHed as ``chronicle`` for enrichment
+    discovery and unenriched-session fallback.
     """
 
     # List of cst_* tables that can be dropped and recreated
@@ -60,18 +63,38 @@ class Database:
         "cst_messages_au",
     ]
 
-    def __init__(self, db_path: str | Path, *, unenriched_only: bool = False):
+    def __init__(
+        self,
+        db_path: str | Path,
+        *,
+        unenriched_only: bool = False,
+        chronicle_db_path: str | Path | None = None,
+    ):
         """Initialize the database connection.
 
         Args:
-            db_path: Path to the SQLite database file.
-            unenriched_only: If True, disable cst_* table reads (use built-in tables only).
+            db_path: Path to the CST enrichment database file.
+            unenriched_only: If True, disable cst_* table reads (use Chronicle tables only).
+            chronicle_db_path: Path to the Copilot CLI Chronicle session-store.db.
+                If ``None`` (default), auto-detects ``session-store.db`` in the
+                same directory as *db_path*.
         """
         self.db_path = Path(db_path)
         self.unenriched_only = unenriched_only
         self._batch_conn: sqlite3.Connection | None = None
+
+        # Auto-detect Chronicle DB as sibling of CST DB
+        if chronicle_db_path is not None:
+            self.chronicle_db_path: Path | None = Path(chronicle_db_path)
+        else:
+            candidate = self.db_path.parent / "session-store.db"
+            # If db_path IS session-store.db (backward compat), use it as Chronicle too
+            if candidate.resolve() == self.db_path.resolve():
+                self.chronicle_db_path = self.db_path
+            else:
+                self.chronicle_db_path = candidate
+
         self._ensure_schema()
-        self._check_builtin_schema_version()
 
     @contextmanager
     def _get_connection(self):
@@ -84,12 +107,80 @@ class Database:
         if self._batch_conn is not None:
             yield self._batch_conn
             return
-        conn = sqlite3.connect(str(self.db_path))
+        conn = sqlite3.connect(str(self.db_path), uri=True)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA busy_timeout = 5000")
         try:
             yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+    def _has_chronicle(self) -> bool:
+        """Check whether the Chronicle DB file exists on disk."""
+        return self.chronicle_db_path is not None and self.chronicle_db_path.is_file()
+
+    def _attach_chronicle(self, conn: sqlite3.Connection) -> bool:
+        """ATTACH the Chronicle DB as ``chronicle`` schema on *conn*.
+
+        Uses a read-only URI to prevent accidental writes to Chronicle.
+        The connection must be opened with ``uri=True`` for this to work.
+        Returns True if attached successfully (or already attached),
+        False if Chronicle DB is unavailable or attachment failed.
+        """
+        if not self._has_chronicle():
+            return False
+        # Check if chronicle is already attached (e.g., inside batch_connection)
+        try:
+            attached_dbs = [row[1] for row in conn.execute("PRAGMA database_list").fetchall()]
+            if "chronicle" in attached_dbs:
+                return True
+        except sqlite3.Error:
+            pass
+        try:
+            # ATTACH read-only via URI to prevent accidental writes.
+            # Forward slashes required for URI paths on all platforms.
+            chronicle_posix = str(self.chronicle_db_path).replace("\\", "/")
+            conn.execute(f"ATTACH DATABASE 'file:{chronicle_posix}?mode=ro' AS chronicle")
+            return True
+        except sqlite3.Error:
+            return False
+
+    @staticmethod
+    def _detach_chronicle(conn: sqlite3.Connection) -> None:
+        """DETACH the ``chronicle`` schema from *conn*.  Safe to call even if not attached."""
+        with contextlib.suppress(sqlite3.Error):
+            conn.execute("DETACH DATABASE chronicle")
+
+    @contextmanager
+    def _get_chronicle_connection(self):
+        """Get a connection with Chronicle ATTACHed (if available).
+
+        Yields ``(conn, has_chronicle)`` so callers know whether
+        ``chronicle.*`` tables are accessible.
+
+        If a batch connection is active, ATTACHes on it.  DETACH is
+        skipped inside a batch (SQLite rejects it mid-transaction);
+        Chronicle stays attached for the batch's lifetime and is
+        released when the batch connection closes.
+        """
+        if self._batch_conn is not None:
+            attached = self._attach_chronicle(self._batch_conn)
+            # Don't detach inside batch — DETACH fails mid-transaction,
+            # and re-attach is idempotent (checked via pragma_database_list)
+            yield self._batch_conn, attached
+            return
+        conn = sqlite3.connect(str(self.db_path), uri=True)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.execute("PRAGMA busy_timeout = 5000")
+        attached = self._attach_chronicle(conn)
+        try:
+            yield conn, attached
             conn.commit()
         except Exception:
             conn.rollback()
@@ -121,7 +212,7 @@ class Database:
         """
         if self._batch_conn is not None:
             raise RuntimeError("batch_connection() is not reentrant — already inside a batch")
-        conn = sqlite3.connect(str(self.db_path))
+        conn = sqlite3.connect(str(self.db_path), uri=True)
         conn.row_factory = sqlite3.Row
         # FK enforcement OFF for batch perf — CASCADE checks cause ~38x slowdown
         conn.execute("PRAGMA foreign_keys = OFF")
@@ -143,11 +234,11 @@ class Database:
         """Ensure the cst_* schema exists in the database."""
         with self._get_connection() as conn:
             db_storage.ensure_schema(conn)
-
-    def _check_builtin_schema_version(self):
-        """Warn if the built-in session store schema has been updated beyond our known version."""
-        with self._get_connection() as conn:
-            db_storage.check_builtin_schema_version(conn)
+        # Check Chronicle schema version (warns if incompatible)
+        if self._has_chronicle():
+            with self._get_chronicle_connection() as (conn, has_chronicle):
+                if has_chronicle:
+                    db_storage.check_builtin_schema_version(conn)
 
     def has_cst_tables(self) -> bool:
         """Check if cst_* extension tables exist in the database."""
@@ -157,9 +248,9 @@ class Database:
             return db_storage.has_cst_tables(conn)
 
     def discover_sessions_needing_enrichment(self) -> list[dict]:
-        """Find CLI sessions needing enrichment by comparing built-in turns vs cst_messages."""
-        with self._get_connection() as conn:
-            return db_storage.discover_sessions_needing_enrichment(conn)
+        """Find CLI sessions needing enrichment by comparing Chronicle turns vs cst_messages."""
+        with self._get_chronicle_connection() as (conn, has_chronicle):
+            return db_storage.discover_sessions_needing_enrichment(conn, has_chronicle=has_chronicle)
 
     def add_session(self, session: ChatSession) -> bool:
         """Add a chat session to the database.
@@ -252,7 +343,7 @@ class Database:
         return msg
 
     def get_session(self, session_id: str) -> ChatSession | None:
-        """Get a session by ID. Checks cst_sessions first (enriched), falls back to built-in (unenriched).
+        """Get a session by ID. Checks cst_sessions first (enriched), falls back to Chronicle (unenriched).
 
         Args:
             session_id: The session ID to look up.
@@ -269,9 +360,11 @@ class Database:
                 if session:
                     return session
 
-        # Fall back to built-in (unenriched)
-        with self._get_connection() as conn:
-            return get_builtin_session_as_chat_session(conn, session_id)
+        # Fall back to Chronicle (unenriched)
+        with self._get_chronicle_connection() as (conn, has_chronicle):
+            if has_chronicle:
+                return get_builtin_session_as_chat_session(conn, session_id)
+            return None
 
     def get_all_session_ids(self) -> list[str]:
         """Get all session IDs from cst_sessions.
@@ -287,11 +380,13 @@ class Database:
             return get_all_session_ids(conn)
 
     def _get_builtin_session_as_chat_session(self, session_id: str) -> ChatSession | None:
-        """Convert built-in session/turns data to a ChatSession."""
+        """Convert Chronicle session/turns data to a ChatSession."""
         from .db_retrieval import get_builtin_session_as_chat_session
 
-        with self._get_connection() as conn:
-            return get_builtin_session_as_chat_session(conn, session_id)
+        with self._get_chronicle_connection() as (conn, has_chronicle):
+            if has_chronicle:
+                return get_builtin_session_as_chat_session(conn, session_id)
+            return None
 
     def _get_cst_session(self, session_id: str) -> ChatSession | None:
         """Get a session from cst_* tables by its ID."""
@@ -330,9 +425,9 @@ class Database:
         offset: int = 0,
         session_type: str | None = None,
     ) -> list[dict]:
-        """List sessions from both built-in and cst_* tables.
+        """List sessions from cst_* tables and (optionally) Chronicle.
 
-        Deduplicates by session_id — cst_sessions takes precedence over built-in.
+        Deduplicates by session_id — cst_sessions takes precedence over Chronicle.
 
         Args:
             workspace_name: Optional workspace name filter (cst rows only).
@@ -346,10 +441,11 @@ class Database:
         from .db_retrieval import list_sessions
 
         has_cst = self.has_cst_tables()
-        with self._get_connection() as conn:
+        with self._get_chronicle_connection() as (conn, has_chronicle):
             return list_sessions(
                 conn,
                 has_cst=has_cst,
+                has_chronicle=has_chronicle,
                 workspace_name=workspace_name,
                 limit=limit,
                 offset=offset,
@@ -427,7 +523,7 @@ class Database:
         if not search_content_set:
             return []
 
-        with self._get_connection() as conn:
+        with self._get_chronicle_connection() as (conn, has_chronicle):
             return execute_search(
                 conn,
                 query,
@@ -440,6 +536,7 @@ class Database:
                 repository=repository,
                 start_date=start_date,
                 end_date=end_date,
+                has_chronicle=has_chronicle,
             )
 
     def get_workspaces(self) -> list[dict]:
@@ -461,8 +558,8 @@ class Database:
         from .db_retrieval import get_stats
 
         has_cst = self.has_cst_tables()
-        with self._get_connection() as conn:
-            return get_stats(conn, has_cst=has_cst)
+        with self._get_chronicle_connection() as (conn, has_chronicle):
+            return get_stats(conn, has_cst=has_cst, has_chronicle=has_chronicle)
 
     def export_json(self) -> str:
         """Export all data as JSON."""
@@ -498,53 +595,67 @@ class Database:
             return optimize_fts(conn)
 
     def get_builtin_session(self, session_id: str) -> dict | None:
-        """Read a session from the built-in sessions table."""
+        """Read a session from the Chronicle sessions table."""
         from .db_retrieval import get_builtin_session
 
-        with self._get_connection() as conn:
-            return get_builtin_session(conn, session_id)
+        with self._get_chronicle_connection() as (conn, has_chronicle):
+            if has_chronicle:
+                return get_builtin_session(conn, session_id)
+            return None
 
     def get_builtin_turns(self, session_id: str) -> list[dict]:
-        """Read turns from the built-in turns table for a session."""
+        """Read turns from the Chronicle turns table for a session."""
         from .db_retrieval import get_builtin_turns
 
-        with self._get_connection() as conn:
-            return get_builtin_turns(conn, session_id)
+        with self._get_chronicle_connection() as (conn, has_chronicle):
+            if has_chronicle:
+                return get_builtin_turns(conn, session_id)
+            return []
 
     def get_builtin_checkpoints(self, session_id: str) -> list[dict]:
-        """Read checkpoints from the built-in checkpoints table."""
+        """Read checkpoints from the Chronicle checkpoints table."""
         from .db_retrieval import get_builtin_checkpoints
 
-        with self._get_connection() as conn:
-            return get_builtin_checkpoints(conn, session_id)
+        with self._get_chronicle_connection() as (conn, has_chronicle):
+            if has_chronicle:
+                return get_builtin_checkpoints(conn, session_id)
+            return []
 
     def get_builtin_files(self, session_id: str) -> list[dict]:
-        """Read file references from the built-in session_files table."""
+        """Read file references from the Chronicle session_files table."""
         from .db_retrieval import get_builtin_files
 
-        with self._get_connection() as conn:
-            return get_builtin_files(conn, session_id)
+        with self._get_chronicle_connection() as (conn, has_chronicle):
+            if has_chronicle:
+                return get_builtin_files(conn, session_id)
+            return []
 
     def get_builtin_refs(self, session_id: str) -> list[dict]:
-        """Read refs from the built-in session_refs table."""
+        """Read refs from the Chronicle session_refs table."""
         from .db_retrieval import get_builtin_refs
 
-        with self._get_connection() as conn:
-            return get_builtin_refs(conn, session_id)
+        with self._get_chronicle_connection() as (conn, has_chronicle):
+            if has_chronicle:
+                return get_builtin_refs(conn, session_id)
+            return []
 
     def list_builtin_sessions(self, limit: int = 100, offset: int = 0) -> list[dict]:
-        """List sessions from the built-in sessions table."""
+        """List sessions from the Chronicle sessions table."""
         from .db_retrieval import list_builtin_sessions
 
-        with self._get_connection() as conn:
-            return list_builtin_sessions(conn, limit=limit, offset=offset)
+        with self._get_chronicle_connection() as (conn, has_chronicle):
+            if has_chronicle:
+                return list_builtin_sessions(conn, limit=limit, offset=offset)
+            return []
 
     def count_builtin_turns(self, session_id: str) -> int:
-        """Count turns for a session in the built-in turns table."""
+        """Count turns for a session in the Chronicle turns table."""
         from .db_retrieval import count_builtin_turns
 
-        with self._get_connection() as conn:
-            return count_builtin_turns(conn, session_id)
+        with self._get_chronicle_connection() as (conn, has_chronicle):
+            if has_chronicle:
+                return count_builtin_turns(conn, session_id)
+            return 0
 
     def enrich_session(self, session: ChatSession) -> None:
         """Write/update cst_* tables for a parsed ChatSession.
@@ -555,6 +666,6 @@ class Database:
             db_storage.enrich_session(conn, session)
 
     def cleanup_orphaned_cst_sessions(self) -> list[str]:
-        """Find and delete cst_sessions whose session_id doesn't exist in the built-in sessions table."""
-        with self._get_connection() as conn:
-            return db_storage.cleanup_orphaned_cst_sessions(conn)
+        """Find and delete cst_sessions whose session_id doesn't exist in the Chronicle sessions table."""
+        with self._get_chronicle_connection() as (conn, has_chronicle):
+            return db_storage.cleanup_orphaned_cst_sessions(conn, has_chronicle=has_chronicle)

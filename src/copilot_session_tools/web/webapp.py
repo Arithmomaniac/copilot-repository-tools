@@ -25,14 +25,17 @@ def create_app(
     db_path: str,
     title: str = "Copilot Session Tools",
     storage_paths: list | None = None,
+    chronicle_db_path: str | None = None,
 ) -> Flask:
     """Create and configure the Flask application.
 
     Args:
-        db_path: Path to the SQLite database file.
+        db_path: Path to the CST enrichment database file.
         title: Title for the archive.
         storage_paths: Optional list of (path, edition) tuples for scanning.
                        If None, uses default VS Code storage paths.
+        chronicle_db_path: Path to the Copilot CLI Chronicle session-store.db.
+                          If None, auto-detects as sibling of db_path.
 
     Returns:
         Configured Flask application.
@@ -62,8 +65,9 @@ def create_app(
     app.jinja_env.globals["match_tool_for_block"] = match_tool_for_block
     app.jinja_env.globals["get_nested_meta"] = lambda block: getattr(block, "_nested_meta", {})
 
-    # Store database path, title, storage paths, and CLI inclusion in app config
+    # Store database path, title, storage paths, and Chronicle path in app config
     app.config["DB_PATH"] = db_path
+    app.config["CHRONICLE_DB_PATH"] = chronicle_db_path
     app.config["ARCHIVE_TITLE"] = title
     app.config["STORAGE_PATHS"] = storage_paths  # None means use default VS Code paths
 
@@ -89,7 +93,7 @@ def create_app(
     @app.route("/")
     def index():
         """List sessions, with optional search, workspace, repository filtering, and pagination."""
-        db = Database(app.config["DB_PATH"])
+        db = Database(app.config["DB_PATH"], chronicle_db_path=app.config["CHRONICLE_DB_PATH"])
         query = request.args.get("q", "").strip()
         selected_workspaces = request.args.getlist("workspace")
         selected_repositories = request.args.getlist("repository")
@@ -211,7 +215,7 @@ def create_app(
     @app.route("/session/<session_id>")
     def session_view(session_id: str):
         """Render a single session."""
-        db = Database(app.config["DB_PATH"])
+        db = Database(app.config["DB_PATH"], chronicle_db_path=app.config["CHRONICLE_DB_PATH"])
         session = db.get_session(session_id)
 
         if session is None:
@@ -286,7 +290,7 @@ def create_app(
         - full=false (default): Incremental refresh, only updates changed sessions
         - full=true: Full rebuild, re-imports all sessions
         """
-        db = Database(app.config["DB_PATH"])
+        db = Database(app.config["DB_PATH"], chronicle_db_path=app.config["CHRONICLE_DB_PATH"])
         full_refresh = request.form.get("full", "false").lower() == "true"
 
         # Get storage paths - use configured paths or default VS Code paths
@@ -313,7 +317,7 @@ def create_app(
     @app.route("/enrich/<session_id>", methods=["POST"])
     def enrich_session(session_id: str):
         """Enrich a single CLI session by parsing its events.jsonl file."""
-        enrich_db = Database(app.config["DB_PATH"])
+        enrich_db = Database(app.config["DB_PATH"], chronicle_db_path=app.config["CHRONICLE_DB_PATH"])
         error = enrich_single_session(enrich_db, session_id)
         if error:
             flash(error, "error")
@@ -328,7 +332,7 @@ def create_app(
         except ImportError:
             return jsonify({"success": False, "error": "litellm not installed. Install with: pip install copilot-session-tools[llm]"}), 500
 
-        cleanup_db = Database(app.config["DB_PATH"])
+        cleanup_db = Database(app.config["DB_PATH"], chronicle_db_path=app.config["CHRONICLE_DB_PATH"])
         data = request.get_json(silent=True) or {}
         message_index = data.get("message_index")
 
@@ -356,7 +360,7 @@ def create_app(
         """Revert cleaned messages to their original content."""
         from copilot_session_tools.transcript_cleanup import revert_message, revert_session
 
-        revert_db = Database(app.config["DB_PATH"])
+        revert_db = Database(app.config["DB_PATH"], chronicle_db_path=app.config["CHRONICLE_DB_PATH"])
         data = request.get_json(silent=True) or {}
         message_index = data.get("message_index")
 
@@ -388,7 +392,7 @@ def create_app(
         """
         from copilot_session_tools.content_types import DEFAULT_INCLUDES
 
-        db = Database(app.config["DB_PATH"])
+        db = Database(app.config["DB_PATH"], chronicle_db_path=app.config["CHRONICLE_DB_PATH"])
 
         # Parse range parameters
         start_param = request.args.get("start", "").strip()
@@ -472,7 +476,7 @@ def create_app(
         Returns:
             HTML file download.
         """
-        db = Database(app.config["DB_PATH"])
+        db = Database(app.config["DB_PATH"], chronicle_db_path=app.config["CHRONICLE_DB_PATH"])
 
         # Parse content_set
         if "content_set" in request.args:
@@ -536,17 +540,19 @@ def run_server(
     db_path: str = "copilot_chats.db",
     title: str = "Copilot Session Tools",
     debug: bool = False,
+    chronicle_db_path: str | None = None,
 ) -> None:
     """Run the Flask development server.
 
     Args:
         host: Host to bind to.
         port: Port to bind to.
-        db_path: Path to the SQLite database file.
+        db_path: Path to the CST enrichment database file.
         title: Title for the archive.
         debug: Enable debug mode.
+        chronicle_db_path: Path to the Chronicle session-store.db (auto-detected if None).
     """
-    app = create_app(db_path, title)
+    app = create_app(db_path, title, chronicle_db_path=chronicle_db_path)
     # Suppress Flask/Werkzeug startup banners — we print our own
     import logging
 
