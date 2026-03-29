@@ -2128,10 +2128,9 @@ class TestSchemaV6:
         # Re-run ensure_schema — should detect v5 and drop/recreate
         ensure_schema(conn)
 
-        # Schema version should now be current (6)
+        # Schema version should now be current
         version = conn.execute("SELECT version FROM cst_schema_version").fetchone()[0]
         assert version == CST_SCHEMA_VERSION
-        assert version == 6
 
         # Old data should be gone (drop/recreate wipes everything)
         assert conn.execute("SELECT COUNT(*) FROM cst_sessions").fetchone()[0] == 0

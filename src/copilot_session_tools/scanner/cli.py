@@ -271,6 +271,8 @@ class _CliSessionBuilder:
             tool_inv, _ = self.build_tool_invocation(tool_call_id, tool_name, arguments)
             if tool_inv:
                 tool_inv.invocation_message = resolved_msg
+                tool_inv.is_agent_backlink = True
+                tool_inv.backlink_agent_id = agent_id
                 self.current_assistant_tool_invocations.append(tool_inv)
             return
 
@@ -729,6 +731,9 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                 parts: list[str] = []
                 for child_display in builder.subagent_child_tools.get(tool_call_id, []):
                     parts.append(f"*{child_display}*")
+                # Detect background agent (even for failed ones)
+                is_bg = tool_call_id in builder.bg_agent_id_map
+                bg_id = builder.bg_agent_id_map.get(tool_call_id, "")
                 if failed:
                     error = builder.subagent_failures[tool_call_id]
                     parts.append(f"**Error:** {error}" if error else "**Error:** Unknown error")
@@ -746,9 +751,9 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                             result_text = str(result_obj)
                     # Background agents return a placeholder — use read_agent result instead
                     if not result_text or result_text.startswith("Agent started in background"):
-                        agent_id = builder.bg_agent_id_map.get(tool_call_id, "")
-                        if agent_id:
-                            result_text = builder.bg_agent_results.get(agent_id, "")
+                        is_bg = True
+                        if bg_id:
+                            result_text = builder.bg_agent_results.get(bg_id, "")
                         else:
                             result_text = ""
                     if result_text:
@@ -801,7 +806,15 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                     content_blocks=nested_blocks,
                 )
 
-                block = ContentBlock(kind=kind, content=content, description=title, child_message=child_msg)
+                block = ContentBlock(
+                    kind=kind,
+                    content=content,
+                    description=title,
+                    child_message=child_msg,
+                    prompt=req_args.get("prompt", ""),
+                    is_background=is_bg,
+                    agent_id=bg_id if is_bg else "",
+                )
                 # Also set deprecated fields for backward compat during transition
                 block.content_blocks = nested_blocks
                 block.tool_invocations = nested_tool_invocations

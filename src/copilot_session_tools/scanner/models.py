@@ -20,6 +20,8 @@ class ToolInvocation:
     source_type: str | None = None  # 'mcp' or 'internal'
     invocation_message: str | None = None  # Pretty display message (e.g., "Reading file.txt, lines 1 to 100")
     subagent_invocation_id: str | None = None  # VS Code: links child tools to parent sub-agent
+    is_agent_backlink: bool = False  # True for read_agent calls that should render as back-links
+    backlink_agent_id: str | None = None  # The agent-N id this back-link points to
 
 
 @dataclass
@@ -70,6 +72,9 @@ class ContentBlock:
     content: str
     description: str | None = None  # Optional description (e.g., generatedTitle for thinking blocks)
     child_message: "ChatMessage | None" = None  # For subagent blocks: the child message containing structured data
+    prompt: str | None = None  # For subagent blocks: the prompt text passed to the agent
+    is_background: bool = False  # True for background (async) agents, False for sync
+    agent_id: str | None = None  # For background agents: the agent-N id (e.g., "agent-0")
     # Deprecated: use child_message instead. Kept for backward compatibility.
     content_blocks: list["ContentBlock"] = field(default_factory=list)
     tool_invocations: list[ToolInvocation] = field(default_factory=list)

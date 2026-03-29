@@ -7,6 +7,7 @@ objects so they can be used both from the ``Database`` façade and from
 standalone tooling.
 """
 
+import contextlib
 import sqlite3
 from datetime import UTC, datetime
 
@@ -26,7 +27,7 @@ from .db_schema import (
 from .markdown_exporter import message_to_markdown
 from .scanner import ChatSession
 
-CST_SCHEMA_VERSION = 6
+CST_SCHEMA_VERSION = 7
 
 
 CST_SCHEMA = """
@@ -84,7 +85,9 @@ CREATE TABLE IF NOT EXISTS cst_tool_invocations (
     end_time INTEGER,
     source_type TEXT,
     invocation_message TEXT,
-    subagent_invocation_id TEXT
+    subagent_invocation_id TEXT,
+    is_agent_backlink INTEGER DEFAULT 0,
+    backlink_agent_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_cst_tool_invocations_message ON cst_tool_invocations(message_id);
 
@@ -118,7 +121,10 @@ CREATE TABLE IF NOT EXISTS cst_content_blocks (
     kind TEXT NOT NULL DEFAULT 'text',
     content TEXT,
     description TEXT,
-    child_message_id INTEGER REFERENCES cst_messages(id) ON DELETE SET NULL
+    child_message_id INTEGER REFERENCES cst_messages(id) ON DELETE SET NULL,
+    prompt TEXT,
+    is_background INTEGER DEFAULT 0,
+    agent_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_cst_content_blocks_message ON cst_content_blocks(message_id);
 
@@ -269,7 +275,14 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
                 (CST_SCHEMA_VERSION,),
             )
     elif needs_migration:
-        # Future migrations (v7+) would go here
+        # v6 → v7: Add agent rendering fields
+        if current_version < 7:
+            for col in ("prompt TEXT", "is_background INTEGER DEFAULT 0", "agent_id TEXT"):
+                with contextlib.suppress(sqlite3.OperationalError):
+                    cursor.execute(f"ALTER TABLE cst_content_blocks ADD COLUMN {col}")
+            for col in ("is_agent_backlink INTEGER DEFAULT 0", "backlink_agent_id TEXT"):
+                with contextlib.suppress(sqlite3.OperationalError):
+                    cursor.execute(f"ALTER TABLE cst_tool_invocations ADD COLUMN {col}")
         cursor.execute(
             "UPDATE cst_schema_version SET version = ?",
             (CST_SCHEMA_VERSION,),
@@ -502,7 +515,7 @@ def _insert_content_blocks_recursive(
         # Insert this content block row (links to child_message_id if applicable)
         cursor.execute(
             insert_sql("cst_content_blocks", CST_CONTENT_BLOCK_COLUMNS),
-            (parent_message_id, block_idx, block.kind, block.content, block.description, child_message_id),
+            (parent_message_id, block_idx, block.kind, block.content, block.description, child_message_id, block.prompt, block.is_background, block.agent_id),
         )
 
 
