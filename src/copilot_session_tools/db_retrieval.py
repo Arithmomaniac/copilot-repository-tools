@@ -283,10 +283,12 @@ def get_cst_session(conn: sqlite3.Connection, session_id: str) -> ChatSession | 
 
 
 def get_builtin_session(conn: sqlite3.Connection, session_id: str) -> dict | None:
-    """Read a session from the built-in sessions table.
+    """Read a session from the Chronicle sessions table.
+
+    Expects Chronicle to be ATTACHed as ``chronicle`` schema.
 
     Args:
-        conn: SQLite connection.
+        conn: SQLite connection (with chronicle attached).
         session_id: The session ID to look up.
 
     Returns:
@@ -294,7 +296,7 @@ def get_builtin_session(conn: sqlite3.Connection, session_id: str) -> dict | Non
     """
     try:
         row = conn.execute(
-            "SELECT id, cwd, repository, branch, summary, created_at, updated_at FROM sessions WHERE id = ?",
+            "SELECT id, cwd, repository, branch, summary, created_at, updated_at FROM chronicle.sessions WHERE id = ?",
             (session_id,),
         ).fetchone()
         return dict(row) if row else None
@@ -303,10 +305,12 @@ def get_builtin_session(conn: sqlite3.Connection, session_id: str) -> dict | Non
 
 
 def get_builtin_turns(conn: sqlite3.Connection, session_id: str) -> list[dict]:
-    """Read turns from the built-in turns table for a session.
+    """Read turns from the Chronicle turns table for a session.
+
+    Expects Chronicle to be ATTACHed as ``chronicle`` schema.
 
     Args:
-        conn: SQLite connection.
+        conn: SQLite connection (with chronicle attached).
         session_id: The session ID.
 
     Returns:
@@ -314,7 +318,7 @@ def get_builtin_turns(conn: sqlite3.Connection, session_id: str) -> list[dict]:
     """
     try:
         rows = conn.execute(
-            "SELECT turn_index, user_message, assistant_response FROM turns WHERE session_id = ? ORDER BY turn_index",
+            "SELECT turn_index, user_message, assistant_response FROM chronicle.turns WHERE session_id = ? ORDER BY turn_index",
             (session_id,),
         ).fetchall()
         return [dict(r) for r in rows]
@@ -323,11 +327,14 @@ def get_builtin_turns(conn: sqlite3.Connection, session_id: str) -> list[dict]:
 
 
 def get_builtin_checkpoints(conn: sqlite3.Connection, session_id: str) -> list[dict]:
-    """Read checkpoints from the built-in checkpoints table."""
+    """Read checkpoints from the Chronicle checkpoints table.
+
+    Expects Chronicle to be ATTACHed as ``chronicle`` schema.
+    """
     try:
         rows = conn.execute(
             "SELECT checkpoint_number, title, overview, history, work_done, technical_details, "
-            "important_files, next_steps FROM checkpoints WHERE session_id = ? ORDER BY checkpoint_number",
+            "important_files, next_steps FROM chronicle.checkpoints WHERE session_id = ? ORDER BY checkpoint_number",
             (session_id,),
         ).fetchall()
         return [dict(r) for r in rows]
@@ -336,10 +343,13 @@ def get_builtin_checkpoints(conn: sqlite3.Connection, session_id: str) -> list[d
 
 
 def get_builtin_files(conn: sqlite3.Connection, session_id: str) -> list[dict]:
-    """Read file references from the built-in session_files table."""
+    """Read file references from the Chronicle session_files table.
+
+    Expects Chronicle to be ATTACHed as ``chronicle`` schema.
+    """
     try:
         rows = conn.execute(
-            "SELECT file_path, tool_name, turn_index, first_seen_at FROM session_files WHERE session_id = ?",
+            "SELECT file_path, tool_name, turn_index, first_seen_at FROM chronicle.session_files WHERE session_id = ?",
             (session_id,),
         ).fetchall()
         return [dict(r) for r in rows]
@@ -348,10 +358,13 @@ def get_builtin_files(conn: sqlite3.Connection, session_id: str) -> list[dict]:
 
 
 def get_builtin_refs(conn: sqlite3.Connection, session_id: str) -> list[dict]:
-    """Read refs from the built-in session_refs table."""
+    """Read refs from the Chronicle session_refs table.
+
+    Expects Chronicle to be ATTACHed as ``chronicle`` schema.
+    """
     try:
         rows = conn.execute(
-            "SELECT ref_type, ref_value, turn_index, created_at FROM session_refs WHERE session_id = ?",
+            "SELECT ref_type, ref_value, turn_index, created_at FROM chronicle.session_refs WHERE session_id = ?",
             (session_id,),
         ).fetchall()
         return [dict(r) for r in rows]
@@ -360,10 +373,13 @@ def get_builtin_refs(conn: sqlite3.Connection, session_id: str) -> list[dict]:
 
 
 def list_builtin_sessions(conn: sqlite3.Connection, limit: int = 100, offset: int = 0) -> list[dict]:
-    """List sessions from the built-in sessions table."""
+    """List sessions from the Chronicle sessions table.
+
+    Expects Chronicle to be ATTACHed as ``chronicle`` schema.
+    """
     try:
         rows = conn.execute(
-            "SELECT id, cwd, repository, branch, summary, created_at, updated_at FROM sessions ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+            "SELECT id, cwd, repository, branch, summary, created_at, updated_at FROM chronicle.sessions ORDER BY updated_at DESC LIMIT ? OFFSET ?",
             (limit, offset),
         ).fetchall()
         return [dict(r) for r in rows]
@@ -372,10 +388,13 @@ def list_builtin_sessions(conn: sqlite3.Connection, limit: int = 100, offset: in
 
 
 def count_builtin_turns(conn: sqlite3.Connection, session_id: str) -> int:
-    """Count turns for a session in the built-in turns table."""
+    """Count turns for a session in the Chronicle turns table.
+
+    Expects Chronicle to be ATTACHed as ``chronicle`` schema.
+    """
     try:
         row = conn.execute(
-            "SELECT COUNT(*) FROM turns WHERE session_id = ?",
+            "SELECT COUNT(*) FROM chronicle.turns WHERE session_id = ?",
             (session_id,),
         ).fetchone()
         return row[0] if row else 0
@@ -384,7 +403,9 @@ def count_builtin_turns(conn: sqlite3.Connection, session_id: str) -> int:
 
 
 def get_builtin_session_as_chat_session(conn: sqlite3.Connection, session_id: str) -> ChatSession | None:
-    """Convert built-in session/turns data to a ChatSession.
+    """Convert Chronicle session/turns data to a ChatSession.
+
+    Expects Chronicle to be ATTACHed as ``chronicle`` schema.
 
     Args:
         conn: SQLite connection.
@@ -538,23 +559,25 @@ def list_sessions(
     conn: sqlite3.Connection,
     *,
     has_cst: bool,
+    has_chronicle: bool = False,
     workspace_name: str | None = None,
     limit: int | None = None,
     offset: int = 0,
     session_type: str | None = None,
 ) -> list[dict]:
-    """List sessions from both built-in and cst_* tables.
+    """List sessions from cst_* tables and (optionally) Chronicle.
 
     Returns dicts with at minimum: session_id, title, session_type, start_time,
     updated_at, is_enriched, source.  Also includes workspace_name, workspace_path,
     vscode_edition, custom_title, repository_url, message_count, last_message_at,
     first_user_prompt for backward compatibility with cst-sourced rows.
 
-    Deduplicates by session_id — cst_sessions takes precedence over built-in.
+    Deduplicates by session_id — cst_sessions takes precedence over Chronicle.
 
     Args:
-        conn: SQLite connection.
+        conn: SQLite connection (with chronicle optionally attached).
         has_cst: Whether cst_* tables exist and should be queried.
+        has_chronicle: Whether Chronicle is ATTACHed as ``chronicle`` schema.
         workspace_name: Optional workspace name filter (cst rows only).
         limit: Maximum number of sessions to return.
         offset: Number of sessions to skip.
@@ -615,8 +638,8 @@ def list_sessions(
                 d["session_type"] = d.get("source_format") or "vscode"
             results[d["session_id"]] = d
 
-    # 2. Read from built-in sessions (cli type only)
-    if session_type is None or session_type == "cli":
+    # 2. Read from Chronicle sessions (cli type only) if Chronicle is available
+    if has_chronicle and (session_type is None or session_type == "cli"):
         builtin = list_builtin_sessions(conn, limit=10000)
         # Batch-query turn counts for unenriched sessions
         unenriched_sids = [row["id"] for row in builtin if row["id"] not in results]
@@ -626,7 +649,7 @@ def list_sessions(
                 placeholders = ",".join("?" * len(unenriched_sids))
                 rows = conn.execute(
                     f"SELECT session_id, SUM((user_message IS NOT NULL AND user_message != '') + (assistant_response IS NOT NULL AND assistant_response != '')) "  # noqa: S608
-                    f"FROM turns WHERE session_id IN ({placeholders}) GROUP BY session_id",
+                    f"FROM chronicle.turns WHERE session_id IN ({placeholders}) GROUP BY session_id",
                     unenriched_sids,
                 ).fetchall()
                 turn_counts = dict(rows)
@@ -715,15 +738,16 @@ def get_repositories(conn: sqlite3.Connection) -> list[dict]:
     return [dict(row) for row in cursor.fetchall()]
 
 
-def get_stats(conn: sqlite3.Connection, *, has_cst: bool) -> dict:
+def get_stats(conn: sqlite3.Connection, *, has_cst: bool, has_chronicle: bool = False) -> dict:
     """Get database statistics.
 
     Args:
-        conn: SQLite connection.
+        conn: SQLite connection (with chronicle optionally attached).
         has_cst: Whether cst_* tables exist.
+        has_chronicle: Whether Chronicle is ATTACHed as ``chronicle`` schema.
 
     Returns:
-        Dictionary with stats (combines enriched cst_* and built-in counts).
+        Dictionary with stats (combines enriched cst_* and Chronicle counts).
     """
     cursor = conn.cursor()
 
@@ -745,27 +769,28 @@ def get_stats(conn: sqlite3.Connection, *, has_cst: bool) -> dict:
         cursor.execute("SELECT vscode_edition, COUNT(*) FROM cst_sessions GROUP BY vscode_edition")
         editions = dict(cursor.fetchall())
 
-    # Count built-in sessions and turns not in cst_*
+    # Count Chronicle sessions and turns not in cst_*
     builtin_only_count = 0
     builtin_message_count = 0
-    try:
-        if has_cst:
-            cursor.execute("SELECT COUNT(*) FROM sessions WHERE id NOT IN (SELECT session_id FROM cst_sessions)")
-            builtin_only_count = cursor.fetchone()[0]
-            cursor.execute(
-                "SELECT SUM((user_message IS NOT NULL AND user_message != '') + (assistant_response IS NOT NULL AND assistant_response != '')) "
-                "FROM turns WHERE session_id NOT IN (SELECT session_id FROM cst_sessions)"
-            )
-            row = cursor.fetchone()
-            builtin_message_count = row[0] or 0
-        else:
-            cursor.execute("SELECT COUNT(*) FROM sessions")
-            builtin_only_count = cursor.fetchone()[0]
-            cursor.execute("SELECT SUM((user_message IS NOT NULL AND user_message != '') + (assistant_response IS NOT NULL AND assistant_response != '')) FROM turns")
-            row = cursor.fetchone()
-            builtin_message_count = row[0] or 0
-    except Exception:  # noqa: S110
-        pass
+    if has_chronicle:
+        try:
+            if has_cst:
+                cursor.execute("SELECT COUNT(*) FROM chronicle.sessions WHERE id NOT IN (SELECT session_id FROM cst_sessions)")
+                builtin_only_count = cursor.fetchone()[0]
+                cursor.execute(
+                    "SELECT SUM((user_message IS NOT NULL AND user_message != '') + (assistant_response IS NOT NULL AND assistant_response != '')) "
+                    "FROM chronicle.turns WHERE session_id NOT IN (SELECT session_id FROM cst_sessions)"
+                )
+                row = cursor.fetchone()
+                builtin_message_count = row[0] or 0
+            else:
+                cursor.execute("SELECT COUNT(*) FROM chronicle.sessions")
+                builtin_only_count = cursor.fetchone()[0]
+                cursor.execute("SELECT SUM((user_message IS NOT NULL AND user_message != '') + (assistant_response IS NOT NULL AND assistant_response != '')) FROM chronicle.turns")
+                row = cursor.fetchone()
+                builtin_message_count = row[0] or 0
+        except Exception:  # noqa: S110
+            pass
 
     # Each built-in turn may have user, assistant, or both
     total_message_count = cst_message_count + builtin_message_count

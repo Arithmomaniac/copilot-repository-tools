@@ -36,7 +36,9 @@ def main():
     import sys
     from pathlib import Path
 
-    _default_db = str(Path.home() / ".copilot-session-tools" / "copilot_chats.db")
+    from copilot_session_tools.utils import DEFAULT_DB_PATH
+
+    _default_db = str(DEFAULT_DB_PATH)
 
     parser = argparse.ArgumentParser(
         description="Start the Copilot Session Tools web server",
@@ -46,6 +48,11 @@ def main():
         "-d",
         default=_default_db,
         help=f"Path to SQLite database file (default: {_default_db})",
+    )
+    parser.add_argument(
+        "--chronicle-db",
+        default=None,
+        help="Path to Copilot CLI Chronicle session-store.db (auto-detected by default)",
     )
     parser.add_argument(
         "--host",
@@ -83,7 +90,7 @@ def main():
 
     from copilot_session_tools import Database
 
-    database = Database(args.db)
+    database = Database(args.db, chronicle_db_path=args.chronicle_db)
     stats = database.get_stats()
 
     if stats["session_count"] == 0:
@@ -102,6 +109,7 @@ def main():
         db_path=args.db,
         title=args.title,
         debug=args.debug,
+        chronicle_db_path=args.chronicle_db,
     )
 
 

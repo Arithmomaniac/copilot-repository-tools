@@ -490,7 +490,7 @@ class TestDefaultDbPath:
         """Default DB path should be under user's home directory."""
         result = _default_db_path()
         assert result.parent.parent == Path.home()
-        assert result.name == "session-store.db"
+        assert result.name == "copilot-session-tools.db"
         assert result.parent.name == ".copilot"
 
     def test_returns_path_object(self):
