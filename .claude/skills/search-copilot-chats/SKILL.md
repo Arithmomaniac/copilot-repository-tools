@@ -16,31 +16,7 @@ copilot-session-tools --help                    # list all commands
 copilot-session-tools <command> --help          # flags for a specific command
 ```
 
-The CLI is self-documenting. If a command or flag doesn't appear in `--help`, it doesn't exist. Every subcommand includes example invocations in its `--help` output. This skill only documents **domain knowledge that `--help` cannot teach** — search strategy, gotchas, database schema, and workflows.
-
-## Agent-friendly design
-
-The CLI follows agent-friendly conventions:
-
-- **Non-interactive first.** No prompts, menus, or confirmations — every input is a flag or argument.
-- **Structured output.** Use `--json` on `search` and `stats` for machine-readable output (pipe to `jq` for processing).
-- **Actionable errors.** Error messages include example invocations showing how to fix the issue.
-- **Idempotent.** Most commands are safe to retry: `scan` deduplicates, `import-json` skips existing sessions, `migrate` skips applied migrations.
-- **Layered help.** Top-level `--help` lists commands; per-command `--help` shows flags and examples. No manual dumps on every run.
-
-### Structured output for agents
-
-```powershell
-# Search results as JSON (pipe to jq, parse programmatically)
-copilot-session-tools search "query" --json
-copilot-session-tools search "workspace:ZTS auth" --json | jq '.[].session_id'
-
-# Stats as JSON
-copilot-session-tools stats --json
-copilot-session-tools stats --json | jq '.workspaces'
-```
-
-When `--json` is used, only valid JSON is written to stdout — no Rich formatting, colors, or progress messages.
+The CLI is self-documenting — every subcommand has examples, structured output flags, and actionable error messages. This skill only documents **domain knowledge that `--help` cannot teach** — search strategy, gotchas, database schema, and workflows.
 
 ## When to use
 
