@@ -2932,3 +2932,114 @@ class TestCLIv105EventHandlers:
         # toolTitle should appear somewhere in the display
         found = any("Search Code" in (b.description or "") or "Search Code" in b.content for b in tool_blocks)
         assert found, f"toolTitle should appear in tool display. Got: {[(b.content, b.description) for b in tool_blocks]}"
+
+
+class TestCLIBackgroundAgentFields:
+    """Tests for background agent rendering fields: prompt, is_background, agent_id, backlinks."""
+
+    @staticmethod
+    def _make_events_jsonl(*events):
+        import ssrjson
+
+        lines = [ssrjson.dumps({"type": "session.start", "data": {"sessionId": "bg-agent-test", "startTime": "2026-01-01T00:00:00Z"}})]
+        for evt in events:
+            lines.append(ssrjson.dumps(evt))
+        return "\n".join(lines)
+
+    def _parse(self, tmp_path, *events):
+        from copilot_session_tools.scanner import _parse_cli_jsonl_file
+
+        f = tmp_path / "events.jsonl"
+        f.write_text(self._make_events_jsonl(*events), encoding="utf-8")
+        return _parse_cli_jsonl_file(f)
+
+    def _bg_agent_events(self):
+        """Return events for a session with one background agent."""
+        return [
+            {"type": "assistant.message", "data": {
+                "content": "Launching agent.",
+                "toolRequests": [{"toolCallId": "tc-bg", "name": "task", "arguments": {
+                    "agent_type": "explore", "description": "Check auth module",
+                    "prompt": "Review the auth module for security issues.", "mode": "background",
+                }}],
+            }},
+            {"type": "tool.execution_start", "data": {"toolCallId": "tc-bg", "toolName": "task", "arguments": {
+                "agent_type": "explore", "description": "Check auth module",
+                "prompt": "Review the auth module for security issues.",
+            }}},
+            {"type": "tool.execution_complete", "data": {"toolCallId": "tc-bg", "success": True, "result": {
+                "content": "Agent started in background with agent_id: agent-0. You can use read_agent tool with this agent_id to check status and retrieve results.",
+            }}},
+            {"type": "subagent.started", "data": {"toolCallId": "tc-bg", "agentDisplayName": "Explore Agent", "agentName": "explore"}},
+            {"type": "subagent.completed", "data": {"toolCallId": "tc-bg", "agentDisplayName": "Explore Agent"}},
+            {"type": "assistant.message", "data": {
+                "content": "Let me check results.",
+                "toolRequests": [{"toolCallId": "tc-read", "name": "read_agent", "arguments": {"agent_id": "agent-0"}}],
+            }},
+            {"type": "tool.execution_start", "data": {"toolCallId": "tc-read", "toolName": "read_agent", "arguments": {"agent_id": "agent-0"}}},
+            {"type": "tool.execution_complete", "data": {"toolCallId": "tc-read", "success": True, "result": {
+                "content": "Status: idle\n\nResult:\nFound 2 security issues in the auth module.",
+                "detailedContent": "Found 2 security issues: hardcoded secret, no rate limiting.",
+            }}},
+            {"type": "assistant.message", "data": {"content": "Review complete."}},
+        ]
+
+    def test_background_agent_has_prompt(self, tmp_path):
+        """Background agent subagent block should have prompt text from task args."""
+        session = self._parse(tmp_path, *self._bg_agent_events())
+        subagent_blocks = [cb for msg in session.messages for cb in msg.content_blocks if cb.kind == "subagent"]
+        assert len(subagent_blocks) == 1
+        assert "security issues" in subagent_blocks[0].prompt
+
+    def test_background_agent_is_background_flag(self, tmp_path):
+        """Background agent should have is_background=True."""
+        session = self._parse(tmp_path, *self._bg_agent_events())
+        subagent_blocks = [cb for msg in session.messages for cb in msg.content_blocks if cb.kind == "subagent"]
+        assert subagent_blocks[0].is_background is True
+
+    def test_background_agent_has_agent_id(self, tmp_path):
+        """Background agent should have agent_id from placeholder text."""
+        session = self._parse(tmp_path, *self._bg_agent_events())
+        subagent_blocks = [cb for msg in session.messages for cb in msg.content_blocks if cb.kind == "subagent"]
+        assert subagent_blocks[0].agent_id == "agent-0"
+
+    def test_background_agent_result_populated(self, tmp_path):
+        """Background agent result should come from read_agent, not placeholder."""
+        session = self._parse(tmp_path, *self._bg_agent_events())
+        subagent_blocks = [cb for msg in session.messages for cb in msg.content_blocks if cb.kind == "subagent"]
+        assert "Agent started in background" not in subagent_blocks[0].content
+        assert "security issues" in subagent_blocks[0].content
+
+    def test_read_agent_marked_as_backlink(self, tmp_path):
+        """read_agent tool invocations should be marked as backlinks."""
+        session = self._parse(tmp_path, *self._bg_agent_events())
+        read_tools = [t for msg in session.messages for t in msg.tool_invocations if t.name == "read_agent"]
+        assert len(read_tools) == 1
+        assert read_tools[0].is_agent_backlink is True
+        assert read_tools[0].backlink_agent_id == "agent-0"
+
+    def test_sync_agent_not_background(self, tmp_path):
+        """Sync agents should have is_background=False."""
+        events = [
+            {"type": "assistant.message", "data": {
+                "content": "Using sync agent.",
+                "toolRequests": [{"toolCallId": "tc-sync", "name": "task", "arguments": {
+                    "agent_type": "explore", "description": "Quick check",
+                    "prompt": "Check something quickly.",
+                }}],
+            }},
+            {"type": "tool.execution_start", "data": {"toolCallId": "tc-sync", "toolName": "task", "arguments": {
+                "agent_type": "explore", "description": "Quick check",
+            }}},
+            {"type": "tool.execution_complete", "data": {"toolCallId": "tc-sync", "success": True, "result": {
+                "content": "Everything looks good.",
+            }}},
+            {"type": "subagent.started", "data": {"toolCallId": "tc-sync", "agentDisplayName": "Explore Agent"}},
+            {"type": "subagent.completed", "data": {"toolCallId": "tc-sync", "agentDisplayName": "Explore Agent"}},
+            {"type": "assistant.message", "data": {"content": "Done."}},
+        ]
+        session = self._parse(tmp_path, *events)
+        subagent_blocks = [cb for msg in session.messages for cb in msg.content_blocks if cb.kind == "subagent"]
+        assert len(subagent_blocks) == 1
+        assert subagent_blocks[0].is_background is False
+        assert subagent_blocks[0].prompt == "Check something quickly."

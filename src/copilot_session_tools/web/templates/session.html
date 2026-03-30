@@ -852,6 +852,18 @@ header h1 {
     .subagent-block {
         border-left-color: #818cf8;
     }
+    .subagent-block.subagent-background {
+        border-left-color: #38bdf8;
+        background-color: rgba(14, 165, 233, 0.08);
+    }
+    .subagent-block.subagent-background > summary .subagent-label {
+        color: #7dd3fc;
+    }
+    .subagent-background-badge {
+        background: rgba(56, 189, 248, 0.15);
+        color: #7dd3fc;
+        border-color: rgba(56, 189, 248, 0.3);
+    }
 }
 
 .subagent-content {
@@ -868,6 +880,117 @@ header h1 {
 
 .subagent-content p:has(> em:only-child) {
     margin: 0;
+}
+
+/* Background (async) agent variant */
+.subagent-block.subagent-background {
+    border-left-color: #0ea5e9;
+    background-color: #f0f9ff;
+}
+.subagent-block.subagent-background > summary .subagent-label {
+    color: #0284c7;
+}
+.subagent-background-badge {
+    padding: 2px 7px;
+    border-radius: 9px;
+    font-size: 0.7em;
+    font-weight: 500;
+    background: rgba(14, 165, 233, 0.1);
+    color: #0284c7;
+    border: 1px solid #bae6fd;
+    white-space: nowrap;
+}
+
+/* Prompt section inside subagent blocks */
+.subagent-prompt {
+    margin: 8px 0;
+    border-radius: 4px;
+    background: #eef2ff;
+    border: 1px solid #c7d2fe;
+}
+.subagent-prompt > summary {
+    padding: 4px 10px;
+    font-size: 0.75em;
+    font-weight: 600;
+    color: #4338ca;
+    cursor: pointer;
+    list-style: none;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+.subagent-prompt > summary::-webkit-details-marker { display: none; }
+.subagent-prompt-content {
+    padding: 4px 10px 8px;
+    font-size: 0.85em;
+    color: #555;
+    max-height: 200px;
+    overflow: auto;
+}
+.subagent-prompt-content p { margin: 0 0 4px; }
+
+@media (prefers-color-scheme: dark) {
+    .subagent-prompt {
+        background: rgba(99, 102, 241, 0.1);
+        border-color: rgba(99, 102, 241, 0.3);
+    }
+    .subagent-prompt > summary { color: #a5b4fc; }
+    .subagent-prompt-content { color: #c4b5fd; }
+
+    .subagent-block.subagent-background .subagent-prompt {
+        background: rgba(14, 165, 233, 0.08);
+        border-color: rgba(14, 165, 233, 0.2);
+    }
+    .subagent-block.subagent-background .subagent-prompt > summary {
+        color: #7dd3fc;
+    }
+}
+
+/* Collapsed system notification */
+.system-notification-collapsed {
+    margin: 2px 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    background: none !important;
+}
+.system-notification-indicator {
+    padding: 3px 12px;
+    font-size: 0.78em;
+    color: var(--text-secondary);
+    opacity: 0.7;
+    border-radius: 4px;
+    background: var(--bg-tertiary);
+    display: inline-block;
+}
+
+/* Agent back-link */
+.agent-backlink {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 14px;
+    border-radius: 14px;
+    font-size: 0.82em;
+    font-weight: 500;
+    margin: 3px 0;
+    background: rgba(99, 102, 241, 0.08);
+    color: #6366f1;
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    text-decoration: none;
+    cursor: pointer;
+}
+.agent-backlink:hover {
+    background: rgba(99, 102, 241, 0.15);
+}
+
+@media (prefers-color-scheme: dark) {
+    .agent-backlink {
+        background: rgba(165, 180, 252, 0.1);
+        color: #a5b4fc;
+        border-color: rgba(165, 180, 252, 0.25);
+    }
+    .agent-backlink:hover {
+        background: rgba(165, 180, 252, 0.2);
+    }
 }
 
 /* Content blocks */
@@ -2389,7 +2512,7 @@ input:checked + .toggle-switch::after {
                             <span class="status-badge {{ block.description or '' }}">{{ block.content }}</span>
                             {% endif %}
                             {% elif block.kind in ('subagent', 'subagent_failed', 'subagent_incomplete') %}
-                            <details class="subagent-block{% if block.kind == 'subagent_failed' %} subagent-failed{% endif %}">
+                            <details class="subagent-block{% if block.kind == 'subagent_failed' %} subagent-failed{% endif %}{% if block.is_background %} subagent-background{% endif %}"{% if block.agent_id %} id="agent-{{ block.agent_id }}"{% endif %}>
                                 <summary>
                                     <span class="collapsible-icon" aria-hidden="true">▶</span>
                                     <span class="subagent-label">{{ block.description or 'Agent' }}</span>
@@ -2400,8 +2523,19 @@ input:checked + .toggle-switch::after {
                                     {% else %}
                                     <span class="status-badge success">completed</span>
                                     {% endif %}
+                                    {% if block.is_background %}
+                                    <span class="subagent-background-badge">↗ background</span>
+                                    {% endif %}
                                 </summary>
                                 <div class="subagent-content">
+                                    {% if block.prompt %}
+                                    <details class="subagent-prompt" open>
+                                        <summary class="subagent-prompt-label">Prompt</summary>
+                                        <div class="subagent-prompt-content">
+                                            {{ block.prompt | markdown | safe }}
+                                        </div>
+                                    </details>
+                                    {% endif %}
                                     {% if include_agent_details is not defined or include_agent_details %}
                                     {# Full details: all tools, commands, file changes, result #}
                                     {% if block.content_blocks %}
@@ -2503,6 +2637,11 @@ input:checked + .toggle-switch::after {
                             {# Determine the pretty header text - use invocation_message if available, else block content #}
                             {% set pretty_header = matched_tool.invocation_message if matched_tool.invocation_message else block.content %}
                             
+                            {% if matched_tool.is_agent_backlink and matched_tool.backlink_agent_id %}
+                            <a href="#agent-{{ matched_tool.backlink_agent_id }}" class="agent-backlink" onclick="this.closest('.message').querySelector('#agent-' + '{{ matched_tool.backlink_agent_id }}')?.scrollIntoView({behavior:'smooth'}); return false;">
+                                ↩ {{ matched_tool.invocation_message | replace('⏳ Checking agent ', '') }} — see result above
+                            </a>
+                            {% else %}
                             {% if show_collapsible %}
                             <div class="content-block content-block-toolInvocation tool-invocation-inline">
                                 <details class="tool-invocation-wrapper">
@@ -2546,8 +2685,8 @@ input:checked + .toggle-switch::after {
                                 <div class="tool-invocation-message">{{ pretty_header | markdown | safe }}</div>
                             </div>
                             {% endif %}
+                            {% endif %}
                             {% else %}
-                            {# Unmatched tool invocation - just show the content #}
                             <div class="content-block content-block-toolInvocation tool-invocation-unmatched">
                                 <div class="tool-invocation-message">{{ block.content | markdown | safe }}</div>
                             </div>
@@ -2726,6 +2865,14 @@ input:checked + .toggle-switch::after {
         <div class="messages">
             {% for message in session.messages %}
             {% set msg_meta = message_metadata.get(loop.index0, {}) %}
+            {% set is_system_notification = message.role == 'user' and message.content.strip().startswith('<system_notification>') and 'agent' in message.content.lower() and ('completed' in message.content.lower() or 'failed' in message.content.lower()) %}
+            {% if is_system_notification %}
+            <div class="message user system-notification-collapsed" id="msg-{{ loop.index }}">
+                <div class="system-notification-indicator">
+                    🔔 {{ message.content | replace('<system_notification>', '') | replace('</system_notification>', '') | truncate(100) | safe }}
+                </div>
+            </div>
+            {% else %}
             <div class="message {{ message.role }}" id="msg-{{ loop.index }}">
                 <div class="message-header">
                     <div class="message-role">{{ message.role }}</div>
@@ -2771,6 +2918,7 @@ input:checked + .toggle-switch::after {
                     </div>
                 </div>
             </div>
+            {% endif %}
             {% endfor %}
         </div>
         {%- if new_turns %}

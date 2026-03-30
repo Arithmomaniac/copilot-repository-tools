@@ -137,7 +137,7 @@ class TestBackLinkNavigation:
         """Test that back link navigates to index."""
         page.goto(f"{live_server}/session/e2e-session-1")
 
-        page.locator("a:has-text('Back to all sessions')").click()
+        page.locator("a.back-link[title='Back to all sessions']").click()
 
         # Should be on index
         assert page.url == f"{live_server}/"
@@ -146,7 +146,7 @@ class TestBackLinkNavigation:
         """Test that 404 page back link navigates to index."""
         page.goto(f"{live_server}/session/nonexistent-session")
 
-        back_link = page.locator("a:has-text('Back to all sessions')")
+        back_link = page.locator("a:has-text('Back to all sessions'), a.back-link[title='Back to all sessions']")
         back_link.click()
 
         assert page.url == f"{live_server}/"
@@ -159,7 +159,11 @@ class TestWorkspaceFilter:
         """Test that workspace filter checkboxes are displayed."""
         page.goto(live_server)
 
-        # Check that workspace checkboxes exist
+        # Open the workspace dropdown first
+        page.locator("#workspace-dropdown-btn").click()
+        page.wait_for_timeout(300)
+
+        # Check that workspace checkboxes exist and are visible
         my_workspace_checkbox = page.locator("input[type='checkbox'][value='my-workspace']")
         another_project_checkbox = page.locator("input[type='checkbox'][value='another-project']")
 
@@ -184,7 +188,9 @@ class TestWorkspaceFilter:
         assert page.locator("a:has-text('VS Code debug')").is_visible()
         assert page.locator("a:has-text('another-project')").is_visible()
 
-        # Check my-workspace checkbox
+        # Open workspace dropdown and check my-workspace
+        page.locator("#workspace-dropdown-btn").click()
+        page.wait_for_timeout(300)
         page.locator("input[type='checkbox'][value='my-workspace']").check()
 
         # Click Apply Filter

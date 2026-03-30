@@ -839,6 +839,18 @@ header h1 {
     .subagent-block {
         border-left-color: #818cf8;
     }
+    .subagent-block.subagent-background {
+        border-left-color: #38bdf8;
+        background-color: rgba(14, 165, 233, 0.08);
+    }
+    .subagent-block.subagent-background > summary .subagent-label {
+        color: #7dd3fc;
+    }
+    .subagent-background-badge {
+        background: rgba(56, 189, 248, 0.15);
+        color: #7dd3fc;
+        border-color: rgba(56, 189, 248, 0.3);
+    }
 }
 
 .subagent-content {
@@ -855,6 +867,117 @@ header h1 {
 
 .subagent-content p:has(> em:only-child) {
     margin: 0;
+}
+
+/* Background (async) agent variant */
+.subagent-block.subagent-background {
+    border-left-color: #0ea5e9;
+    background-color: #f0f9ff;
+}
+.subagent-block.subagent-background > summary .subagent-label {
+    color: #0284c7;
+}
+.subagent-background-badge {
+    padding: 2px 7px;
+    border-radius: 9px;
+    font-size: 0.7em;
+    font-weight: 500;
+    background: rgba(14, 165, 233, 0.1);
+    color: #0284c7;
+    border: 1px solid #bae6fd;
+    white-space: nowrap;
+}
+
+/* Prompt section inside subagent blocks */
+.subagent-prompt {
+    margin: 8px 0;
+    border-radius: 4px;
+    background: #eef2ff;
+    border: 1px solid #c7d2fe;
+}
+.subagent-prompt > summary {
+    padding: 4px 10px;
+    font-size: 0.75em;
+    font-weight: 600;
+    color: #4338ca;
+    cursor: pointer;
+    list-style: none;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+.subagent-prompt > summary::-webkit-details-marker { display: none; }
+.subagent-prompt-content {
+    padding: 4px 10px 8px;
+    font-size: 0.85em;
+    color: #555;
+    max-height: 200px;
+    overflow: auto;
+}
+.subagent-prompt-content p { margin: 0 0 4px; }
+
+@media (prefers-color-scheme: dark) {
+    .subagent-prompt {
+        background: rgba(99, 102, 241, 0.1);
+        border-color: rgba(99, 102, 241, 0.3);
+    }
+    .subagent-prompt > summary { color: #a5b4fc; }
+    .subagent-prompt-content { color: #c4b5fd; }
+
+    .subagent-block.subagent-background .subagent-prompt {
+        background: rgba(14, 165, 233, 0.08);
+        border-color: rgba(14, 165, 233, 0.2);
+    }
+    .subagent-block.subagent-background .subagent-prompt > summary {
+        color: #7dd3fc;
+    }
+}
+
+/* Collapsed system notification */
+.system-notification-collapsed {
+    margin: 2px 0 !important;
+    padding: 0 !important;
+    border: none !important;
+    background: none !important;
+}
+.system-notification-indicator {
+    padding: 3px 12px;
+    font-size: 0.78em;
+    color: var(--text-secondary);
+    opacity: 0.7;
+    border-radius: 4px;
+    background: var(--bg-tertiary);
+    display: inline-block;
+}
+
+/* Agent back-link */
+.agent-backlink {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 14px;
+    border-radius: 14px;
+    font-size: 0.82em;
+    font-weight: 500;
+    margin: 3px 0;
+    background: rgba(99, 102, 241, 0.08);
+    color: #6366f1;
+    border: 1px solid rgba(99, 102, 241, 0.3);
+    text-decoration: none;
+    cursor: pointer;
+}
+.agent-backlink:hover {
+    background: rgba(99, 102, 241, 0.15);
+}
+
+@media (prefers-color-scheme: dark) {
+    .agent-backlink {
+        background: rgba(165, 180, 252, 0.1);
+        color: #a5b4fc;
+        border-color: rgba(165, 180, 252, 0.25);
+    }
+    .agent-backlink:hover {
+        background: rgba(165, 180, 252, 0.2);
+    }
 }
 
 /* Content blocks */
