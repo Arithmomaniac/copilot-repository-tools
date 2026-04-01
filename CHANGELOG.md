@@ -5,6 +5,24 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.0] - 2026-04-01
+
+### Added
+
+- **Web Viewer**: Visual distinction between sync and background agents — sync agents use purple borders, background agents use blue borders with "↗ background" badge
+- **Web Viewer**: Agent prompt section — expandable "Prompt" block inside each agent dropdown showing what the agent was asked to do
+- **Web Viewer**: State-colored backlink pills for background agents — `read_agent` calls render as clickable ↩ pills colored by state: blue (in progress), green (completed), red (failed), linking back to the agent block
+- **Web Viewer**: Skills styled with teal color to distinguish from agent blocks (previously shared purple with sync agents)
+- **Web Viewer**: System notification messages (`<system_notification>`) collapsed into compact indicators instead of full message bubbles
+- **Scanner**: New fields on `ContentBlock`: `prompt`, `is_background`, `agent_id` for structured agent metadata
+- **Scanner**: New fields on `ToolInvocation`: `is_agent_backlink`, `backlink_agent_id` for linking `read_agent` calls back to their agent blocks
+- **Database**: Schema v7 — new columns for agent rendering fields (auto-migrated from v6 via ALTER TABLE)
+
+### Changed
+
+- **Web Viewer**: Standalone subagent status pills (`completed`/`failed`) hidden — redundant with agent block headers and backlink pills
+- **Web Viewer**: Background agent badge order — "↗ background" now appears before "completed" badge for consistent alignment
+
 ## [0.9.0] - 2026-03-29
 
 ### Changed

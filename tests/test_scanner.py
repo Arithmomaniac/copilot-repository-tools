@@ -2956,31 +2956,67 @@ class TestCLIBackgroundAgentFields:
     def _bg_agent_events(self):
         """Return events for a session with one background agent."""
         return [
-            {"type": "assistant.message", "data": {
-                "content": "Launching agent.",
-                "toolRequests": [{"toolCallId": "tc-bg", "name": "task", "arguments": {
-                    "agent_type": "explore", "description": "Check auth module",
-                    "prompt": "Review the auth module for security issues.", "mode": "background",
-                }}],
-            }},
-            {"type": "tool.execution_start", "data": {"toolCallId": "tc-bg", "toolName": "task", "arguments": {
-                "agent_type": "explore", "description": "Check auth module",
-                "prompt": "Review the auth module for security issues.",
-            }}},
-            {"type": "tool.execution_complete", "data": {"toolCallId": "tc-bg", "success": True, "result": {
-                "content": "Agent started in background with agent_id: agent-0. You can use read_agent tool with this agent_id to check status and retrieve results.",
-            }}},
+            {
+                "type": "assistant.message",
+                "data": {
+                    "content": "Launching agent.",
+                    "toolRequests": [
+                        {
+                            "toolCallId": "tc-bg",
+                            "name": "task",
+                            "arguments": {
+                                "agent_type": "explore",
+                                "description": "Check auth module",
+                                "prompt": "Review the auth module for security issues.",
+                                "mode": "background",
+                            },
+                        }
+                    ],
+                },
+            },
+            {
+                "type": "tool.execution_start",
+                "data": {
+                    "toolCallId": "tc-bg",
+                    "toolName": "task",
+                    "arguments": {
+                        "agent_type": "explore",
+                        "description": "Check auth module",
+                        "prompt": "Review the auth module for security issues.",
+                    },
+                },
+            },
+            {
+                "type": "tool.execution_complete",
+                "data": {
+                    "toolCallId": "tc-bg",
+                    "success": True,
+                    "result": {
+                        "content": "Agent started in background with agent_id: agent-0. You can use read_agent tool with this agent_id to check status and retrieve results.",
+                    },
+                },
+            },
             {"type": "subagent.started", "data": {"toolCallId": "tc-bg", "agentDisplayName": "Explore Agent", "agentName": "explore"}},
             {"type": "subagent.completed", "data": {"toolCallId": "tc-bg", "agentDisplayName": "Explore Agent"}},
-            {"type": "assistant.message", "data": {
-                "content": "Let me check results.",
-                "toolRequests": [{"toolCallId": "tc-read", "name": "read_agent", "arguments": {"agent_id": "agent-0"}}],
-            }},
+            {
+                "type": "assistant.message",
+                "data": {
+                    "content": "Let me check results.",
+                    "toolRequests": [{"toolCallId": "tc-read", "name": "read_agent", "arguments": {"agent_id": "agent-0"}}],
+                },
+            },
             {"type": "tool.execution_start", "data": {"toolCallId": "tc-read", "toolName": "read_agent", "arguments": {"agent_id": "agent-0"}}},
-            {"type": "tool.execution_complete", "data": {"toolCallId": "tc-read", "success": True, "result": {
-                "content": "Status: idle\n\nResult:\nFound 2 security issues in the auth module.",
-                "detailedContent": "Found 2 security issues: hardcoded secret, no rate limiting.",
-            }}},
+            {
+                "type": "tool.execution_complete",
+                "data": {
+                    "toolCallId": "tc-read",
+                    "success": True,
+                    "result": {
+                        "content": "Status: idle\n\nResult:\nFound 2 security issues in the auth module.",
+                        "detailedContent": "Found 2 security issues: hardcoded secret, no rate limiting.",
+                    },
+                },
+            },
             {"type": "assistant.message", "data": {"content": "Review complete."}},
         ]
 
@@ -3021,19 +3057,44 @@ class TestCLIBackgroundAgentFields:
     def test_sync_agent_not_background(self, tmp_path):
         """Sync agents should have is_background=False."""
         events = [
-            {"type": "assistant.message", "data": {
-                "content": "Using sync agent.",
-                "toolRequests": [{"toolCallId": "tc-sync", "name": "task", "arguments": {
-                    "agent_type": "explore", "description": "Quick check",
-                    "prompt": "Check something quickly.",
-                }}],
-            }},
-            {"type": "tool.execution_start", "data": {"toolCallId": "tc-sync", "toolName": "task", "arguments": {
-                "agent_type": "explore", "description": "Quick check",
-            }}},
-            {"type": "tool.execution_complete", "data": {"toolCallId": "tc-sync", "success": True, "result": {
-                "content": "Everything looks good.",
-            }}},
+            {
+                "type": "assistant.message",
+                "data": {
+                    "content": "Using sync agent.",
+                    "toolRequests": [
+                        {
+                            "toolCallId": "tc-sync",
+                            "name": "task",
+                            "arguments": {
+                                "agent_type": "explore",
+                                "description": "Quick check",
+                                "prompt": "Check something quickly.",
+                            },
+                        }
+                    ],
+                },
+            },
+            {
+                "type": "tool.execution_start",
+                "data": {
+                    "toolCallId": "tc-sync",
+                    "toolName": "task",
+                    "arguments": {
+                        "agent_type": "explore",
+                        "description": "Quick check",
+                    },
+                },
+            },
+            {
+                "type": "tool.execution_complete",
+                "data": {
+                    "toolCallId": "tc-sync",
+                    "success": True,
+                    "result": {
+                        "content": "Everything looks good.",
+                    },
+                },
+            },
             {"type": "subagent.started", "data": {"toolCallId": "tc-sync", "agentDisplayName": "Explore Agent"}},
             {"type": "subagent.completed", "data": {"toolCallId": "tc-sync", "agentDisplayName": "Explore Agent"}},
             {"type": "assistant.message", "data": {"content": "Done."}},

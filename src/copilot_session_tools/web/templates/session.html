@@ -554,8 +554,8 @@ header h1 {
     margin: 4px 0;
     border-radius: 10px;
     font-size: 0.8em;
-    background-color: #e0e7ff;
-    color: #4338ca;
+    background-color: #ccfbf1;
+    color: #0d9488;
 }
 
 .skill-badge code {
@@ -567,10 +567,10 @@ header h1 {
 /* Expandable skill block (when description is available) */
 .skill-block {
     margin: 4px 0;
-    border: 1px solid #c9d1f5;
-    border-left: 3px solid #6366f1;
+    border: 1px solid #99f6e4;
+    border-left: 3px solid #0d9488;
     border-radius: 6px;
-    background-color: #f0f3ff;
+    background-color: #f0fdfa;
 }
 
 .skill-block > summary {
@@ -586,7 +586,7 @@ header h1 {
 .skill-block > summary::-webkit-details-marker { display: none; }
 
 .skill-badge-label {
-    color: #4338ca;
+    color: #0d9488;
 }
 
 .skill-badge-label code {
@@ -597,26 +597,26 @@ header h1 {
 
 .skill-content {
     padding: 6px 14px;
-    border-top: 1px solid #c9d1f5;
+    border-top: 1px solid #99f6e4;
     font-size: 0.85em;
     color: var(--text-secondary);
 }
 
 @media (prefers-color-scheme: dark) {
     .skill-badge {
-        background-color: rgba(99, 102, 241, 0.2);
-        color: #a5b4fc;
+        background-color: rgba(13, 148, 136, 0.2);
+        color: #5eead4;
     }
 
     .skill-block {
-        background-color: rgba(99, 102, 241, 0.1);
-        border-color: rgba(99, 102, 241, 0.3);
-        border-left-color: #6366f1;
+        background-color: rgba(13, 148, 136, 0.1);
+        border-color: rgba(13, 148, 136, 0.3);
+        border-left-color: #14b8a6;
     }
 
-    .skill-block > summary { color: #a5b4fc; }
-    .skill-badge-label { color: #a5b4fc; }
-    .skill-content { border-top-color: rgba(99, 102, 241, 0.3); }
+    .skill-block > summary { color: #5eead4; }
+    .skill-badge-label { color: #5eead4; }
+    .skill-content { border-top-color: rgba(13, 148, 136, 0.3); }
 }
 
 /* Status badges for session events */
@@ -854,7 +854,6 @@ header h1 {
     }
     .subagent-block.subagent-background {
         border-left-color: #38bdf8;
-        background-color: rgba(14, 165, 233, 0.08);
     }
     .subagent-block.subagent-background > summary .subagent-label {
         color: #7dd3fc;
@@ -885,7 +884,6 @@ header h1 {
 /* Background (async) agent variant */
 .subagent-block.subagent-background {
     border-left-color: #0ea5e9;
-    background-color: #f0f9ff;
 }
 .subagent-block.subagent-background > summary .subagent-label {
     color: #0284c7;
@@ -972,24 +970,42 @@ header h1 {
     font-size: 0.82em;
     font-weight: 500;
     margin: 3px 0;
-    background: rgba(99, 102, 241, 0.08);
-    color: #6366f1;
-    border: 1px solid rgba(99, 102, 241, 0.3);
     text-decoration: none;
     cursor: pointer;
+    /* Default: completed (green) */
+    background: rgba(26, 127, 55, 0.08);
+    color: #1a7f37;
+    border: 1px solid rgba(26, 127, 55, 0.2);
 }
 .agent-backlink:hover {
-    background: rgba(99, 102, 241, 0.15);
+    opacity: 0.8;
+}
+.agent-backlink.backlink-in-progress {
+    background: rgba(14, 165, 233, 0.08);
+    color: #0369a1;
+    border-color: rgba(14, 165, 233, 0.2);
+}
+.agent-backlink.backlink-failed {
+    background: rgba(220, 38, 38, 0.08);
+    color: #dc2626;
+    border-color: rgba(220, 38, 38, 0.2);
 }
 
 @media (prefers-color-scheme: dark) {
     .agent-backlink {
-        background: rgba(165, 180, 252, 0.1);
-        color: #a5b4fc;
-        border-color: rgba(165, 180, 252, 0.25);
+        background: rgba(74, 222, 128, 0.1);
+        color: #4ade80;
+        border-color: rgba(74, 222, 128, 0.2);
     }
-    .agent-backlink:hover {
-        background: rgba(165, 180, 252, 0.2);
+    .agent-backlink.backlink-in-progress {
+        background: rgba(56, 189, 248, 0.1);
+        color: #38bdf8;
+        border-color: rgba(56, 189, 248, 0.2);
+    }
+    .agent-backlink.backlink-failed {
+        background: rgba(248, 113, 113, 0.1);
+        color: #f87171;
+        border-color: rgba(248, 113, 113, 0.2);
     }
 }
 
@@ -2497,7 +2513,9 @@ input:checked + .toggle-switch::after {
                             {% endif %}
                             {% elif block.kind == 'status' %}
                             {% if block.description == 'subagent' %}
-                            <span class="subagent-started">{{ block.content }}</span>
+                            {# Hidden: standalone subagent status pills are redundant with agent block headers and read_agent backlinks #}
+                            {% elif block.description == 'subagent-error' %}
+                            {# Hidden: standalone subagent error pills are redundant with agent block headers and read_agent backlinks #}
                             {% elif block.description == 'task-complete' %}
                             <details class="task-complete-block">
                                 <summary>
@@ -2516,15 +2534,15 @@ input:checked + .toggle-switch::after {
                                 <summary>
                                     <span class="collapsible-icon" aria-hidden="true">▶</span>
                                     <span class="subagent-label">{{ block.description or 'Agent' }}</span>
+                                    {% if block.is_background %}
+                                    <span class="subagent-background-badge">↗ background</span>
+                                    {% endif %}
                                     {% if block.kind == 'subagent_failed' %}
                                     <span class="status-badge error">failed</span>
                                     {% elif block.kind == 'subagent_incomplete' %}
                                     <span class="status-badge abort">incomplete</span>
                                     {% else %}
                                     <span class="status-badge success">completed</span>
-                                    {% endif %}
-                                    {% if block.is_background %}
-                                    <span class="subagent-background-badge">↗ background</span>
                                     {% endif %}
                                 </summary>
                                 <div class="subagent-content">
@@ -2638,8 +2656,20 @@ input:checked + .toggle-switch::after {
                             {% set pretty_header = matched_tool.invocation_message if matched_tool.invocation_message else block.content %}
                             
                             {% if matched_tool.is_agent_backlink and matched_tool.backlink_agent_id %}
-                            <a href="#agent-{{ matched_tool.backlink_agent_id }}" class="agent-backlink" onclick="this.closest('.message').querySelector('#agent-' + '{{ matched_tool.backlink_agent_id }}')?.scrollIntoView({behavior:'smooth'}); return false;">
-                                ↩ {{ matched_tool.invocation_message | replace('⏳ Checking agent ', '') }} — see result above
+                            {# Determine backlink state from read_agent result text #}
+                            {% set agent_result = matched_tool.result or '' %}
+                            {% if 'status: running' in agent_result or 'still running' in agent_result %}
+                            {% set bl_state = 'in-progress' %}
+                            {% set bl_label = 'in progress' %}
+                            {% elif 'failed' in agent_result or 'error' in agent_result.lower() %}
+                            {% set bl_state = 'failed' %}
+                            {% set bl_label = 'failed' %}
+                            {% else %}
+                            {% set bl_state = 'completed' %}
+                            {% set bl_label = 'completed' %}
+                            {% endif %}
+                            <a href="#agent-{{ matched_tool.backlink_agent_id }}" class="agent-backlink backlink-{{ bl_state }}" onclick="document.getElementById('agent-{{ matched_tool.backlink_agent_id }}')?.scrollIntoView({behavior:'smooth'}); return false;">
+                                ↩ {{ matched_tool.invocation_message | replace('⏳ Checking agent ', '') }} — {{ bl_label }}
                             </a>
                             {% else %}
                             {% if show_collapsible %}
