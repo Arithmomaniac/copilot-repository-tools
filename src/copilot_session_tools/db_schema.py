@@ -60,6 +60,8 @@ CST_TOOL_INVOCATION_COLUMNS = (
     "source_type",
     "invocation_message",
     "subagent_invocation_id",
+    "is_agent_backlink",
+    "backlink_agent_id",
 )
 
 CST_FILE_CHANGE_COLUMNS = (
@@ -88,6 +90,9 @@ CST_CONTENT_BLOCK_COLUMNS = (
     "content",
     "description",
     "child_message_id",
+    "prompt",
+    "is_background",
+    "agent_id",
 )
 
 # ---------------------------------------------------------------------------
@@ -152,6 +157,8 @@ def tool_to_row(message_id: int, tool: ToolInvocation) -> tuple:
         tool.source_type,
         tool.invocation_message,
         tool.subagent_invocation_id,
+        tool.is_agent_backlink,
+        tool.backlink_agent_id,
     )
 
 
@@ -198,6 +205,8 @@ def row_to_tool(row: sqlite3.Row) -> ToolInvocation:
         source_type=row["source_type"] if "source_type" in keys else None,
         invocation_message=row["invocation_message"] if "invocation_message" in keys else None,
         subagent_invocation_id=row["subagent_invocation_id"] if "subagent_invocation_id" in keys else None,
+        is_agent_backlink=bool(row["is_agent_backlink"]) if "is_agent_backlink" in keys and row["is_agent_backlink"] else False,
+        backlink_agent_id=row["backlink_agent_id"] if "backlink_agent_id" in keys else None,
     )
 
 

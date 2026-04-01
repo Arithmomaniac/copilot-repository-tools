@@ -29,12 +29,16 @@ def _deserialize_content_block(row: sqlite3.Row) -> tuple[ContentBlock, int | No
         Tuple of (ContentBlock, child_message_id or None).
         child_message is populated later during tree construction.
     """
+    keys = row.keys()
     block = ContentBlock(
         kind=row["kind"],
         content=row["content"] or "",
-        description=row["description"] if "description" in row.keys() else None,  # noqa: SIM118
+        description=row["description"] if "description" in keys else None,
+        prompt=row["prompt"] if "prompt" in keys else None,
+        is_background=bool(row["is_background"]) if "is_background" in keys and row["is_background"] else False,
+        agent_id=row["agent_id"] if "agent_id" in keys else None,
     )
-    child_message_id = row["child_message_id"] if "child_message_id" in row.keys() else None  # noqa: SIM118
+    child_message_id = row["child_message_id"] if "child_message_id" in keys else None
     return block, child_message_id
 
 

@@ -239,3 +239,118 @@ class TestVSCodeSessionSnapshot:
     def test_html_export(self, file_regression):
         html = session_to_html(self.session)
         file_regression.check(html, fullpath=BASELINES_DIR / f"{self.fixture_name}.html", encoding="utf-8")
+
+
+class TestBacklinkStateRendering:
+    """Verify that read_agent backlinks are rendered with correct state classes."""
+
+    @staticmethod
+    def _make_events(*events):
+        import ssrjson
+
+        lines = [ssrjson.dumps({"type": "session.start", "data": {"sessionId": "backlink-state-test", "startTime": "2026-01-01T00:00:00Z"}})]
+        for evt in events:
+            lines.append(ssrjson.dumps(evt))
+        return "\n".join(lines)
+
+    @staticmethod
+    def _bg_events_with_read_agent(read_result_content: str):
+        """Create events for a bg agent with a read_agent returning the given content."""
+        return [
+            {
+                "type": "assistant.message",
+                "data": {
+                    "content": "Launching agent.",
+                    "toolRequests": [
+                        {
+                            "toolCallId": "tc-bg",
+                            "name": "task",
+                            "arguments": {
+                                "agent_type": "explore",
+                                "description": "Check auth",
+                                "prompt": "Review auth module.",
+                                "mode": "background",
+                            },
+                        }
+                    ],
+                },
+            },
+            {
+                "type": "tool.execution_start",
+                "data": {
+                    "toolCallId": "tc-bg",
+                    "toolName": "task",
+                    "arguments": {
+                        "agent_type": "explore",
+                        "description": "Check auth",
+                    },
+                },
+            },
+            {
+                "type": "tool.execution_complete",
+                "data": {
+                    "toolCallId": "tc-bg",
+                    "success": True,
+                    "result": {
+                        "content": "Agent started in background with agent_id: agent-0. Use read_agent to check.",
+                    },
+                },
+            },
+            {"type": "subagent.started", "data": {"toolCallId": "tc-bg", "agentDisplayName": "Explore Agent"}},
+            {
+                "type": "assistant.message",
+                "data": {
+                    "content": "Checking agent.",
+                    "toolRequests": [{"toolCallId": "tc-read", "name": "read_agent", "arguments": {"agent_id": "agent-0"}}],
+                },
+            },
+            {"type": "tool.execution_start", "data": {"toolCallId": "tc-read", "toolName": "read_agent", "arguments": {"agent_id": "agent-0"}}},
+            {
+                "type": "tool.execution_complete",
+                "data": {
+                    "toolCallId": "tc-read",
+                    "success": True,
+                    "result": {
+                        "content": read_result_content,
+                    },
+                },
+            },
+            {"type": "assistant.message", "data": {"content": "Done."}},
+        ]
+
+    def _render_html(self, tmp_path, read_result_content):
+        events = self._bg_events_with_read_agent(read_result_content)
+        f = tmp_path / "events.jsonl"
+        f.write_text(self._make_events(*events), encoding="utf-8")
+        session = _parse_cli_jsonl_file(f)
+        return session_to_html(session)
+
+    def test_running_agent_gets_in_progress_class(self, tmp_path):
+        """read_agent showing 'still running' should render backlink-in-progress."""
+        html = self._render_html(tmp_path, "Agent is still running after waiting 60s. agent_id: agent-0, status: running")
+        assert "backlink-in-progress" in html
+        assert "in progress" in html
+
+    def test_completed_agent_gets_completed_class(self, tmp_path):
+        """read_agent showing completed result should render backlink-completed (default)."""
+        html = self._render_html(tmp_path, "Agent completed. agent_id: agent-0, status: completed\n\nResult:\nAll good.")
+        assert "backlink-completed" in html or ("agent-backlink" in html and "backlink-in-progress" not in html and "backlink-failed" not in html)
+        assert "completed" in html
+
+    def test_failed_agent_gets_failed_class(self, tmp_path):
+        """read_agent showing failed result should render backlink-failed."""
+        html = self._render_html(tmp_path, "Agent failed. agent_id: agent-0, status: failed\n\nError: timeout")
+        assert "backlink-failed" in html
+        assert "failed" in html
+
+    def test_standalone_subagent_pills_hidden(self, tmp_path):
+        """subagent.completed/failed status pills should NOT appear in rendered HTML."""
+        events = self._bg_events_with_read_agent("Agent completed. status: completed")
+        # Add subagent.completed event
+        events.append({"type": "subagent.completed", "data": {"toolCallId": "tc-bg", "agentDisplayName": "Explore Agent"}})
+        f = tmp_path / "events.jsonl"
+        f.write_text(self._make_events(*events), encoding="utf-8")
+        session = _parse_cli_jsonl_file(f)
+        html = session_to_html(session)
+        # The CSS class may exist in stylesheet, but no element should use it
+        assert '<span class="subagent-started">' not in html
