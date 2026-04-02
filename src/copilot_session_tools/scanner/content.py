@@ -176,19 +176,21 @@ def _merge_content_blocks(blocks: list[tuple]) -> list[ContentBlock]:
     standalone_kinds = {"toolInvocation", "status", "ask_user", "intent", "skill", "subagent", "subagent_failed", "subagent_incomplete"}
 
     for block in blocks:
-        # Handle 2-tuples, 3-tuples, and extended 7-tuples (subagent with structured data)
+        # Handle 2-tuples, 3-tuples, and extended 7/8-tuples (subagent with structured data)
         if len(block) >= 7:
             kind, content, description = block[0], block[1], block[2]
             nested_blocks_data = block[3]
             nested_tool_invocations = block[4]
             nested_file_changes = block[5]
             nested_command_runs = block[6]
+            prompt_text = block[7] if len(block) >= 8 else ""
         elif len(block) == 3:
             kind, content, description = block
             nested_blocks_data = None
             nested_tool_invocations = None
             nested_file_changes = None
             nested_command_runs = None
+            prompt_text = ""
         else:
             kind, content = block
             description = None
@@ -196,6 +198,7 @@ def _merge_content_blocks(blocks: list[tuple]) -> list[ContentBlock]:
             nested_tool_invocations = None
             nested_file_changes = None
             nested_command_runs = None
+            prompt_text = ""
 
         # Never merge standalone kinds - each should be separate
         if kind in standalone_kinds:
@@ -218,7 +221,7 @@ def _merge_content_blocks(blocks: list[tuple]) -> list[ContentBlock]:
                     command_runs=nested_command_runs or [],
                     content_blocks=nested_blocks_data or [],
                 )
-                cb = ContentBlock(kind=kind, content=content, description=description, child_message=child_msg)
+                cb = ContentBlock(kind=kind, content=content, description=description, child_message=child_msg, prompt=prompt_text)
             else:
                 cb = ContentBlock(kind=kind, content=content, description=description)
             # Deprecated fields — kept for backward compat during transition
