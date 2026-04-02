@@ -354,3 +354,66 @@ class TestBacklinkStateRendering:
         html = session_to_html(session)
         # The CSS class may exist in stylesheet, but no element should use it
         assert '<span class="subagent-started">' not in html
+
+
+class TestVSCodePromptRendering:
+    """Verify that VS Code subagent prompts are extracted and rendered in HTML."""
+
+    @staticmethod
+    def _build_vscode_session_with_subagent(prompt: str | None = None) -> ChatSession:
+        """Build a minimal ChatSession with a VS Code subagent containing the given prompt."""
+        from copilot_session_tools.scanner.content import _merge_content_blocks
+        from copilot_session_tools.scanner.models import ChatMessage
+        from copilot_session_tools.scanner.vscode import _process_response_items
+
+        tool_specific_data: dict = {
+            "kind": "subagent",
+            "agentName": "explore",
+            "description": "Search auth patterns",
+            "result": "Found JWT auth in 3 files.",
+        }
+        if prompt is not None:
+            tool_specific_data["prompt"] = prompt
+
+        response_items = [
+            {
+                "kind": "toolInvocationSerialized",
+                "toolId": "runSubagent",
+                "invocationMessage": "",
+                "toolSpecificData": tool_specific_data,
+                "isComplete": True,
+                "toolCallId": "call_vsc_1",
+            },
+        ]
+        _, raw_blocks, tool_invocations, file_changes, command_runs = _process_response_items(response_items)
+        content_blocks = _merge_content_blocks(raw_blocks)
+
+        msg = ChatMessage(
+            role="assistant",
+            content="Here are the results.",
+            tool_invocations=tool_invocations,
+            file_changes=file_changes,
+            command_runs=command_runs,
+            content_blocks=content_blocks,
+        )
+        return ChatSession(
+            session_id="vscode-prompt-test",
+            messages=[msg],
+            source_file="test-vscode-prompt",
+            workspace_name=None,
+            workspace_path=None,
+        )
+
+    def test_vscode_prompt_rendered_in_html(self):
+        """VS Code subagent with prompt should render the subagent-prompt section."""
+        session = self._build_vscode_session_with_subagent(prompt="Investigate the authentication module for security issues.")
+        html = session_to_html(session)
+        assert "subagent-prompt" in html
+        assert "Investigate the authentication module" in html
+
+    def test_vscode_no_prompt_omits_section(self):
+        """VS Code subagent without prompt should NOT render the subagent-prompt section."""
+        session = self._build_vscode_session_with_subagent(prompt=None)
+        html = session_to_html(session)
+        # The CSS class exists in the stylesheet, but no prompt <details> element should be rendered
+        assert "subagent-prompt-content" not in html or '<details class="subagent-prompt"' not in html
