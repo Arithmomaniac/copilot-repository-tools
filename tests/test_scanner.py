@@ -3178,3 +3178,197 @@ class TestCLIBackgroundAgentFields:
         assert len(subagent_blocks) == 1
         assert subagent_blocks[0].is_background is False
         assert subagent_blocks[0].prompt == "Check something quickly."
+
+
+class TestCLIAsyncShellFields:
+    """Tests for async shell rendering fields: shell_id, is_async, is_detached, shell backlinks."""
+
+    @staticmethod
+    def _make_events_jsonl(*events):
+        import ssrjson
+
+        lines = [ssrjson.dumps({"type": "session.start", "data": {"sessionId": "async-shell-test", "startTime": "2026-01-01T00:00:00Z"}})]
+        for evt in events:
+            lines.append(ssrjson.dumps(evt))
+        return "\n".join(lines)
+
+    def _parse(self, tmp_path, *events):
+        from copilot_session_tools.scanner import _parse_cli_jsonl_file
+
+        f = tmp_path / "events.jsonl"
+        f.write_text(self._make_events_jsonl(*events), encoding="utf-8")
+        return _parse_cli_jsonl_file(f)
+
+    def _async_shell_events(self):
+        """Return events for a session with an async shell + read/write/stop interactions."""
+        return [
+            {
+                "type": "assistant.message",
+                "data": {
+                    "content": "Starting dev server.",
+                    "toolRequests": [
+                        {
+                            "toolCallId": "tc-shell",
+                            "name": "powershell",
+                            "arguments": {
+                                "command": "npm run dev",
+                                "description": "Start dev server",
+                                "mode": "async",
+                                "shellId": "dev-server",
+                            },
+                        }
+                    ],
+                },
+            },
+            {
+                "type": "tool.execution_start",
+                "data": {
+                    "toolCallId": "tc-shell",
+                    "toolName": "powershell",
+                    "arguments": {
+                        "command": "npm run dev",
+                        "description": "Start dev server",
+                        "mode": "async",
+                        "shellId": "dev-server",
+                    },
+                },
+            },
+            {
+                "type": "tool.execution_complete",
+                "data": {
+                    "toolCallId": "tc-shell",
+                    "success": True,
+                    "result": {"content": "Dev server started on port 3000"},
+                },
+            },
+            {
+                "type": "assistant.message",
+                "data": {
+                    "content": "Server running. Let me check the output.",
+                    "toolRequests": [
+                        {"toolCallId": "tc-read", "name": "read_powershell", "arguments": {"shellId": "dev-server", "delay": 5}},
+                    ],
+                },
+            },
+            {"type": "tool.execution_start", "data": {"toolCallId": "tc-read", "toolName": "read_powershell", "arguments": {"shellId": "dev-server"}}},
+            {"type": "tool.execution_complete", "data": {"toolCallId": "tc-read", "success": True, "result": {"content": "Listening on http://localhost:3000"}}},
+            {
+                "type": "assistant.message",
+                "data": {
+                    "content": "Need to send a command.",
+                    "toolRequests": [
+                        {"toolCallId": "tc-write", "name": "write_powershell", "arguments": {"shellId": "dev-server", "input": "rs{enter}"}},
+                    ],
+                },
+            },
+            {"type": "tool.execution_start", "data": {"toolCallId": "tc-write", "toolName": "write_powershell", "arguments": {"shellId": "dev-server", "input": "rs{enter}"}}},
+            {"type": "tool.execution_complete", "data": {"toolCallId": "tc-write", "success": True, "result": {"content": "Restarted"}}},
+            {
+                "type": "assistant.message",
+                "data": {
+                    "content": "Stopping the server.",
+                    "toolRequests": [
+                        {"toolCallId": "tc-stop", "name": "stop_powershell", "arguments": {"shellId": "dev-server"}},
+                    ],
+                },
+            },
+            {"type": "tool.execution_start", "data": {"toolCallId": "tc-stop", "toolName": "stop_powershell", "arguments": {"shellId": "dev-server"}}},
+            {"type": "tool.execution_complete", "data": {"toolCallId": "tc-stop", "success": True, "result": {"content": "Shell stopped"}}},
+            {"type": "assistant.message", "data": {"content": "Done."}},
+        ]
+
+    def test_async_powershell_detected(self, tmp_path):
+        """powershell with mode=async should produce CommandRun with is_async=True."""
+        session = self._parse(tmp_path, *self._async_shell_events())
+        cmds = [c for msg in session.messages for c in msg.command_runs]
+        assert len(cmds) == 1
+        assert cmds[0].is_async is True
+        assert cmds[0].shell_id == "dev-server"
+        assert cmds[0].command == "npm run dev"
+
+    def test_sync_powershell_unchanged(self, tmp_path):
+        """powershell without mode should produce CommandRun with is_async=False."""
+        events = [
+            {
+                "type": "assistant.message",
+                "data": {
+                    "content": "Checking status.",
+                    "toolRequests": [{"toolCallId": "tc-sync", "name": "powershell", "arguments": {"command": "git status"}}],
+                },
+            },
+            {"type": "tool.execution_start", "data": {"toolCallId": "tc-sync", "toolName": "powershell", "arguments": {"command": "git status"}}},
+            {"type": "tool.execution_complete", "data": {"toolCallId": "tc-sync", "success": True, "result": {"content": "On branch main"}}},
+            {"type": "assistant.message", "data": {"content": "Clean tree."}},
+        ]
+        session = self._parse(tmp_path, *events)
+        cmds = [c for msg in session.messages for c in msg.command_runs]
+        assert len(cmds) == 1
+        assert cmds[0].is_async is False
+        assert cmds[0].shell_id is None
+
+    def test_detached_powershell_detected(self, tmp_path):
+        """powershell with detach=true should produce CommandRun with is_detached=True."""
+        events = [
+            {
+                "type": "assistant.message",
+                "data": {
+                    "content": "Starting background server.",
+                    "toolRequests": [
+                        {
+                            "toolCallId": "tc-det",
+                            "name": "powershell",
+                            "arguments": {"command": "python -m http.server", "mode": "async", "detach": True, "shellId": "http-srv"},
+                        }
+                    ],
+                },
+            },
+            {
+                "type": "tool.execution_start",
+                "data": {"toolCallId": "tc-det", "toolName": "powershell", "arguments": {"command": "python -m http.server", "mode": "async", "detach": True, "shellId": "http-srv"}},
+            },
+            {"type": "tool.execution_complete", "data": {"toolCallId": "tc-det", "success": True, "result": {"content": "Server started"}}},
+            {"type": "assistant.message", "data": {"content": "Server running in background."}},
+        ]
+        session = self._parse(tmp_path, *events)
+        cmds = [c for msg in session.messages for c in msg.command_runs]
+        assert len(cmds) == 1
+        assert cmds[0].is_async is True
+        assert cmds[0].is_detached is True
+        assert cmds[0].shell_id == "http-srv"
+
+    def test_read_powershell_not_skipped(self, tmp_path):
+        """read_powershell should no longer be skipped — it renders as a shell backlink."""
+        session = self._parse(tmp_path, *self._async_shell_events())
+        # read_powershell should produce a tool invocation now (not be filtered)
+        read_tools = [t for msg in session.messages for t in msg.tool_invocations if t.name == "read_powershell"]
+        assert len(read_tools) == 1
+
+    def test_read_powershell_marked_as_shell_backlink(self, tmp_path):
+        """read_powershell should be marked as a shell backlink."""
+        session = self._parse(tmp_path, *self._async_shell_events())
+        read_tools = [t for msg in session.messages for t in msg.tool_invocations if t.name == "read_powershell"]
+        assert read_tools[0].is_shell_backlink is True
+        assert read_tools[0].backlink_shell_id == "dev-server"
+
+    def test_write_powershell_marked_as_shell_backlink(self, tmp_path):
+        """write_powershell should be marked as a shell backlink."""
+        session = self._parse(tmp_path, *self._async_shell_events())
+        write_tools = [t for msg in session.messages for t in msg.tool_invocations if t.name == "write_powershell"]
+        assert len(write_tools) == 1
+        assert write_tools[0].is_shell_backlink is True
+        assert write_tools[0].backlink_shell_id == "dev-server"
+
+    def test_stop_powershell_marked_as_shell_backlink(self, tmp_path):
+        """stop_powershell should be marked as a shell backlink."""
+        session = self._parse(tmp_path, *self._async_shell_events())
+        stop_tools = [t for msg in session.messages for t in msg.tool_invocations if t.name == "stop_powershell"]
+        assert len(stop_tools) == 1
+        assert stop_tools[0].is_shell_backlink is True
+        assert stop_tools[0].backlink_shell_id == "dev-server"
+
+    def test_shell_backlink_invocation_message(self, tmp_path):
+        """Shell backlink should have a descriptive invocation_message."""
+        session = self._parse(tmp_path, *self._async_shell_events())
+        read_tools = [t for msg in session.messages for t in msg.tool_invocations if t.name == "read_powershell"]
+        assert "shell dev-server" in read_tools[0].invocation_message
+        assert "read" in read_tools[0].invocation_message

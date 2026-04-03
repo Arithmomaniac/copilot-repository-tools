@@ -163,12 +163,19 @@ class _CliSessionBuilder:
         # Check if this is a shell/powershell command
         if tool_name in ("powershell", "bash", "shell", "run_command"):
             command = arguments.get("command", "")
+            shell_mode = arguments.get("mode", "")
+            shell_id = arguments.get("shellId", "")
+            detach = arguments.get("detach", False)
+            is_async = shell_mode in ("async", "background") or bool(detach)
             return None, CommandRun(
                 command=command,
                 title=description,
                 result=result,
                 status=status,
                 output=result,
+                shell_id=shell_id if is_async else None,
+                is_async=is_async,
+                is_detached=bool(detach),
             )
         else:
             # Regular tool invocation
@@ -256,10 +263,28 @@ class _CliSessionBuilder:
 
         # Skip truly internal tools with no user-visible output
         internal_tools = {
-            "read_powershell",
             "read_bash",
         }
         if tool_name in internal_tools:
+            return
+
+        # Handle shell interaction tools as backlinks to the original async shell
+        shell_interaction_tools = {
+            "read_powershell": "read",
+            "write_powershell": "write",
+            "stop_powershell": "stop",
+        }
+        if tool_name in shell_interaction_tools:
+            shell_id = arguments.get("shellId", "")
+            action = shell_interaction_tools[tool_name]
+            label = f"↩ shell {shell_id} — {action}" if shell_id else f"↩ shell — {action}"
+            self.current_assistant_content_blocks.append(ContentBlock(kind="toolInvocation", content=label))
+            tool_inv, _ = self.build_tool_invocation(tool_call_id, tool_name, arguments)
+            if tool_inv:
+                tool_inv.invocation_message = label
+                tool_inv.is_shell_backlink = True
+                tool_inv.backlink_shell_id = shell_id or None
+                self.current_assistant_tool_invocations.append(tool_inv)
             return
 
         # Resolve read_agent agent_id to display name

@@ -1009,6 +1009,63 @@ header h1 {
     }
 }
 
+/* Async shell command block — amber left border */
+.tool-invocation-wrapper.command-async {
+    border-left: 3px solid #f59e0b;
+}
+.async-shell-badge {
+    padding: 2px 7px;
+    border-radius: 9px;
+    font-size: 0.7em;
+    font-weight: 500;
+    background: rgba(245, 158, 11, 0.1);
+    color: #b45309;
+    border: 1px solid #fcd34d;
+    white-space: nowrap;
+}
+.async-shell-badge i {
+    margin-right: 2px;
+}
+
+/* Shell back-link — amber pill */
+.shell-backlink {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 14px;
+    border-radius: 14px;
+    font-size: 0.82em;
+    font-weight: 500;
+    margin: 3px 0;
+    text-decoration: none;
+    cursor: pointer;
+    background: rgba(245, 158, 11, 0.08);
+    color: #b45309;
+    border: 1px solid rgba(245, 158, 11, 0.2);
+}
+.shell-backlink:hover {
+    opacity: 0.8;
+}
+.shell-backlink i {
+    font-size: 0.85em;
+}
+
+@media (prefers-color-scheme: dark) {
+    .tool-invocation-wrapper.command-async {
+        border-left-color: #fbbf24;
+    }
+    .async-shell-badge {
+        background: rgba(251, 191, 36, 0.15);
+        color: #fbbf24;
+        border-color: rgba(251, 191, 36, 0.3);
+    }
+    .shell-backlink {
+        background: rgba(251, 191, 36, 0.1);
+        color: #fbbf24;
+        border-color: rgba(251, 191, 36, 0.2);
+    }
+}
+
 /* Content blocks */
 .content-block {
     margin: 4px 0;
@@ -2603,7 +2660,7 @@ input:checked + .toggle-switch::after {
                             {% if matched_cmd %}
                             {# CLI command run - show as collapsible command block with Input/Output like VSCode logs #}
                             <div class="content-block content-block-toolInvocation tool-invocation-inline">
-                                <details class="tool-invocation-wrapper">
+                                <details class="tool-invocation-wrapper{% if matched_cmd.is_async %} command-async{% endif %}"{% if matched_cmd.shell_id %} id="shell-{{ matched_cmd.shell_id }}"{% endif %}>
                                     <summary>
                                         <span class="collapsible-icon" aria-hidden="true">▶</span>
                                         <span class="tool-invocation-message">
@@ -2613,6 +2670,13 @@ input:checked + .toggle-switch::after {
                                                 <code>{{ matched_cmd.command | truncate(80, True) }}</code>
                                             {% endif %}
                                         </span>
+                                        {% if matched_cmd.is_async %}
+                                        {% if matched_cmd.is_detached %}
+                                        <span class="async-shell-badge"><i class="fa-solid fa-link-slash"></i> detached</span>
+                                        {% else %}
+                                        <span class="async-shell-badge"><i class="fa-solid fa-arrows-rotate"></i> async</span>
+                                        {% endif %}
+                                        {% endif %}
                                         {% if matched_cmd.status %}
                                         <span class="status-badge {{ matched_cmd.status }}">{{ matched_cmd.status }}</span>
                                         {% endif %}
@@ -2671,6 +2735,27 @@ input:checked + .toggle-switch::after {
                             <a href="#agent-{{ matched_tool.backlink_agent_id }}" class="agent-backlink backlink-{{ bl_state }}" onclick="document.getElementById('agent-{{ matched_tool.backlink_agent_id }}')?.scrollIntoView({behavior:'smooth'}); return false;">
                                 ↩ {{ matched_tool.invocation_message | replace('⏳ Checking agent ', '') }} — {{ bl_label }}
                             </a>
+                            {% elif matched_tool.is_shell_backlink %}
+                            {# Shell interaction backlink — amber pill pointing to original async shell #}
+                            {% set shell_action = matched_tool.name | replace('_powershell', '') %}
+                            {% if shell_action == 'read' %}
+                            {% set shell_icon = 'fa-solid fa-book-open' %}
+                            {% elif shell_action == 'write' %}
+                            {% set shell_icon = 'fa-solid fa-keyboard' %}
+                            {% elif shell_action == 'stop' %}
+                            {% set shell_icon = 'fa-solid fa-stop' %}
+                            {% else %}
+                            {% set shell_icon = 'fa-solid fa-terminal' %}
+                            {% endif %}
+                            {% if matched_tool.backlink_shell_id %}
+                            <a href="#shell-{{ matched_tool.backlink_shell_id }}" class="shell-backlink" onclick="document.getElementById('shell-{{ matched_tool.backlink_shell_id }}')?.scrollIntoView({behavior:'smooth'}); return false;">
+                                <i class="{{ shell_icon }}"></i> ↩ shell {{ matched_tool.backlink_shell_id }} — {{ shell_action }}
+                            </a>
+                            {% else %}
+                            <span class="shell-backlink">
+                                <i class="{{ shell_icon }}"></i> {{ shell_action }}_powershell
+                            </span>
+                            {% endif %}
                             {% else %}
                             {% if show_collapsible %}
                             <div class="content-block content-block-toolInvocation tool-invocation-inline">

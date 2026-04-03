@@ -417,3 +417,125 @@ class TestVSCodePromptRendering:
         html = session_to_html(session)
         # The CSS class "subagent-prompt-content" exists in the stylesheet, but no prompt <details> element should be rendered
         assert '<details class="subagent-prompt"' not in html
+
+
+class TestAsyncShellRendering:
+    """Verify that async shell commands render with amber styling and shell backlinks."""
+
+    @staticmethod
+    def _make_events(*events):
+        import ssrjson
+
+        lines = [ssrjson.dumps({"type": "session.start", "data": {"sessionId": "async-shell-render-test", "startTime": "2026-01-01T00:00:00Z"}})]
+        for evt in events:
+            lines.append(ssrjson.dumps(evt))
+        return "\n".join(lines)
+
+    @staticmethod
+    def _async_shell_events():
+        """Events for an async shell with a read_powershell interaction."""
+        return [
+            {
+                "type": "assistant.message",
+                "data": {
+                    "content": "Starting server.",
+                    "toolRequests": [
+                        {
+                            "toolCallId": "tc-shell",
+                            "name": "powershell",
+                            "arguments": {"command": "npm run dev", "description": "Start dev server", "mode": "async", "shellId": "dev-srv"},
+                        }
+                    ],
+                },
+            },
+            {
+                "type": "tool.execution_start",
+                "data": {"toolCallId": "tc-shell", "toolName": "powershell", "arguments": {"command": "npm run dev", "mode": "async", "shellId": "dev-srv"}},
+            },
+            {"type": "tool.execution_complete", "data": {"toolCallId": "tc-shell", "success": True, "result": {"content": "Server started"}}},
+            {
+                "type": "assistant.message",
+                "data": {
+                    "content": "Checking output.",
+                    "toolRequests": [{"toolCallId": "tc-read", "name": "read_powershell", "arguments": {"shellId": "dev-srv", "delay": 5}}],
+                },
+            },
+            {"type": "tool.execution_start", "data": {"toolCallId": "tc-read", "toolName": "read_powershell", "arguments": {"shellId": "dev-srv"}}},
+            {"type": "tool.execution_complete", "data": {"toolCallId": "tc-read", "success": True, "result": {"content": "Listening on :3000"}}},
+            {"type": "assistant.message", "data": {"content": "Ready."}},
+        ]
+
+    def _render_html(self, tmp_path, events):
+        f = tmp_path / "events.jsonl"
+        f.write_text(self._make_events(*events), encoding="utf-8")
+        session = _parse_cli_jsonl_file(f)
+        return session_to_html(session)
+
+    def test_async_shell_renders_with_amber_class(self, tmp_path):
+        """Async shell should render with command-async CSS class."""
+        html = self._render_html(tmp_path, self._async_shell_events())
+        assert "command-async" in html
+
+    def test_async_shell_has_badge(self, tmp_path):
+        """Async shell should render with an async badge."""
+        html = self._render_html(tmp_path, self._async_shell_events())
+        assert "async-shell-badge" in html
+        assert "fa-arrows-rotate" in html
+
+    def test_async_shell_has_anchor(self, tmp_path):
+        """Async shell block should have an anchor id based on shellId."""
+        html = self._render_html(tmp_path, self._async_shell_events())
+        assert 'id="shell-dev-srv"' in html
+
+    def test_shell_backlink_rendered(self, tmp_path):
+        """read_powershell should render as an amber shell-backlink pill."""
+        html = self._render_html(tmp_path, self._async_shell_events())
+        assert "shell-backlink" in html
+        assert "shell dev-srv" in html
+
+    def test_shell_backlink_has_href(self, tmp_path):
+        """Shell backlink should link back to the original async shell block."""
+        html = self._render_html(tmp_path, self._async_shell_events())
+        assert '#shell-dev-srv' in html
+
+    def test_detached_shell_shows_link_slash_icon(self, tmp_path):
+        """Detached shell should show fa-link-slash icon instead of fa-arrows-rotate."""
+        events = [
+            {
+                "type": "assistant.message",
+                "data": {
+                    "content": "Starting daemon.",
+                    "toolRequests": [
+                        {"toolCallId": "tc-det", "name": "powershell", "arguments": {"command": "python server.py", "mode": "async", "detach": True, "shellId": "daemon"}},
+                    ],
+                },
+            },
+            {
+                "type": "tool.execution_start",
+                "data": {"toolCallId": "tc-det", "toolName": "powershell", "arguments": {"command": "python server.py", "mode": "async", "detach": True, "shellId": "daemon"}},
+            },
+            {"type": "tool.execution_complete", "data": {"toolCallId": "tc-det", "success": True, "result": {"content": "Daemon started"}}},
+            {"type": "assistant.message", "data": {"content": "Running."}},
+        ]
+        html = self._render_html(tmp_path, events)
+        assert "fa-link-slash" in html
+        assert "detached" in html
+
+    def test_sync_shell_no_amber(self, tmp_path):
+        """Sync shell (no mode) should NOT have async amber styling."""
+        events = [
+            {
+                "type": "assistant.message",
+                "data": {
+                    "content": "Checking status.",
+                    "toolRequests": [{"toolCallId": "tc-sync", "name": "powershell", "arguments": {"command": "git status"}}],
+                },
+            },
+            {"type": "tool.execution_start", "data": {"toolCallId": "tc-sync", "toolName": "powershell", "arguments": {"command": "git status"}}},
+            {"type": "tool.execution_complete", "data": {"toolCallId": "tc-sync", "success": True, "result": {"content": "On branch main"}}},
+            {"type": "assistant.message", "data": {"content": "Clean."}},
+        ]
+        html = self._render_html(tmp_path, events)
+        # command-async appears in CSS stylesheet but should not be applied to any element
+        assert 'class="tool-invocation-wrapper command-async"' not in html
+        assert "async-shell-badge" not in html or html.count("async-shell-badge") == html.count(".async-shell-badge")

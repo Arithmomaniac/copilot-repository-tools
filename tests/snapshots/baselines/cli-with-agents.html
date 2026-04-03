@@ -984,6 +984,63 @@ header h1 {
     }
 }
 
+/* Async shell command block — amber left border */
+.tool-invocation-wrapper.command-async {
+    border-left: 3px solid #f59e0b;
+}
+.async-shell-badge {
+    padding: 2px 7px;
+    border-radius: 9px;
+    font-size: 0.7em;
+    font-weight: 500;
+    background: rgba(245, 158, 11, 0.1);
+    color: #b45309;
+    border: 1px solid #fcd34d;
+    white-space: nowrap;
+}
+.async-shell-badge i {
+    margin-right: 2px;
+}
+
+/* Shell back-link — amber pill */
+.shell-backlink {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 14px;
+    border-radius: 14px;
+    font-size: 0.82em;
+    font-weight: 500;
+    margin: 3px 0;
+    text-decoration: none;
+    cursor: pointer;
+    background: rgba(245, 158, 11, 0.08);
+    color: #b45309;
+    border: 1px solid rgba(245, 158, 11, 0.2);
+}
+.shell-backlink:hover {
+    opacity: 0.8;
+}
+.shell-backlink i {
+    font-size: 0.85em;
+}
+
+@media (prefers-color-scheme: dark) {
+    .tool-invocation-wrapper.command-async {
+        border-left-color: #fbbf24;
+    }
+    .async-shell-badge {
+        background: rgba(251, 191, 36, 0.15);
+        color: #fbbf24;
+        border-color: rgba(251, 191, 36, 0.3);
+    }
+    .shell-backlink {
+        background: rgba(251, 191, 36, 0.1);
+        color: #fbbf24;
+        border-color: rgba(251, 191, 36, 0.2);
+    }
+}
+
 /* Content blocks */
 .content-block {
     margin: 4px 0;
@@ -2108,6 +2165,7 @@ input:checked + .toggle-switch::after {
                                                 Run auth tests
                                             
                                         </span>
+                                        
                                         
                                         <span class="status-badge success">success</span>
                                         

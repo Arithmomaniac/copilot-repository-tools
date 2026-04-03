@@ -27,7 +27,7 @@ from .db_schema import (
 from .markdown_exporter import message_to_markdown
 from .scanner import ChatSession
 
-CST_SCHEMA_VERSION = 7
+CST_SCHEMA_VERSION = 8
 
 
 CST_SCHEMA = """
@@ -87,7 +87,9 @@ CREATE TABLE IF NOT EXISTS cst_tool_invocations (
     invocation_message TEXT,
     subagent_invocation_id TEXT,
     is_agent_backlink INTEGER DEFAULT 0,
-    backlink_agent_id TEXT
+    backlink_agent_id TEXT,
+    is_shell_backlink INTEGER DEFAULT 0,
+    backlink_shell_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_cst_tool_invocations_message ON cst_tool_invocations(message_id);
 
@@ -110,7 +112,10 @@ CREATE TABLE IF NOT EXISTS cst_command_runs (
     result TEXT,
     status TEXT,
     output TEXT,
-    timestamp INTEGER
+    timestamp INTEGER,
+    shell_id TEXT,
+    is_async INTEGER DEFAULT 0,
+    is_detached INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_cst_command_runs_message ON cst_command_runs(message_id);
 
@@ -281,6 +286,14 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
                 with contextlib.suppress(sqlite3.OperationalError):
                     cursor.execute(f"ALTER TABLE cst_content_blocks ADD COLUMN {col}")
             for col in ("is_agent_backlink INTEGER DEFAULT 0", "backlink_agent_id TEXT"):
+                with contextlib.suppress(sqlite3.OperationalError):
+                    cursor.execute(f"ALTER TABLE cst_tool_invocations ADD COLUMN {col}")
+        # v7 → v8: Add async shell tracking fields
+        if current_version < 8:
+            for col in ("shell_id TEXT", "is_async INTEGER DEFAULT 0", "is_detached INTEGER DEFAULT 0"):
+                with contextlib.suppress(sqlite3.OperationalError):
+                    cursor.execute(f"ALTER TABLE cst_command_runs ADD COLUMN {col}")
+            for col in ("is_shell_backlink INTEGER DEFAULT 0", "backlink_shell_id TEXT"):
                 with contextlib.suppress(sqlite3.OperationalError):
                     cursor.execute(f"ALTER TABLE cst_tool_invocations ADD COLUMN {col}")
         cursor.execute(

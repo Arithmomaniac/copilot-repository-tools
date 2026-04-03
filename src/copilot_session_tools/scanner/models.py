@@ -22,6 +22,8 @@ class ToolInvocation:
     subagent_invocation_id: str | None = None  # VS Code: links child tools to parent sub-agent
     is_agent_backlink: bool = False  # True for read_agent calls that should render as back-links
     backlink_agent_id: str | None = None  # The agent-N id this back-link points to
+    is_shell_backlink: bool = False  # True for read/write/stop_powershell calls linked to an async shell
+    backlink_shell_id: str | None = None  # The shellId this back-link points to
 
 
 @dataclass
@@ -51,6 +53,9 @@ class CommandRun:
     status: str | None = None
     output: str | None = None
     timestamp: int | None = None
+    shell_id: str | None = None  # shellId for async/detached shells
+    is_async: bool = False  # True when mode="async" (interactive shell session)
+    is_detached: bool = False  # True when detach=true (persists after session shutdown)
 
 
 @dataclass

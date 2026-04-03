@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.2] - 2026-04-03
+
+### Added
+
+- **Web Viewer**: Async shell rendering — `powershell(mode="async")` commands render with amber left-border and "⟳ async" badge (Font Awesome `fa-arrows-rotate`); detached shells (`detach: true`) show "🔗‍💥 detached" badge (`fa-link-slash`) instead
+- **Web Viewer**: Shell backlink pills — `read_powershell`, `write_powershell`, `stop_powershell` render as amber clickable pills (↩) that scroll to the original async shell block, with per-action icons (📖 read, ⌨️ write, ⏹ stop)
+- **Scanner**: New fields on `CommandRun`: `shell_id`, `is_async`, `is_detached` for tracking async shell lifecycle
+- **Scanner**: New fields on `ToolInvocation`: `is_shell_backlink`, `backlink_shell_id` for linking shell interactions back to their async shell block
+- **Scanner**: `read_powershell` is no longer skipped as an internal tool — it now renders as a visible shell backlink
+- **Database**: Schema v8 — new columns on `cst_command_runs` and `cst_tool_invocations` for async shell tracking (auto-migrated from v7)
+
 ## [0.10.1] - 2026-04-02
 
 ### Fixed
