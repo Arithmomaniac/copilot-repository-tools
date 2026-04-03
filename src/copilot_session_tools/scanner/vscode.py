@@ -43,6 +43,16 @@ RawBlock = (
         list[FileChange],
         list[CommandRun],
     ]
+    | tuple[
+        str,
+        str,
+        str | None,
+        list[ContentBlock],
+        list[ToolInvocation],
+        list[FileChange],
+        list[CommandRun],
+        str,  # prompt
+    ]
 )
 
 
@@ -328,6 +338,7 @@ def _process_response_items(
                     agent_name = tool_data.get("agentName", "Agent")
                     description = tool_data.get("description", "")
                     result_text = tool_data.get("result", "")
+                    prompt_text = tool_data.get("prompt", "")
                     # Build content: child tool summaries + result
                     parts: list[str] = []
                     # Build structured content_blocks for nested rendering
@@ -367,8 +378,8 @@ def _process_response_items(
                         nested_blocks.append(ContentBlock(kind="text", content=str(result_text)))
                     content = "\n\n".join(parts) if parts else "(no output)"
                     title = f"{agent_name}: {description}" if description else agent_name
-                    # Store as structured tuple: (kind, content, title, nested_blocks, nested_tool_invocations, nested_file_changes, nested_command_runs)
-                    raw_blocks.append(("subagent", content, title, nested_blocks, nested_tool_invocations, nested_file_changes, nested_command_runs))
+                    # Store as structured tuple: (kind, content, title, nested_blocks, nested_tool_invocations, nested_file_changes, nested_command_runs, prompt)
+                    raw_blocks.append(("subagent", content, title, nested_blocks, nested_tool_invocations, nested_file_changes, nested_command_runs, prompt_text or ""))
                     # Subagent content lives in the child ChatMessage; exclude from parent's flat content for FTS
                 # Also extract the invocation message as content (non-subagent)
                 elif item.get("invocationMessage"):

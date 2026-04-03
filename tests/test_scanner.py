@@ -2092,6 +2092,80 @@ class TestVSCodeSubagentParsing:
         assert [block[1] for block in tool_blocks] == ["$ echo hello", "$ echo world"]
         assert [tool.name for tool in tool_invocations] == ["run_in_terminal", "run_in_terminal"]
 
+    def test_subagent_prompt_extracted_from_tool_specific_data(self):
+        """Prompt field in toolSpecificData should be extracted into the raw_blocks tuple."""
+        response_items = [
+            {
+                "kind": "toolInvocationSerialized",
+                "toolId": "runSubagent",
+                "invocationMessage": "",
+                "toolSpecificData": {
+                    "kind": "subagent",
+                    "agentName": "explore",
+                    "description": "Search for auth patterns",
+                    "prompt": "Find all authentication-related files in the codebase and summarize the patterns used.",
+                    "result": "Found 5 auth files using JWT pattern.",
+                },
+                "isComplete": True,
+                "toolCallId": "call_prompt_test",
+            },
+        ]
+        _, raw_blocks, _, _, _ = _process_response_items(response_items)
+        subagent_blocks = [b for b in raw_blocks if b[0] == "subagent"]
+        assert len(subagent_blocks) == 1
+        # 8th element (index 7) is the prompt
+        assert len(subagent_blocks[0]) == 8
+        block = cast(tuple[str, str, str | None, list, list, list, list, str], subagent_blocks[0])
+        assert block[7] == "Find all authentication-related files in the codebase and summarize the patterns used."
+
+    def test_subagent_without_prompt_has_empty_string(self):
+        """Subagent blocks without a prompt field should have empty string as prompt."""
+        response_items = [
+            {
+                "kind": "toolInvocationSerialized",
+                "toolId": "runSubagent",
+                "invocationMessage": "",
+                "toolSpecificData": {
+                    "kind": "subagent",
+                    "agentName": "search",
+                    "description": "Find files",
+                    "result": "Done",
+                },
+                "isComplete": True,
+                "toolCallId": "call_no_prompt",
+            },
+        ]
+        _, raw_blocks, _, _, _ = _process_response_items(response_items)
+        subagent_blocks = [b for b in raw_blocks if b[0] == "subagent"]
+        assert len(subagent_blocks) == 1
+        assert len(subagent_blocks[0]) == 8
+        block = cast(tuple[str, str, str | None, list, list, list, list, str], subagent_blocks[0])
+        assert block[7] == ""
+
+    def test_subagent_prompt_surfaces_on_content_block(self):
+        """Prompt from raw_blocks should be wired through to the ContentBlock via _merge_content_blocks."""
+        response_items = [
+            {
+                "kind": "toolInvocationSerialized",
+                "toolId": "runSubagent",
+                "invocationMessage": "",
+                "toolSpecificData": {
+                    "kind": "subagent",
+                    "agentName": "explore",
+                    "description": "Check auth",
+                    "prompt": "Investigate the authentication module.",
+                    "result": "Auth uses OAuth2.",
+                },
+                "isComplete": True,
+                "toolCallId": "call_e2e",
+            },
+        ]
+        _, raw_blocks, _, _, _ = _process_response_items(response_items)
+        merged = _merge_content_blocks(raw_blocks)
+        subagent_cbs = [cb for cb in merged if cb.kind == "subagent"]
+        assert len(subagent_cbs) == 1
+        assert subagent_cbs[0].prompt == "Investigate the authentication module."
+
 
 class TestCLIStructuredSubagentContent:
     """Tests for structured content_blocks, tool_invocations, file_changes on subagent blocks."""
