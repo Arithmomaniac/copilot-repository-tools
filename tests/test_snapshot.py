@@ -415,5 +415,5 @@ class TestVSCodePromptRendering:
         """VS Code subagent without prompt should NOT render the subagent-prompt section."""
         session = self._build_vscode_session_with_subagent(prompt=None)
         html = session_to_html(session)
-        # The CSS class exists in the stylesheet, but no prompt <details> element should be rendered
-        assert "subagent-prompt-content" not in html or '<details class="subagent-prompt"' not in html
+        # The CSS class "subagent-prompt-content" exists in the stylesheet, but no prompt <details> element should be rendered
+        assert '<details class="subagent-prompt"' not in html

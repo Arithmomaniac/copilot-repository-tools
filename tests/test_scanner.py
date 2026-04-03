@@ -2115,8 +2115,8 @@ class TestVSCodeSubagentParsing:
         assert len(subagent_blocks) == 1
         # 8th element (index 7) is the prompt
         assert len(subagent_blocks[0]) == 8
-        prompt = subagent_blocks[0][7]
-        assert prompt == "Find all authentication-related files in the codebase and summarize the patterns used."
+        block = cast(tuple[str, str, str | None, list, list, list, list, str], subagent_blocks[0])
+        assert block[7] == "Find all authentication-related files in the codebase and summarize the patterns used."
 
     def test_subagent_without_prompt_has_empty_string(self):
         """Subagent blocks without a prompt field should have empty string as prompt."""
@@ -2139,8 +2139,8 @@ class TestVSCodeSubagentParsing:
         subagent_blocks = [b for b in raw_blocks if b[0] == "subagent"]
         assert len(subagent_blocks) == 1
         assert len(subagent_blocks[0]) == 8
-        prompt = subagent_blocks[0][7]
-        assert prompt == ""
+        block = cast(tuple[str, str, str | None, list, list, list, list, str], subagent_blocks[0])
+        assert block[7] == ""
 
     def test_subagent_prompt_surfaces_on_content_block(self):
         """Prompt from raw_blocks should be wired through to the ContentBlock via _merge_content_blocks."""
