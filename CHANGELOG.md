@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.2] - 2026-04-05
+
+### Added
+
+- **Web Viewer / HTML Export**: Syntax highlighting and JSON prettification for tool inputs and outputs — JSON is auto-detected, pretty-printed with 2-space indentation, and colored using Pygments with GitHub-flavored light/dark themes
+- **Web Viewer**: "Syntax highlighting" toggle in View Settings → Display section (persisted in localStorage)
+- **Web Viewer / HTML Export**: Unified diff output from tools highlighted with red/green coloring
+- **Markdown Export**: Tool inputs with JSON content now use language-tagged code fences (` ```json `) with prettified content
+- **Dependencies**: Added `pygments>=2.17.0` as a core dependency for server-side syntax highlighting
+
 ## [0.10.1] - 2026-04-02
 
 ### Fixed
