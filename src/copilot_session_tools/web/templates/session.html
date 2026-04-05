@@ -2021,6 +2021,17 @@ input:checked + .toggle-switch::after {
     </style>
     {% if not static %}
     <script>
+    function scrollToShellIO(anchorId) {
+        var el = document.getElementById(anchorId);
+        if (!el) return;
+        var details = el.closest('details');
+        if (details && !details.open) {
+            details.open = true;
+        }
+        setTimeout(function() {
+            el.scrollIntoView({behavior: 'smooth', block: 'center'});
+        }, 50);
+    }
     function sessionApp() {
       return {
         // Settings panel state
@@ -2857,7 +2868,7 @@ input:checked + .toggle-switch::after {
                             <a href="#{{ matched_tool.shell_anchor_id }}"
                                class="shell-conv-pill"
                                id="{{ matched_tool.shell_pill_id }}"
-                               onclick="document.getElementById('{{ matched_tool.shell_anchor_id }}')?.scrollIntoView({behavior:'smooth'}); return false;">
+                               onclick="scrollToShellIO('{{ matched_tool.shell_anchor_id }}'); return false;">
                                 <i class="{{ shell_icon }}"></i>
                                 ↩ <span class="shell-pill-action">{{ shell_action | upper }}</span> — {{ shell_display }}
                             </a>
