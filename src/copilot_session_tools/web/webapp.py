@@ -1,5 +1,6 @@
 """Flask web application for viewing Copilot chat archive."""
 
+import json
 import re
 
 from flask import Flask, flash, jsonify, make_response, redirect, render_template, request, session, url_for
@@ -19,6 +20,14 @@ from copilot_session_tools.utils import (
     truncate_preview,
     urldecode,
 )
+
+
+def _from_json(value: str) -> dict:
+    """Jinja2 filter: parse a JSON string into a dict."""
+    try:
+        return json.loads(value) if value else {}
+    except (json.JSONDecodeError, TypeError):
+        return {}
 
 
 def create_app(
@@ -60,6 +69,7 @@ def create_app(
     app.jinja_env.filters["extract_filename"] = extract_filename
     app.jinja_env.filters["strip_ansi"] = strip_ansi
     app.jinja_env.filters["truncate_preview"] = truncate_preview
+    app.jinja_env.filters["from_json"] = _from_json
 
     # Register global function for tool matching
     app.jinja_env.globals["match_tool_for_block"] = match_tool_for_block

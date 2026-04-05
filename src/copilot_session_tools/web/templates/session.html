@@ -1026,28 +1026,92 @@ header h1 {
 .async-shell-badge i {
     margin-right: 2px;
 }
+.shell-id-label {
+    font-size: 0.8em;
+    color: #b45309;
+    font-style: italic;
+    margin-top: 4px;
+}
+.shell-id-label code {
+    background: rgba(245, 158, 11, 0.12);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-style: normal;
+    font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+}
 
-/* Shell back-link — amber pill */
-.shell-backlink {
-    display: inline-flex;
+/* IO entries inside async shell blocks */
+.io-entry {
+    margin: 6px 0;
+    padding: 6px 10px;
+    border-radius: 4px;
+    border: 1px solid rgba(245, 158, 11, 0.15);
+    background: rgba(245, 158, 11, 0.03);
+}
+.io-header {
+    display: flex;
     align-items: center;
     gap: 6px;
-    padding: 4px 14px;
-    border-radius: 14px;
-    font-size: 0.82em;
-    font-weight: 500;
-    margin: 3px 0;
-    text-decoration: none;
-    cursor: pointer;
+    font-size: 12px;
+    margin-bottom: 3px;
+}
+.io-header i {
+    font-size: 10px;
+    color: #d97706;
+    opacity: 0.6;
+}
+.io-action {
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
     background: rgba(245, 158, 11, 0.08);
+    color: #d97706;
+    padding: 1px 5px;
+    border-radius: 3px;
+}
+.io-context-link {
+    font-size: 10px;
     color: #b45309;
-    border: 1px solid rgba(245, 158, 11, 0.2);
+    text-decoration: none;
+    opacity: 0.4;
+    margin-left: auto;
 }
-.shell-backlink:hover {
-    opacity: 0.8;
+.io-context-link:hover {
+    opacity: 1;
+    text-decoration: underline;
 }
-.shell-backlink i {
+.io-sublabel {
+    font-size: 10px;
+    color: #999;
+    margin-top: 3px;
+}
+
+/* Lightweight conversation pill for shell backlinks */
+.shell-conv-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 12px;
+    border-radius: 12px;
+    font-size: 0.78em;
+    font-weight: 500;
+    background: rgba(245, 158, 11, 0.04);
+    color: #b45309;
+    border: 1px solid rgba(245, 158, 11, 0.15);
+    text-decoration: none;
+    margin: 2px 0;
+    opacity: 0.75;
+    cursor: pointer;
+}
+.shell-conv-pill:hover {
+    opacity: 1;
+}
+.shell-conv-pill i {
     font-size: 0.85em;
+    opacity: 0.6;
+}
+.shell-pill-action {
+    font-weight: 600;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -1059,11 +1123,19 @@ header h1 {
         color: #fbbf24;
         border-color: rgba(251, 191, 36, 0.3);
     }
-    .shell-backlink {
-        background: rgba(251, 191, 36, 0.1);
+    .shell-conv-pill {
+        background: rgba(251, 191, 36, 0.06);
         color: #fbbf24;
-        border-color: rgba(251, 191, 36, 0.2);
+        border-color: rgba(251, 191, 36, 0.15);
     }
+    .io-entry {
+        border-color: rgba(251, 191, 36, 0.15);
+        background: rgba(251, 191, 36, 0.04);
+    }
+    .io-header i { color: #fbbf24; }
+    .io-action { background: rgba(251, 191, 36, 0.1); color: #fbbf24; }
+    .io-context-link { color: #fbbf24; }
+    .io-sublabel { color: #888; }
 }
 
 /* Content blocks */
@@ -2687,10 +2759,43 @@ input:checked + .toggle-switch::after {
                                             <pre><code>{{ matched_cmd.command }}</code></pre>
                                         </div>
                                         {% if matched_cmd.output or matched_cmd.result %}
+                                        {% if matched_cmd.is_async and matched_cmd.shell_id %}
+                                        <div class="shell-id-label">shellId: <code>{{ matched_cmd.shell_id }}</code></div>
+                                        {% else %}
                                         <div class="tool-section tool-section-output">
                                             <span class="tool-label">Output:</span>
                                             <pre><code>{{ (matched_cmd.output or matched_cmd.result) | strip_ansi }}</code></pre>
                                         </div>
+                                        {% endif %}
+                                        {% endif %}
+                                        {% if matched_cmd.io_entries %}
+                                        {% for io in matched_cmd.io_entries %}
+                                        <div class="io-entry" id="{{ io.anchor_id }}">
+                                            <div class="io-header">
+                                                {% if io.action == 'read' %}
+                                                <i class="fa-solid fa-book-open"></i>
+                                                {% elif io.action == 'write' %}
+                                                <i class="fa-solid fa-keyboard"></i>
+                                                {% elif io.action == 'stop' %}
+                                                <i class="fa-solid fa-stop"></i>
+                                                {% else %}
+                                                <i class="fa-solid fa-terminal"></i>
+                                                {% endif %}
+                                                <span class="io-action">{{ io.action }}</span>
+                                                {% if io.pill_id %}
+                                                <a href="#{{ io.pill_id }}" class="io-context-link" onclick="document.getElementById('{{ io.pill_id }}')?.scrollIntoView({behavior:'smooth'}); return false;">↗ context</a>
+                                                {% endif %}
+                                            </div>
+                                            {% if io.action == 'write' and io.input_text %}
+                                            <div class="io-sublabel">Input:</div>
+                                            <pre><code>{{ io.input_text }}</code></pre>
+                                            {% endif %}
+                                            {% if io.result %}
+                                            <div class="io-sublabel">{% if io.action == 'write' %}Response:{% elif io.action == 'read' %}Output:{% else %}Result:{% endif %}</div>
+                                            <pre><code>{{ io.result | strip_ansi }}</code></pre>
+                                            {% endif %}
+                                        </div>
+                                        {% endfor %}
                                         {% endif %}
                                     </div>
                                 </details>
@@ -2736,7 +2841,7 @@ input:checked + .toggle-switch::after {
                                 ↩ {{ matched_tool.invocation_message | replace('⏳ Checking agent ', '') }} — {{ bl_label }}
                             </a>
                             {% elif matched_tool.is_shell_backlink %}
-                            {# Shell interaction backlink — amber pill pointing to original async shell #}
+                            {# Shell interaction — lightweight pill linking to IO entry inside shell block #}
                             {% set shell_action = matched_tool.name | replace('_powershell', '') %}
                             {% if shell_action == 'read' %}
                             {% set shell_icon = 'fa-solid fa-book-open' %}
@@ -2747,13 +2852,19 @@ input:checked + .toggle-switch::after {
                             {% else %}
                             {% set shell_icon = 'fa-solid fa-terminal' %}
                             {% endif %}
-                            {% if matched_tool.backlink_shell_id %}
-                            <a href="#shell-{{ matched_tool.backlink_shell_id }}" class="shell-backlink" onclick="document.getElementById('shell-{{ matched_tool.backlink_shell_id }}')?.scrollIntoView({behavior:'smooth'}); return false;">
-                                <i class="{{ shell_icon }}"></i> ↩ shell {{ matched_tool.backlink_shell_id }} — {{ shell_action }}
+                            {% set shell_display = matched_tool.invocation_message | replace('↩ ', '') | replace(' — ' ~ shell_action, '') %}
+                            {% if matched_tool.shell_anchor_id %}
+                            <a href="#{{ matched_tool.shell_anchor_id }}"
+                               class="shell-conv-pill"
+                               id="{{ matched_tool.shell_pill_id }}"
+                               onclick="document.getElementById('{{ matched_tool.shell_anchor_id }}')?.scrollIntoView({behavior:'smooth'}); return false;">
+                                <i class="{{ shell_icon }}"></i>
+                                ↩ <span class="shell-pill-action">{{ shell_action | upper }}</span> — {{ shell_display }}
                             </a>
                             {% else %}
-                            <span class="shell-backlink">
-                                <i class="{{ shell_icon }}"></i> {{ shell_action }}_powershell
+                            <span class="shell-conv-pill">
+                                <i class="{{ shell_icon }}"></i>
+                                {{ shell_action | upper }} — {{ shell_display }}
                             </span>
                             {% endif %}
                             {% else %}

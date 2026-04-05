@@ -488,15 +488,15 @@ class TestAsyncShellRendering:
         assert 'id="shell-dev-srv"' in html
 
     def test_shell_backlink_rendered(self, tmp_path):
-        """read_powershell should render as an amber shell-backlink pill."""
+        """read_powershell should render as a shell-conv-pill."""
         html = self._render_html(tmp_path, self._async_shell_events())
-        assert "shell-backlink" in html
-        assert "shell dev-srv" in html
+        assert "shell-conv-pill" in html
+        assert "READ" in html
 
     def test_shell_backlink_has_href(self, tmp_path):
-        """Shell backlink should link back to the original async shell block."""
+        """Shell backlink should link to IO entry inside the shell block."""
         html = self._render_html(tmp_path, self._async_shell_events())
-        assert '#shell-dev-srv' in html
+        assert '#io-dev-srv-read-1' in html
 
     def test_detached_shell_shows_link_slash_icon(self, tmp_path):
         """Detached shell should show fa-link-slash icon instead of fa-arrows-rotate."""
@@ -520,6 +520,20 @@ class TestAsyncShellRendering:
         html = self._render_html(tmp_path, events)
         assert "fa-link-slash" in html
         assert "detached" in html
+
+    def test_io_entry_rendered_inside_shell_block(self, tmp_path):
+        """IO entries should appear inside the async shell block."""
+        html = self._render_html(tmp_path, self._async_shell_events())
+        assert "io-entry" in html
+        assert "io-dev-srv-read-1" in html
+
+    def test_bidirectional_links(self, tmp_path):
+        """IO entry should link to pill and pill should link to IO entry."""
+        html = self._render_html(tmp_path, self._async_shell_events())
+        # Pill links to IO entry
+        assert 'href="#io-dev-srv-read-1"' in html
+        # IO entry links back to pill
+        assert 'href="#pill-dev-srv-read-1"' in html
 
     def test_sync_shell_no_amber(self, tmp_path):
         """Sync shell (no mode) should NOT have async amber styling."""

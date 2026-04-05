@@ -3367,8 +3367,8 @@ class TestCLIAsyncShellFields:
         assert stop_tools[0].backlink_shell_id == "dev-server"
 
     def test_shell_backlink_invocation_message(self, tmp_path):
-        """Shell backlink should have a descriptive invocation_message."""
+        """Shell backlink should have a descriptive invocation_message using the shell title."""
         session = self._parse(tmp_path, *self._async_shell_events())
         read_tools = [t for msg in session.messages for t in msg.tool_invocations if t.name == "read_powershell"]
-        assert "shell dev-server" in read_tools[0].invocation_message
+        assert "Start dev server" in read_tools[0].invocation_message
         assert "read" in read_tools[0].invocation_message
