@@ -11,12 +11,15 @@ from copilot_session_tools.scanner.models import (
 from copilot_session_tools.utils import (
     MILLISECONDS_THRESHOLD,
     build_block_metadata,
+    detect_language,
     extract_filename,
     format_timestamp,
     generate_session_filename,
+    highlight_code,
     markdown_to_html,
     match_tool_for_block,
     parse_diff_stats,
+    prettify_json,
     sanitize_filename,
     strip_ansi,
     truncate_preview,
@@ -536,3 +539,172 @@ class TestTruncatePreview:
     def test_custom_max_chars(self):
         result = truncate_preview("Short", max_chars=3)
         assert result.endswith("…")
+
+
+# ---------------------------------------------------------------------------
+# prettify_json
+# ---------------------------------------------------------------------------
+
+
+class TestPrettifyJson:
+    """Tests for prettify_json()."""
+
+    def test_compact_json_prettified(self):
+        result = prettify_json('{"a":1,"b":"hello"}')
+        assert result == '{\n  "a": 1,\n  "b": "hello"\n}'
+
+    def test_nested_json(self):
+        result = prettify_json('{"a":{"b":[1,2,3]}}')
+        assert '"b": [\n      1,' in result
+
+    def test_already_formatted_json_normalized(self):
+        formatted = '{\n    "a": 1\n}'
+        result = prettify_json(formatted)
+        # Re-indented to 2 spaces
+        assert result == '{\n  "a": 1\n}'
+
+    def test_invalid_json_passthrough(self):
+        text = "this is not json"
+        assert prettify_json(text) == text
+
+    def test_partial_json_passthrough(self):
+        text = '{"a": 1, "b":'
+        assert prettify_json(text) == text
+
+    def test_empty_string(self):
+        assert prettify_json("") == ""
+
+    def test_none(self):
+        assert prettify_json(None) == ""
+
+    def test_json_array(self):
+        result = prettify_json("[1, 2, 3]")
+        assert result == "[\n  1,\n  2,\n  3\n]"
+
+    def test_json_preserves_unicode(self):
+        result = prettify_json('{"name":"café"}')
+        assert "café" in result
+
+    def test_json_boolean_null(self):
+        result = prettify_json('{"a":true,"b":false,"c":null}')
+        assert "true" in result
+        assert "false" in result
+        assert "null" in result
+
+
+# ---------------------------------------------------------------------------
+# detect_language
+# ---------------------------------------------------------------------------
+
+
+class TestDetectLanguage:
+    """Tests for detect_language()."""
+
+    def test_valid_json_detected(self):
+        assert detect_language('{"key": "value"}') == "json"
+
+    def test_json_array_detected(self):
+        assert detect_language("[1, 2, 3]") == "json"
+
+    def test_unified_diff_detected(self):
+        diff = "--- a/file.py\n+++ b/file.py\n@@ -1,3 +1,4 @@"
+        assert detect_language(diff) == "diff"
+
+    def test_git_diff_detected(self):
+        diff = "diff --git a/foo.py b/foo.py\nindex abc..def"
+        assert detect_language(diff) == "diff"
+
+    def test_tool_name_powershell(self):
+        assert detect_language("Get-Process", tool_name="powershell") == "powershell"
+
+    def test_tool_name_sql(self):
+        assert detect_language("SELECT * FROM t", tool_name="sql") == "sql"
+
+    def test_plain_text_returns_none(self):
+        assert detect_language("just some plain text\nwith multiple lines") is None
+
+    def test_empty_returns_none(self):
+        assert detect_language("") is None
+
+    def test_none_text_returns_none(self):
+        # detect_language expects str but handle edge case
+        assert detect_language("") is None
+
+    def test_tool_name_none_with_plain_text(self):
+        assert detect_language("hello world", tool_name=None) is None
+
+    def test_bare_number_not_detected_as_json(self):
+        assert detect_language("42") is None
+
+    def test_bare_boolean_not_detected_as_json(self):
+        assert detect_language("true") is None
+
+    def test_bare_string_not_detected_as_json(self):
+        assert detect_language('"hello"') is None
+
+    def test_is_output_skips_tool_name_hints(self):
+        assert detect_language("Get-Process", tool_name="powershell", is_output=True) is None
+
+    def test_is_output_still_detects_json(self):
+        assert detect_language('{"key": "val"}', tool_name="powershell", is_output=True) == "json"
+
+    def test_is_output_still_detects_diff(self):
+        diff = "--- a/file.py\n+++ b/file.py"
+        assert detect_language(diff, tool_name="powershell", is_output=True) == "diff"
+
+
+# ---------------------------------------------------------------------------
+# highlight_code
+# ---------------------------------------------------------------------------
+
+
+class TestHighlightCode:
+    """Tests for highlight_code()."""
+
+    def test_json_highlighting(self):
+        result = highlight_code('{"key": "value"}', language="json")
+        assert "highlighted-code" in result
+        assert "<span" in result
+
+    def test_diff_highlighting(self):
+        diff = "--- a/file.py\n+++ b/file.py"
+        result = highlight_code(diff, language="diff")
+        assert "highlighted-code" in result
+
+    def test_no_language_html_escapes(self):
+        result = highlight_code("<script>alert('xss')</script>", language=None)
+        assert "<script>" not in result
+        assert "&lt;script&gt;" in result
+
+    def test_empty_returns_empty(self):
+        assert highlight_code("") == ""
+        assert highlight_code(None) == ""
+
+    def test_unknown_language_falls_back(self):
+        result = highlight_code("hello world", language="nonexistent_lang_xyz")
+        # Should not raise, falls back to TextLexer
+        assert "hello world" in result
+
+    def test_result_is_markup(self):
+        from markupsafe import Markup
+
+        result = highlight_code('{"a": 1}', language="json")
+        assert isinstance(result, Markup)
+
+    def test_no_language_result_is_markup(self):
+        from markupsafe import Markup
+
+        result = highlight_code("plain text", language=None)
+        assert isinstance(result, Markup)
+
+    def test_xss_escaped_in_highlighted_path(self):
+        """Ensure HTML injection is escaped even when Pygments highlights the content."""
+        malicious = '{"key": "<script>alert(1)</script>"}'
+        result = highlight_code(malicious, language="json")
+        assert "<script>" not in result
+        assert "&lt;script&gt;" in result or "&#" in result
+
+    def test_xss_escaped_in_unknown_language_path(self):
+        """Fallback lexer also escapes HTML."""
+        result = highlight_code("<img onerror=alert(1)>", language="nonexistent_lang_xyz")
+        assert "<img" not in result or "&lt;img" in result
