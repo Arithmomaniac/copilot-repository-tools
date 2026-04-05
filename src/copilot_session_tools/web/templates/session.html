@@ -2969,8 +2969,10 @@ input:checked + .toggle-switch::after {
                                             <pre><code>{{ io.input_text }}</code></pre>
                                             {% endif %}
                                             {% if io.result %}
+                                            {% set io_result_clean = io.result | strip_ansi %}
+                                            {% set io_result_lang = detect_language(io_result_clean) %}
                                             <div class="io-sublabel">{% if io.action == 'write' %}Response:{% elif io.action == 'read' %}Output:{% else %}Result:{% endif %}</div>
-                                            <pre><code>{{ io.result | strip_ansi }}</code></pre>
+                                            <pre><code>{{ highlight_code(io_result_clean, io_result_lang) }}</code></pre>
                                             {% endif %}
                                         </div>
                                         {% endfor %}
