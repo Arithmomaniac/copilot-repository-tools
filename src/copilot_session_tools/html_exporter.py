@@ -12,11 +12,14 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from .scanner import ChatSession
 from .utils import (
     build_block_metadata,
+    detect_language,
     extract_filename,
     format_timestamp,
+    highlight_code,
     markdown_to_html,
     match_tool_for_block,
     parse_diff_stats,
+    prettify_json,
     strip_ansi,
     truncate_preview,
     urldecode,
@@ -40,6 +43,11 @@ def _get_jinja_env() -> Environment:
     env.filters["extract_filename"] = extract_filename
     env.filters["strip_ansi"] = strip_ansi
     env.filters["truncate_preview"] = truncate_preview
+    env.filters["prettify_json"] = prettify_json
+    env.filters["detect_language"] = detect_language
+    env.filters["highlight_code"] = highlight_code
+    env.globals["detect_language"] = detect_language
+    env.globals["highlight_code"] = highlight_code
     env.globals["match_tool_for_block"] = match_tool_for_block
     env.globals["get_nested_meta"] = lambda block: getattr(block, "_nested_meta", {})
     return env

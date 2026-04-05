@@ -1176,6 +1176,149 @@ header h1 {
     word-break: break-word;
 }
 
+/* ── Pygments syntax highlighting (light theme) ── */
+.highlighted-code .c { color: #3D7B7B; font-style: italic }
+.highlighted-code .err { color: #a61717 }
+.highlighted-code .k { color: #008000; font-weight: bold }
+.highlighted-code .o { color: #666 }
+.highlighted-code .ch { color: #3D7B7B; font-style: italic }
+.highlighted-code .cm { color: #3D7B7B; font-style: italic }
+.highlighted-code .cp { color: #9C6500 }
+.highlighted-code .cpf { color: #3D7B7B; font-style: italic }
+.highlighted-code .c1 { color: #3D7B7B; font-style: italic }
+.highlighted-code .cs { color: #3D7B7B; font-style: italic }
+.highlighted-code .gd { color: #A00000 }
+.highlighted-code .ge { font-style: italic }
+.highlighted-code .gr { color: #E40000 }
+.highlighted-code .gh { color: #000080; font-weight: bold }
+.highlighted-code .gi { color: #008400 }
+.highlighted-code .go { color: #717171 }
+.highlighted-code .gp { color: #000080; font-weight: bold }
+.highlighted-code .gs { font-weight: bold }
+.highlighted-code .gu { color: #800080; font-weight: bold }
+.highlighted-code .gt { color: #0044dd }
+.highlighted-code .kc { color: #008000; font-weight: bold }
+.highlighted-code .kd { color: #008000; font-weight: bold }
+.highlighted-code .kn { color: #008000; font-weight: bold }
+.highlighted-code .kp { color: #008000 }
+.highlighted-code .kr { color: #008000; font-weight: bold }
+.highlighted-code .kt { color: #B00040 }
+.highlighted-code .m { color: #666 }
+.highlighted-code .s { color: #BA2121 }
+.highlighted-code .na { color: #687822 }
+.highlighted-code .nb { color: #008000 }
+.highlighted-code .nc { color: #00F; font-weight: bold }
+.highlighted-code .no { color: #800 }
+.highlighted-code .nd { color: #A2F }
+.highlighted-code .ne { color: #CB3F38; font-weight: bold }
+.highlighted-code .nf { color: #00F }
+.highlighted-code .nl { color: #767600 }
+.highlighted-code .nn { color: #00F; font-weight: bold }
+.highlighted-code .nt { color: #008000; font-weight: bold }
+.highlighted-code .nv { color: #19177C }
+.highlighted-code .ow { color: #A2F; font-weight: bold }
+.highlighted-code .w { color: #BBB }
+.highlighted-code .mb { color: #666 }
+.highlighted-code .mf { color: #666 }
+.highlighted-code .mh { color: #666 }
+.highlighted-code .mi { color: #666 }
+.highlighted-code .mo { color: #666 }
+.highlighted-code .sa { color: #BA2121 }
+.highlighted-code .sb { color: #BA2121 }
+.highlighted-code .sc { color: #BA2121 }
+.highlighted-code .dl { color: #BA2121 }
+.highlighted-code .sd { color: #BA2121; font-style: italic }
+.highlighted-code .s2 { color: #BA2121 }
+.highlighted-code .se { color: #AA5D1F; font-weight: bold }
+.highlighted-code .sh { color: #BA2121 }
+.highlighted-code .si { color: #A45A77; font-weight: bold }
+.highlighted-code .sx { color: #008000 }
+.highlighted-code .sr { color: #A45A77 }
+.highlighted-code .s1 { color: #BA2121 }
+.highlighted-code .ss { color: #19177C }
+.highlighted-code .bp { color: #008000 }
+.highlighted-code .fm { color: #00F }
+.highlighted-code .vc { color: #19177C }
+.highlighted-code .vg { color: #19177C }
+.highlighted-code .vi { color: #19177C }
+.highlighted-code .vm { color: #19177C }
+.highlighted-code .il { color: #666 }
+.highlighted-code .p { color: var(--text-primary) }
+
+/* Pygments dark theme overrides */
+@media (prefers-color-scheme: dark) {
+    .highlighted-code .c { color: #8B949E }
+    .highlighted-code .err { color: #F85149 }
+    .highlighted-code .k { color: #FF7B72 }
+    .highlighted-code .o { color: #FF7B72; font-weight: bold }
+    .highlighted-code .ch { color: #8B949E }
+    .highlighted-code .cm { color: #8B949E }
+    .highlighted-code .cp { color: #8B949E; font-weight: bold }
+    .highlighted-code .cpf { color: #8B949E }
+    .highlighted-code .c1 { color: #8B949E }
+    .highlighted-code .cs { color: #8B949E; font-weight: bold }
+    .highlighted-code .gd { color: #FFA198; background-color: #490202 }
+    .highlighted-code .ge { font-style: italic }
+    .highlighted-code .gr { color: #FFA198 }
+    .highlighted-code .gh { color: #79C0FF; font-weight: bold }
+    .highlighted-code .gi { color: #56D364; background-color: #0F5323 }
+    .highlighted-code .go { color: #8B949E }
+    .highlighted-code .gp { color: #8B949E }
+    .highlighted-code .gs { font-weight: bold }
+    .highlighted-code .gu { color: #79C0FF }
+    .highlighted-code .gt { color: #FF7B72 }
+    .highlighted-code .kc { color: #79C0FF }
+    .highlighted-code .kd { color: #FF7B72 }
+    .highlighted-code .kn { color: #FF7B72 }
+    .highlighted-code .kp { color: #79C0FF }
+    .highlighted-code .kr { color: #FF7B72 }
+    .highlighted-code .kt { color: #FF7B72 }
+    .highlighted-code .m { color: #A5D6FF }
+    .highlighted-code .s { color: #A5D6FF }
+    .highlighted-code .na { color: #c9d1d9 }
+    .highlighted-code .nb { color: #c9d1d9 }
+    .highlighted-code .nc { color: #F0883E; font-weight: bold }
+    .highlighted-code .no { color: #79C0FF }
+    .highlighted-code .nd { color: #D2A8FF }
+    .highlighted-code .ne { color: #F0883E; font-weight: bold }
+    .highlighted-code .nf { color: #D2A8FF; font-weight: bold }
+    .highlighted-code .nl { color: #79C0FF }
+    .highlighted-code .nn { color: #FF7B72 }
+    .highlighted-code .nt { color: #7EE787 }
+    .highlighted-code .nv { color: #79C0FF }
+    .highlighted-code .ow { color: #FF7B72; font-weight: bold }
+    .highlighted-code .w { color: #6E7681 }
+    .highlighted-code .mb { color: #A5D6FF }
+    .highlighted-code .mf { color: #A5D6FF }
+    .highlighted-code .mh { color: #A5D6FF }
+    .highlighted-code .mi { color: #A5D6FF }
+    .highlighted-code .mo { color: #A5D6FF }
+    .highlighted-code .sa { color: #79C0FF }
+    .highlighted-code .sb { color: #A5D6FF }
+    .highlighted-code .sc { color: #A5D6FF }
+    .highlighted-code .dl { color: #79C0FF }
+    .highlighted-code .sd { color: #A5D6FF }
+    .highlighted-code .s2 { color: #A5D6FF }
+    .highlighted-code .se { color: #79C0FF }
+    .highlighted-code .sh { color: #79C0FF }
+    .highlighted-code .si { color: #A5D6FF }
+    .highlighted-code .sx { color: #A5D6FF }
+    .highlighted-code .sr { color: #79C0FF }
+    .highlighted-code .s1 { color: #A5D6FF }
+    .highlighted-code .ss { color: #A5D6FF }
+    .highlighted-code .bp { color: #c9d1d9 }
+    .highlighted-code .fm { color: #D2A8FF; font-weight: bold }
+    .highlighted-code .vc { color: #79C0FF }
+    .highlighted-code .vg { color: #79C0FF }
+    .highlighted-code .vi { color: #79C0FF }
+    .highlighted-code .vm { color: #79C0FF }
+    .highlighted-code .il { color: #A5D6FF }
+    .highlighted-code .p { color: var(--text-primary) }
+}
+
+/* When syntax highlighting is toggled off */
+.hide-syntax-highlight .highlighted-code span { color: inherit !important; font-weight: inherit !important; font-style: inherit !important; background-color: transparent !important; }
+
 /* Status badges */
 .status-badge {
     padding: 2px 8px;
@@ -2117,6 +2260,8 @@ input:checked + .toggle-switch::after {
                                             <span class="tool-label">Input:</span>
                                             <pre><code>uv run pytest tests/test_auth.py -v</code></pre>
                                         </div>
+                                        
+                                        
                                         
                                         <div class="tool-section tool-section-output">
                                             <span class="tool-label">Output:</span>

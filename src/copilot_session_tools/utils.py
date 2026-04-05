@@ -5,6 +5,7 @@ block-metadata matching that were previously duplicated across
 html_exporter.py, markdown_exporter.py, webapp.py, and cli.py.
 """
 
+import json
 import re
 from datetime import UTC, datetime
 from pathlib import Path
@@ -12,6 +13,13 @@ from urllib.parse import unquote
 
 import markdown
 from markupsafe import Markup
+from pygments import highlight as _pygments_highlight
+from pygments.formatters import HtmlFormatter as _HtmlFormatter
+from pygments.lexers import DiffLexer as _DiffLexer
+from pygments.lexers import JsonLexer as _JsonLexer
+from pygments.lexers import TextLexer as _TextLexer
+from pygments.lexers import get_lexer_by_name as _get_lexer_by_name
+from pygments.util import ClassNotFound as _ClassNotFound
 
 from .scanner import ChatSession
 
@@ -143,6 +151,104 @@ def parse_diff_stats(diff: str | None) -> dict:
         elif line.startswith("-"):
             deletions += 1
     return {"additions": additions, "deletions": deletions}
+
+
+# ---------------------------------------------------------------------------
+# JSON prettification & syntax highlighting
+# ---------------------------------------------------------------------------
+
+# Tool name → Pygments lexer alias mapping for heuristic language detection
+_TOOL_LANGUAGE_MAP: dict[str, str] = {
+    "powershell": "powershell",
+    "bash": "bash",
+    "sql": "sql",
+    "python": "python",
+    "node": "javascript",
+}
+
+# Reusable Pygments formatter — produces <span> wrappers with CSS classes,
+# no wrapping <div class="highlight"> container (we handle that ourselves).
+_html_formatter = _HtmlFormatter(nowrap=True)
+
+
+def prettify_json(text: str | None) -> str:
+    """Pretty-print *text* if it's valid JSON, otherwise return as-is.
+
+    Handles both compact single-line JSON (``{"a":1}``) and already-formatted
+    multi-line JSON gracefully — if the text is already indented, the re-dump
+    just normalizes indentation to 2 spaces.
+    """
+    if not text:
+        return text or ""
+    try:
+        parsed = json.loads(text)
+        return json.dumps(parsed, indent=2, ensure_ascii=False)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return text
+
+
+def detect_language(text: str, tool_name: str | None = None) -> str | None:
+    """Heuristically detect the language of *text* for syntax highlighting.
+
+    Returns a Pygments lexer alias (``"json"``, ``"diff"``, …) or ``None``
+    when the content looks like plain text that shouldn't be highlighted.
+    """
+    if not text:
+        return None
+
+    # 1. Valid JSON?
+    try:
+        json.loads(text)
+        return "json"
+    except (json.JSONDecodeError, TypeError, ValueError):
+        pass
+
+    # 2. Unified diff?
+    stripped = text.lstrip()
+    if stripped.startswith(("diff --git", "--- a/", "+++ b/", "--- ", "+++ ")):
+        return "diff"
+
+    # 3. Known tool name → language?
+    if tool_name:
+        lang = _TOOL_LANGUAGE_MAP.get(tool_name.lower())
+        if lang:
+            return lang
+
+    return None
+
+
+def highlight_code(text: str | None, language: str | None = None) -> str:
+    """Syntax-highlight *text* using Pygments and return HTML markup.
+
+    When *language* is ``None``, the text is returned HTML-escaped inside a
+    plain ``<code>`` block (no colour spans).  For recognized languages the
+    output contains ``<span class="xx">`` elements styled by the Pygments CSS
+    theme embedded in ``session.html``.
+
+    The result is wrapped in ``Markup`` so Jinja2 won't double-escape it.
+    """
+    if not text:
+        return ""
+
+    if language is None:
+        # No language → just HTML-escape (Jinja autoescape would do this too,
+        # but we're returning Markup so be explicit).
+        from markupsafe import escape
+
+        return Markup(str(escape(text)))  # noqa: S704 - already HTML-escaped via markupsafe.escape
+
+    try:
+        if language == "json":
+            lexer = _JsonLexer()
+        elif language == "diff":
+            lexer = _DiffLexer()
+        else:
+            lexer = _get_lexer_by_name(language)
+    except _ClassNotFound:
+        lexer = _TextLexer()
+
+    highlighted = _pygments_highlight(text, lexer, _html_formatter)
+    return Markup(f'<span class="highlighted-code">{highlighted}</span>')  # noqa: S704
 
 
 # ---------------------------------------------------------------------------
