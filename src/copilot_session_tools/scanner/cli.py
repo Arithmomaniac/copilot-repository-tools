@@ -14,6 +14,7 @@ from .models import (
     ChatSession,
     CommandRun,
     ContentBlock,
+    ShellIOEntry,
     ToolInvocation,
 )
 
@@ -82,6 +83,7 @@ class _CliSessionBuilder:
         self.subagent_completions = subagent_completions or set()
         self.subagent_child_structured = subagent_child_structured or {}
         self.agent_display_names = agent_display_names or {}
+        self.shell_title_map: dict[str, str] = {}  # shellId → title for async shell backlinks
         self.messages: list[ChatMessage] = []
         self.current_assistant_content_blocks: list[ContentBlock] = []
         self.current_assistant_tool_invocations: list[ToolInvocation] = []
@@ -163,12 +165,19 @@ class _CliSessionBuilder:
         # Check if this is a shell/powershell command
         if tool_name in ("powershell", "bash", "shell", "run_command"):
             command = arguments.get("command", "")
+            shell_mode = arguments.get("mode", "")
+            shell_id = arguments.get("shellId", "")
+            detach = arguments.get("detach", False)
+            is_async = shell_mode in ("async", "background") or bool(detach)
             return None, CommandRun(
                 command=command,
                 title=description,
                 result=result,
                 status=status,
                 output=result,
+                shell_id=shell_id if is_async else None,
+                is_async=is_async,
+                is_detached=bool(detach),
             )
         else:
             # Regular tool invocation
@@ -256,10 +265,29 @@ class _CliSessionBuilder:
 
         # Skip truly internal tools with no user-visible output
         internal_tools = {
-            "read_powershell",
             "read_bash",
         }
         if tool_name in internal_tools:
+            return
+
+        # Handle shell interaction tools as backlinks to the original async shell
+        shell_interaction_tools = {
+            "read_powershell": "read",
+            "write_powershell": "write",
+            "stop_powershell": "stop",
+        }
+        if tool_name in shell_interaction_tools:
+            shell_id = arguments.get("shellId", "")
+            action = shell_interaction_tools[tool_name]
+            shell_title = self.shell_title_map.get(shell_id, shell_id) if shell_id else ""
+            label = f"↩ {shell_title} — {action}" if shell_title else f"↩ shell — {action}"
+            self.current_assistant_content_blocks.append(ContentBlock(kind="toolInvocation", content=label))
+            tool_inv, _ = self.build_tool_invocation(tool_call_id, tool_name, arguments)
+            if tool_inv:
+                tool_inv.invocation_message = label
+                tool_inv.is_shell_backlink = True
+                tool_inv.backlink_shell_id = shell_id or None
+                self.current_assistant_tool_invocations.append(tool_inv)
             return
 
         # Resolve read_agent agent_id to display name
@@ -294,6 +322,9 @@ class _CliSessionBuilder:
                 )
             )
             self.current_assistant_command_runs.append(cmd_run)
+            # Track async shell titles for backlink resolution
+            if cmd_run.is_async and cmd_run.shell_id and cmd_run.title:
+                self.shell_title_map[cmd_run.shell_id] = cmd_run.title
 
         elif tool_inv:
             if tool_name == "task":
@@ -982,6 +1013,59 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
         messages = builder.messages
         if not messages:
             return None
+
+        # Post-process: collect shell IO entries and attach to parent CommandRun
+        # Build shellId → list of (msg_idx, CommandRun) for temporal scoping
+        shell_cmd_runs: dict[str, list[tuple[int, CommandRun]]] = {}
+        for msg_idx, msg in enumerate(messages):
+            for cmd in msg.command_runs:
+                if cmd.is_async and cmd.shell_id:
+                    shell_cmd_runs.setdefault(cmd.shell_id, []).append((msg_idx, cmd))
+
+        # Walk all tool invocations, create IO entries for shell backlinks
+        # For duplicate shellIds, attach to the most recent CommandRun that appeared before the backlink
+        io_counters: dict[str, int] = {}  # (shellId, cmd_msg_idx, action) → counter for unique IDs
+        for msg_idx, msg in enumerate(messages):
+            for tool in msg.tool_invocations:
+                if not tool.is_shell_backlink or not tool.backlink_shell_id:
+                    continue
+                runs = shell_cmd_runs.get(tool.backlink_shell_id)
+                if not runs:
+                    continue
+                # Find the most recent CommandRun at or before this message
+                parent_cmd = None
+                for run_msg_idx, cmd in reversed(runs):
+                    if run_msg_idx <= msg_idx:
+                        parent_cmd = cmd
+                        break
+                if not parent_cmd:
+                    parent_cmd = runs[0][1]  # fallback to first
+                action = tool.name.replace("_powershell", "")
+                # Generate unique IDs scoped to the specific CommandRun instance
+                counter_key = f"{tool.backlink_shell_id}-{id(parent_cmd)}-{action}"
+                io_counters[counter_key] = io_counters.get(counter_key, 0) + 1
+                count = io_counters[counter_key]
+                anchor_id = f"io-{tool.backlink_shell_id}-{action}-{count}"
+                pill_id = f"pill-{tool.backlink_shell_id}-{action}-{count}"
+                # Extract write input from tool arguments
+                input_text = None
+                if action == "write" and tool.input:
+                    try:
+                        args = json.loads(tool.input)
+                        input_text = args.get("input", "")
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                entry = ShellIOEntry(
+                    action=action,
+                    input_text=input_text,
+                    result=tool.result,
+                    anchor_id=anchor_id,
+                    pill_id=pill_id,
+                )
+                parent_cmd.io_entries.append(entry)
+                # Store IDs on the ToolInvocation so the template can render pill with correct anchors
+                tool.shell_pill_id = pill_id
+                tool.shell_anchor_id = anchor_id
 
         # Get file metadata for incremental refresh
         source_file_mtime, source_file_size = _get_file_metadata(file_path)

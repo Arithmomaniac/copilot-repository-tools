@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.3] - 2026-04-05
+
+### Added
+
+- **Web Viewer**: Async shell rendering — `powershell(mode="async")` commands render with amber left-border and "⟳ async" badge (Font Awesome `fa-arrows-rotate`); detached shells (`detach: true`) show "🔗‍💥 detached" badge (`fa-link-slash`) instead
+- **Web Viewer**: Grouped IO entries — `read_powershell`, `write_powershell`, `stop_powershell` results are collected inside the parent async shell block as expandable IO cards with Input/Output sections and syntax highlighting
+- **Web Viewer**: Bidirectional linking — conversation pills (↩ READ/WRITE/STOP) link into the shell block's IO entry; IO entries link back to conversation context (↗ context). Clicking a pill auto-opens the shell dropdown
+- **Web Viewer**: Async shell output simplified to `shellId: X` label (boilerplate `<command started in background>` text hidden)
+- **Scanner**: New fields on `CommandRun`: `shell_id`, `is_async`, `is_detached`, `io_entries` for tracking async shell lifecycle
+- **Scanner**: New fields on `ToolInvocation`: `is_shell_backlink`, `backlink_shell_id`, `shell_pill_id`, `shell_anchor_id` for bidirectional linking
+- **Scanner**: `read_powershell` is no longer skipped as an internal tool — it now renders as a visible shell backlink
+- **Scanner**: Shell title map — backlink pills use the launch block's title instead of raw shellId
+- **Database**: Schema v8 — new columns on `cst_command_runs` and `cst_tool_invocations` for async shell tracking (auto-migrated from v7)
+
+### Fixed
+
+- **Security**: Shell backlink onclick handlers use `data-*` attributes instead of interpolating shellId into JavaScript string literals (XSS prevention)
+- **Web Viewer**: Duplicate shellId handling — when the same shellId is reused across shell launches, IO entries are scoped temporally to the correct parent CommandRun
+- **Web Viewer**: IO entry results now use syntax highlighting pipeline (`detect_language` + `highlight_code`), matching main tool output rendering
+
 ## [0.10.2] - 2026-04-05
 
 ### Added
@@ -13,7 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Web Viewer**: "Syntax highlighting" toggle in View Settings → Display section (persisted in localStorage)
 - **Web Viewer / HTML Export**: Unified diff output from tools highlighted with red/green coloring
 - **Markdown Export**: Tool inputs with JSON content now use language-tagged code fences (` ```json `) with prettified content
-- **Dependencies**: Added `pygments>=2.17.0` as a core dependency for server-side syntax highlighting
+- **Dependencies**: Added `pygments>=2.17.0` as a core dependency for server-side syntax highlightingorigin/main
 
 ## [0.10.1] - 2026-04-02
 

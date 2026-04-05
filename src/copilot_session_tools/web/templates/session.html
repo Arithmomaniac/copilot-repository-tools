@@ -1009,6 +1009,135 @@ header h1 {
     }
 }
 
+/* Async shell command block — amber left border */
+.tool-invocation-wrapper.command-async {
+    border-left: 3px solid #f59e0b;
+}
+.async-shell-badge {
+    padding: 2px 7px;
+    border-radius: 9px;
+    font-size: 0.7em;
+    font-weight: 500;
+    background: rgba(245, 158, 11, 0.1);
+    color: #b45309;
+    border: 1px solid #fcd34d;
+    white-space: nowrap;
+}
+.async-shell-badge i {
+    margin-right: 2px;
+}
+.shell-id-label {
+    font-size: 0.8em;
+    color: #b45309;
+    font-style: italic;
+    margin-top: 4px;
+}
+.shell-id-label code {
+    background: rgba(245, 158, 11, 0.12);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-style: normal;
+    font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+}
+
+/* IO entries inside async shell blocks */
+.io-entry {
+    margin: 6px 0;
+    padding: 6px 10px;
+    border-radius: 4px;
+    border: 1px solid rgba(245, 158, 11, 0.15);
+    background: rgba(245, 158, 11, 0.03);
+}
+.io-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    margin-bottom: 3px;
+}
+.io-header i {
+    font-size: 10px;
+    color: #d97706;
+    opacity: 0.6;
+}
+.io-action {
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    background: rgba(245, 158, 11, 0.08);
+    color: #d97706;
+    padding: 1px 5px;
+    border-radius: 3px;
+}
+.io-context-link {
+    font-size: 10px;
+    color: #b45309;
+    text-decoration: none;
+    opacity: 0.4;
+    margin-left: auto;
+}
+.io-context-link:hover {
+    opacity: 1;
+    text-decoration: underline;
+}
+.io-sublabel {
+    font-size: 10px;
+    color: #999;
+    margin-top: 3px;
+}
+
+/* Lightweight conversation pill for shell backlinks */
+.shell-conv-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 12px;
+    border-radius: 12px;
+    font-size: 0.78em;
+    font-weight: 500;
+    background: rgba(245, 158, 11, 0.04);
+    color: #b45309;
+    border: 1px solid rgba(245, 158, 11, 0.15);
+    text-decoration: none;
+    margin: 2px 0;
+    opacity: 0.75;
+    cursor: pointer;
+}
+.shell-conv-pill:hover {
+    opacity: 1;
+}
+.shell-conv-pill i {
+    font-size: 0.85em;
+    opacity: 0.6;
+}
+.shell-pill-action {
+    font-weight: 600;
+}
+
+@media (prefers-color-scheme: dark) {
+    .tool-invocation-wrapper.command-async {
+        border-left-color: #fbbf24;
+    }
+    .async-shell-badge {
+        background: rgba(251, 191, 36, 0.15);
+        color: #fbbf24;
+        border-color: rgba(251, 191, 36, 0.3);
+    }
+    .shell-conv-pill {
+        background: rgba(251, 191, 36, 0.06);
+        color: #fbbf24;
+        border-color: rgba(251, 191, 36, 0.15);
+    }
+    .io-entry {
+        border-color: rgba(251, 191, 36, 0.15);
+        background: rgba(251, 191, 36, 0.04);
+    }
+    .io-header i { color: #fbbf24; }
+    .io-action { background: rgba(251, 191, 36, 0.1); color: #fbbf24; }
+    .io-context-link { color: #fbbf24; }
+    .io-sublabel { color: #888; }
+}
+
 /* Content blocks */
 .content-block {
     margin: 4px 0;
@@ -2035,6 +2164,17 @@ input:checked + .toggle-switch::after {
     </style>
     {% if not static %}
     <script>
+    function scrollToShellIO(anchorId) {
+        var el = document.getElementById(anchorId);
+        if (!el) return;
+        var details = el.closest('details');
+        if (details && !details.open) {
+            details.open = true;
+        }
+        setTimeout(function() {
+            el.scrollIntoView({behavior: 'smooth', block: 'center'});
+        }, 50);
+    }
     function sessionApp() {
       return {
         // Settings panel state
@@ -2760,7 +2900,7 @@ input:checked + .toggle-switch::after {
                             {% if matched_cmd %}
                             {# CLI command run - show as collapsible command block with Input/Output like VSCode logs #}
                             <div class="content-block content-block-toolInvocation tool-invocation-inline">
-                                <details class="tool-invocation-wrapper">
+                                <details class="tool-invocation-wrapper{% if matched_cmd.is_async %} command-async{% endif %}"{% if matched_cmd.shell_id %} id="shell-{{ matched_cmd.shell_id }}"{% endif %}>
                                     <summary>
                                         <span class="collapsible-icon" aria-hidden="true">▶</span>
                                         <span class="tool-invocation-message">
@@ -2770,6 +2910,13 @@ input:checked + .toggle-switch::after {
                                                 <code>{{ matched_cmd.command | truncate(80, True) }}</code>
                                             {% endif %}
                                         </span>
+                                        {% if matched_cmd.is_async %}
+                                        {% if matched_cmd.is_detached %}
+                                        <span class="async-shell-badge"><i class="fa-solid fa-link-slash"></i> detached</span>
+                                        {% else %}
+                                        <span class="async-shell-badge"><i class="fa-solid fa-arrows-rotate"></i> async</span>
+                                        {% endif %}
+                                        {% endif %}
                                         {% if matched_cmd.status %}
                                         <span class="status-badge {{ matched_cmd.status }}">{{ matched_cmd.status }}</span>
                                         {% endif %}
@@ -2780,12 +2927,55 @@ input:checked + .toggle-switch::after {
                                             <pre><code>{{ matched_cmd.command }}</code></pre>
                                         </div>
                                         {% if matched_cmd.output or matched_cmd.result %}
-                                        {% set cmd_out = (matched_cmd.output or matched_cmd.result) | strip_ansi %}
-                                        {% set cmd_out_lang = detect_language(cmd_out) %}
+                                        {% set cmd_output = (matched_cmd.output or matched_cmd.result) | strip_ansi %}
+                                        {% if matched_cmd.is_async and matched_cmd.shell_id %}
+                                        <div class="shell-id-label">shellId: <code>{{ matched_cmd.shell_id }}</code></div>
+                                        {% set is_boilerplate = cmd_output.strip().startswith('<command started in background') %}
+                                        {% if not is_boilerplate and cmd_output.strip() %}
+                                        {% set cmd_out_lang = detect_language(cmd_output) %}
                                         <div class="tool-section tool-section-output">
                                             <span class="tool-label">Output:</span>
-                                            <pre><code>{{ highlight_code(cmd_out, cmd_out_lang) }}</code></pre>
+                                            <pre><code>{{ highlight_code(cmd_output, cmd_out_lang) }}</code></pre>
                                         </div>
+                                        {% endif %}
+                                        {% else %}
+                                        {% set cmd_out_lang = detect_language(cmd_output) %}
+                                        <div class="tool-section tool-section-output">
+                                            <span class="tool-label">Output:</span>
+                                            <pre><code>{{ highlight_code(cmd_output, cmd_out_lang) }}</code></pre>
+                                        </div>
+                                        {% endif %}
+                                        {% endif %}
+                                        {% if matched_cmd.io_entries %}
+                                        {% for io in matched_cmd.io_entries %}
+                                        <div class="io-entry" id="{{ io.anchor_id }}">
+                                            <div class="io-header">
+                                                {% if io.action == 'read' %}
+                                                <i class="fa-solid fa-book-open"></i>
+                                                {% elif io.action == 'write' %}
+                                                <i class="fa-solid fa-keyboard"></i>
+                                                {% elif io.action == 'stop' %}
+                                                <i class="fa-solid fa-stop"></i>
+                                                {% else %}
+                                                <i class="fa-solid fa-terminal"></i>
+                                                {% endif %}
+                                                <span class="io-action">{{ io.action }}</span>
+                                                {% if io.pill_id %}
+                                                <a href="#{{ io.pill_id }}" class="io-context-link" data-pill-target="{{ io.pill_id }}" onclick="var t=document.getElementById(this.dataset.pillTarget); if(t) t.scrollIntoView({behavior:'smooth'}); return false;">↗ context</a>
+                                                {% endif %}
+                                            </div>
+                                            {% if io.action == 'write' and io.input_text %}
+                                            <div class="io-sublabel">Input:</div>
+                                            <pre><code>{{ io.input_text }}</code></pre>
+                                            {% endif %}
+                                            {% if io.result %}
+                                            {% set io_result_clean = io.result | strip_ansi %}
+                                            {% set io_result_lang = detect_language(io_result_clean) %}
+                                            <div class="io-sublabel">{% if io.action == 'write' %}Response:{% elif io.action == 'read' %}Output:{% else %}Result:{% endif %}</div>
+                                            <pre><code>{{ highlight_code(io_result_clean, io_result_lang) }}</code></pre>
+                                            {% endif %}
+                                        </div>
+                                        {% endfor %}
                                         {% endif %}
                                     </div>
                                 </details>
@@ -2830,6 +3020,34 @@ input:checked + .toggle-switch::after {
                             <a href="#agent-{{ matched_tool.backlink_agent_id }}" class="agent-backlink backlink-{{ bl_state }}" onclick="document.getElementById('agent-{{ matched_tool.backlink_agent_id }}')?.scrollIntoView({behavior:'smooth'}); return false;">
                                 ↩ {{ matched_tool.invocation_message | replace('⏳ Checking agent ', '') }} — {{ bl_label }}
                             </a>
+                            {% elif matched_tool.is_shell_backlink %}
+                            {# Shell interaction — lightweight pill linking to IO entry inside shell block #}
+                            {% set shell_action = matched_tool.name | replace('_powershell', '') %}
+                            {% if shell_action == 'read' %}
+                            {% set shell_icon = 'fa-solid fa-book-open' %}
+                            {% elif shell_action == 'write' %}
+                            {% set shell_icon = 'fa-solid fa-keyboard' %}
+                            {% elif shell_action == 'stop' %}
+                            {% set shell_icon = 'fa-solid fa-stop' %}
+                            {% else %}
+                            {% set shell_icon = 'fa-solid fa-terminal' %}
+                            {% endif %}
+                            {% set shell_display = matched_tool.invocation_message | replace('↩ ', '') | replace(' — ' ~ shell_action, '') %}
+                            {% if matched_tool.shell_anchor_id %}
+                            <a href="#{{ matched_tool.shell_anchor_id }}"
+                               class="shell-conv-pill"
+                               id="{{ matched_tool.shell_pill_id }}"
+                               data-shell-target="{{ matched_tool.shell_anchor_id }}"
+                               onclick="scrollToShellIO(this.dataset.shellTarget); return false;">
+                                <i class="{{ shell_icon }}"></i>
+                                ↩ <span class="shell-pill-action">{{ shell_action | upper }}</span> — {{ shell_display }}
+                            </a>
+                            {% else %}
+                            <span class="shell-conv-pill">
+                                <i class="{{ shell_icon }}"></i>
+                                {{ shell_action | upper }} — {{ shell_display }}
+                            </span>
+                            {% endif %}
                             {% else %}
                             {% if show_collapsible %}
                             <div class="content-block content-block-toolInvocation tool-invocation-inline">

@@ -996,6 +996,135 @@ header h1 {
     }
 }
 
+/* Async shell command block — amber left border */
+.tool-invocation-wrapper.command-async {
+    border-left: 3px solid #f59e0b;
+}
+.async-shell-badge {
+    padding: 2px 7px;
+    border-radius: 9px;
+    font-size: 0.7em;
+    font-weight: 500;
+    background: rgba(245, 158, 11, 0.1);
+    color: #b45309;
+    border: 1px solid #fcd34d;
+    white-space: nowrap;
+}
+.async-shell-badge i {
+    margin-right: 2px;
+}
+.shell-id-label {
+    font-size: 0.8em;
+    color: #b45309;
+    font-style: italic;
+    margin-top: 4px;
+}
+.shell-id-label code {
+    background: rgba(245, 158, 11, 0.12);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-style: normal;
+    font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+}
+
+/* IO entries inside async shell blocks */
+.io-entry {
+    margin: 6px 0;
+    padding: 6px 10px;
+    border-radius: 4px;
+    border: 1px solid rgba(245, 158, 11, 0.15);
+    background: rgba(245, 158, 11, 0.03);
+}
+.io-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    margin-bottom: 3px;
+}
+.io-header i {
+    font-size: 10px;
+    color: #d97706;
+    opacity: 0.6;
+}
+.io-action {
+    font-size: 9px;
+    font-weight: 600;
+    text-transform: uppercase;
+    background: rgba(245, 158, 11, 0.08);
+    color: #d97706;
+    padding: 1px 5px;
+    border-radius: 3px;
+}
+.io-context-link {
+    font-size: 10px;
+    color: #b45309;
+    text-decoration: none;
+    opacity: 0.4;
+    margin-left: auto;
+}
+.io-context-link:hover {
+    opacity: 1;
+    text-decoration: underline;
+}
+.io-sublabel {
+    font-size: 10px;
+    color: #999;
+    margin-top: 3px;
+}
+
+/* Lightweight conversation pill for shell backlinks */
+.shell-conv-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 12px;
+    border-radius: 12px;
+    font-size: 0.78em;
+    font-weight: 500;
+    background: rgba(245, 158, 11, 0.04);
+    color: #b45309;
+    border: 1px solid rgba(245, 158, 11, 0.15);
+    text-decoration: none;
+    margin: 2px 0;
+    opacity: 0.75;
+    cursor: pointer;
+}
+.shell-conv-pill:hover {
+    opacity: 1;
+}
+.shell-conv-pill i {
+    font-size: 0.85em;
+    opacity: 0.6;
+}
+.shell-pill-action {
+    font-weight: 600;
+}
+
+@media (prefers-color-scheme: dark) {
+    .tool-invocation-wrapper.command-async {
+        border-left-color: #fbbf24;
+    }
+    .async-shell-badge {
+        background: rgba(251, 191, 36, 0.15);
+        color: #fbbf24;
+        border-color: rgba(251, 191, 36, 0.3);
+    }
+    .shell-conv-pill {
+        background: rgba(251, 191, 36, 0.06);
+        color: #fbbf24;
+        border-color: rgba(251, 191, 36, 0.15);
+    }
+    .io-entry {
+        border-color: rgba(251, 191, 36, 0.15);
+        background: rgba(251, 191, 36, 0.04);
+    }
+    .io-header i { color: #fbbf24; }
+    .io-action { background: rgba(251, 191, 36, 0.1); color: #fbbf24; }
+    .io-context-link { color: #fbbf24; }
+    .io-sublabel { color: #888; }
+}
+
 /* Content blocks */
 .content-block {
     margin: 4px 0;

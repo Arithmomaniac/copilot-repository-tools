@@ -22,6 +22,10 @@ class ToolInvocation:
     subagent_invocation_id: str | None = None  # VS Code: links child tools to parent sub-agent
     is_agent_backlink: bool = False  # True for read_agent calls that should render as back-links
     backlink_agent_id: str | None = None  # The agent-N id this back-link points to
+    is_shell_backlink: bool = False  # True for read/write/stop_powershell calls linked to an async shell
+    backlink_shell_id: str | None = None  # The shellId this back-link points to
+    shell_pill_id: str | None = None  # Unique pill id for bidirectional linking with IO entry
+    shell_anchor_id: str | None = None  # Corresponding IO entry anchor id to link to
 
 
 @dataclass
@@ -39,6 +43,17 @@ class FileChange:
 
 
 @dataclass
+class ShellIOEntry:
+    """Represents a single read/write/stop interaction with an async shell."""
+
+    action: str  # 'read', 'write', 'stop'
+    input_text: str | None = None  # For write: the text sent to the shell
+    result: str | None = None  # The response/output from the interaction
+    anchor_id: str | None = None  # Unique id for bidirectional linking (e.g., "io-poll2-write-1")
+    pill_id: str | None = None  # Corresponding pill id in conversation flow
+
+
+@dataclass
 class CommandRun:
     """Represents a command execution in a chat response.
 
@@ -51,6 +66,10 @@ class CommandRun:
     status: str | None = None
     output: str | None = None
     timestamp: int | None = None
+    shell_id: str | None = None  # shellId for async/detached shells
+    is_async: bool = False  # True when mode="async" (interactive shell session)
+    is_detached: bool = False  # True when detach=true (persists after session shutdown)
+    io_entries: list[ShellIOEntry] = field(default_factory=list)  # Collected read/write/stop interactions
 
 
 @dataclass

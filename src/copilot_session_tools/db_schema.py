@@ -62,6 +62,8 @@ CST_TOOL_INVOCATION_COLUMNS = (
     "subagent_invocation_id",
     "is_agent_backlink",
     "backlink_agent_id",
+    "is_shell_backlink",
+    "backlink_shell_id",
 )
 
 CST_FILE_CHANGE_COLUMNS = (
@@ -81,6 +83,9 @@ CST_COMMAND_RUN_COLUMNS = (
     "status",
     "output",
     "timestamp",
+    "shell_id",
+    "is_async",
+    "is_detached",
 )
 
 CST_CONTENT_BLOCK_COLUMNS = (
@@ -159,6 +164,8 @@ def tool_to_row(message_id: int, tool: ToolInvocation) -> tuple:
         tool.subagent_invocation_id,
         tool.is_agent_backlink,
         tool.backlink_agent_id,
+        tool.is_shell_backlink,
+        tool.backlink_shell_id,
     )
 
 
@@ -184,6 +191,9 @@ def command_to_row(message_id: int, cmd: CommandRun) -> tuple:
         cmd.status,
         cmd.output,
         cmd.timestamp,
+        cmd.shell_id,
+        cmd.is_async,
+        cmd.is_detached,
     )
 
 
@@ -207,6 +217,8 @@ def row_to_tool(row: sqlite3.Row) -> ToolInvocation:
         subagent_invocation_id=row["subagent_invocation_id"] if "subagent_invocation_id" in keys else None,
         is_agent_backlink=bool(row["is_agent_backlink"]) if "is_agent_backlink" in keys and row["is_agent_backlink"] else False,
         backlink_agent_id=row["backlink_agent_id"] if "backlink_agent_id" in keys else None,
+        is_shell_backlink=bool(row["is_shell_backlink"]) if "is_shell_backlink" in keys and row["is_shell_backlink"] else False,
+        backlink_shell_id=row["backlink_shell_id"] if "backlink_shell_id" in keys else None,
     )
 
 
@@ -223,6 +235,7 @@ def row_to_file_change(row: sqlite3.Row) -> FileChange:
 
 def row_to_command(row: sqlite3.Row) -> CommandRun:
     """Map a cst_command_runs row to a CommandRun."""
+    keys = row.keys()
     return CommandRun(
         command=row["command"],
         title=row["title"],
@@ -230,4 +243,7 @@ def row_to_command(row: sqlite3.Row) -> CommandRun:
         status=row["status"],
         output=row["output"],
         timestamp=row["timestamp"],
+        shell_id=row["shell_id"] if "shell_id" in keys else None,
+        is_async=bool(row["is_async"]) if "is_async" in keys and row["is_async"] else False,
+        is_detached=bool(row["is_detached"]) if "is_detached" in keys and row["is_detached"] else False,
     )

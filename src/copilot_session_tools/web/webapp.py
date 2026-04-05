@@ -1,5 +1,6 @@
 """Flask web application for viewing Copilot chat archive."""
 
+import json
 import re
 
 from flask import Flask, flash, jsonify, make_response, redirect, render_template, request, session, url_for
@@ -22,6 +23,14 @@ from copilot_session_tools.utils import (
     truncate_preview,
     urldecode,
 )
+
+
+def _from_json(value: str) -> dict:
+    """Jinja2 filter: parse a JSON string into a dict."""
+    try:
+        return json.loads(value) if value else {}
+    except (json.JSONDecodeError, TypeError):
+        return {}
 
 
 def create_app(
@@ -63,6 +72,7 @@ def create_app(
     app.jinja_env.filters["extract_filename"] = extract_filename
     app.jinja_env.filters["strip_ansi"] = strip_ansi
     app.jinja_env.filters["truncate_preview"] = truncate_preview
+    app.jinja_env.filters["from_json"] = _from_json
     app.jinja_env.filters["prettify_json"] = prettify_json
 
     # Register global functions for template calls
@@ -263,6 +273,57 @@ def create_app(
                 first_user_prompt = message.content
 
             message_metadata[msg_idx] = build_block_metadata(message.content_blocks, message.tool_invocations, message.command_runs)
+
+        # Reconstruct IO entries for async shell blocks from shell backlink data.
+        # IO entries are not stored in the DB — they're rebuilt at render time by
+        # matching shell backlinks (read/write/stop_powershell) to their parent CommandRun.
+        from copilot_session_tools.scanner.models import ShellIOEntry
+
+        shell_cmd_runs: dict[str, list[tuple[int, object]]] = {}
+        for msg_idx, message in enumerate(session.messages):
+            for cmd in message.command_runs:
+                if cmd.is_async and cmd.shell_id:
+                    shell_cmd_runs.setdefault(cmd.shell_id, []).append((msg_idx, cmd))
+        if shell_cmd_runs:
+            io_counters: dict[str, int] = {}
+            for msg_idx, message in enumerate(session.messages):
+                for tool in message.tool_invocations:
+                    if not tool.is_shell_backlink or not tool.backlink_shell_id:
+                        continue
+                    runs = shell_cmd_runs.get(tool.backlink_shell_id)
+                    if not runs:
+                        continue
+                    parent_cmd = None
+                    for run_msg_idx, cmd in reversed(runs):
+                        if run_msg_idx <= msg_idx:
+                            parent_cmd = cmd
+                            break
+                    if not parent_cmd:
+                        parent_cmd = runs[0][1]
+                    action = tool.name.replace("_powershell", "")
+                    counter_key = f"{tool.backlink_shell_id}-{id(parent_cmd)}-{action}"
+                    io_counters[counter_key] = io_counters.get(counter_key, 0) + 1
+                    count = io_counters[counter_key]
+                    anchor_id = f"io-{tool.backlink_shell_id}-{action}-{count}"
+                    pill_id = f"pill-{tool.backlink_shell_id}-{action}-{count}"
+                    input_text = None
+                    if action == "write" and tool.input:
+                        try:
+                            args = json.loads(tool.input)
+                            input_text = args.get("input", "")
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                    parent_cmd.io_entries.append(
+                        ShellIOEntry(
+                            action=action,
+                            input_text=input_text,
+                            result=tool.result,
+                            anchor_id=anchor_id,
+                            pill_id=pill_id,
+                        )
+                    )
+                    tool.shell_pill_id = pill_id
+                    tool.shell_anchor_id = anchor_id
 
         enrichment_version = db.get_session_enrichment_version(session_id) if is_enriched else None
         needs_version_refresh = False
