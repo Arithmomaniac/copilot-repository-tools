@@ -187,29 +187,36 @@ def prettify_json(text: str | None) -> str:
         return text
 
 
-def detect_language(text: str, tool_name: str | None = None) -> str | None:
+def detect_language(text: str, tool_name: str | None = None, *, is_output: bool = False) -> str | None:
     """Heuristically detect the language of *text* for syntax highlighting.
 
     Returns a Pygments lexer alias (``"json"``, ``"diff"``, …) or ``None``
     when the content looks like plain text that shouldn't be highlighted.
+
+    Args:
+        text: The content to classify.
+        tool_name: Optional tool name for language hints (only used for inputs).
+        is_output: If True, skip tool-name-based hints since tool outputs
+                   (e.g. logs from ``powershell``) are usually plain text.
     """
     if not text:
         return None
 
-    # 1. Valid JSON?
-    try:
-        json.loads(text)
-        return "json"
-    except (json.JSONDecodeError, TypeError, ValueError):
-        pass
+    # 1. JSON object or array? (skip bare scalars like "42" or "true")
+    stripped = text.lstrip()
+    if stripped.startswith(("{", "[")):
+        try:
+            json.loads(text)
+            return "json"
+        except (json.JSONDecodeError, TypeError, ValueError):
+            pass
 
     # 2. Unified diff?
-    stripped = text.lstrip()
     if stripped.startswith(("diff --git", "--- a/", "+++ b/", "--- ", "+++ ")):
         return "diff"
 
-    # 3. Known tool name → language?
-    if tool_name:
+    # 3. Known tool name → language? (inputs only — outputs are usually plain text)
+    if tool_name and not is_output:
         lang = _TOOL_LANGUAGE_MAP.get(tool_name.lower())
         if lang:
             return lang

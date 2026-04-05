@@ -633,6 +633,25 @@ class TestDetectLanguage:
     def test_tool_name_none_with_plain_text(self):
         assert detect_language("hello world", tool_name=None) is None
 
+    def test_bare_number_not_detected_as_json(self):
+        assert detect_language("42") is None
+
+    def test_bare_boolean_not_detected_as_json(self):
+        assert detect_language("true") is None
+
+    def test_bare_string_not_detected_as_json(self):
+        assert detect_language('"hello"') is None
+
+    def test_is_output_skips_tool_name_hints(self):
+        assert detect_language("Get-Process", tool_name="powershell", is_output=True) is None
+
+    def test_is_output_still_detects_json(self):
+        assert detect_language('{"key": "val"}', tool_name="powershell", is_output=True) == "json"
+
+    def test_is_output_still_detects_diff(self):
+        diff = "--- a/file.py\n+++ b/file.py"
+        assert detect_language(diff, tool_name="powershell", is_output=True) == "diff"
+
 
 # ---------------------------------------------------------------------------
 # highlight_code
@@ -677,3 +696,15 @@ class TestHighlightCode:
 
         result = highlight_code("plain text", language=None)
         assert isinstance(result, Markup)
+
+    def test_xss_escaped_in_highlighted_path(self):
+        """Ensure HTML injection is escaped even when Pygments highlights the content."""
+        malicious = '{"key": "<script>alert(1)</script>"}'
+        result = highlight_code(malicious, language="json")
+        assert "<script>" not in result
+        assert "&lt;script&gt;" in result or "&#" in result
+
+    def test_xss_escaped_in_unknown_language_path(self):
+        """Fallback lexer also escapes HTML."""
+        result = highlight_code("<img onerror=alert(1)>", language="nonexistent_lang_xyz")
+        assert "<img" not in result or "&lt;img" in result

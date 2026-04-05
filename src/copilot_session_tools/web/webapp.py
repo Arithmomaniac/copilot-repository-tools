@@ -64,8 +64,6 @@ def create_app(
     app.jinja_env.filters["strip_ansi"] = strip_ansi
     app.jinja_env.filters["truncate_preview"] = truncate_preview
     app.jinja_env.filters["prettify_json"] = prettify_json
-    app.jinja_env.filters["detect_language"] = detect_language
-    app.jinja_env.filters["highlight_code"] = highlight_code
 
     # Register global functions for template calls
     app.jinja_env.globals["detect_language"] = detect_language

@@ -2847,16 +2847,17 @@ input:checked + .toggle-switch::after {
                                             <code>{{ matched_tool.name }}</code>
                                         </div>
                                         {% if matched_tool.input %}
+                                        {% set tool_in_lang = detect_language(matched_tool.input, matched_tool.name) %}
                                         {% set tool_in = matched_tool.input | prettify_json %}
-                                        {% set tool_in_lang = detect_language(tool_in, matched_tool.name) %}
                                         <div class="tool-section tool-section-input">
                                             <span class="tool-label">Input:</span>
                                             <pre><code>{{ highlight_code(tool_in, tool_in_lang) }}</code></pre>
                                         </div>
                                         {% endif %}
                                         {% if matched_tool.result %}
-                                        {% set tool_out = matched_tool.result | strip_ansi | prettify_json %}
-                                        {% set tool_out_lang = detect_language(tool_out, matched_tool.name) %}
+                                        {% set tool_out_raw = matched_tool.result | strip_ansi %}
+                                        {% set tool_out_lang = detect_language(tool_out_raw, matched_tool.name, is_output=True) %}
+                                        {% set tool_out = tool_out_raw | prettify_json %}
                                         <div class="tool-section tool-section-output">
                                             <span class="tool-label">Output:</span>
                                             <pre><code>{{ highlight_code(tool_out, tool_out_lang) }}</code></pre>
@@ -2937,16 +2938,17 @@ input:checked + .toggle-switch::after {
                                     <code>{{ tool.name }}</code>
                                 </div>
                                 {% if tool.input %}
+                                {% set utool_in_lang = detect_language(tool.input, tool.name) %}
                                 {% set utool_in = tool.input | prettify_json %}
-                                {% set utool_in_lang = detect_language(utool_in, tool.name) %}
                                 <div class="tool-section tool-section-input">
                                     <span class="tool-label">Input:</span>
                                     <pre><code>{{ highlight_code(utool_in, utool_in_lang) }}</code></pre>
                                 </div>
                                 {% endif %}
                                 {% if tool.result %}
-                                {% set utool_out = tool.result | strip_ansi | prettify_json %}
-                                {% set utool_out_lang = detect_language(utool_out, tool.name) %}
+                                {% set utool_out_raw = tool.result | strip_ansi %}
+                                {% set utool_out_lang = detect_language(utool_out_raw, tool.name, is_output=True) %}
+                                {% set utool_out = utool_out_raw | prettify_json %}
                                 <div class="tool-section tool-section-output">
                                     <span class="tool-label">Output:</span>
                                     <pre><code>{{ highlight_code(utool_out, utool_out_lang) }}</code></pre>

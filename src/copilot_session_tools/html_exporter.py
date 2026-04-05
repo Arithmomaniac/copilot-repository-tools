@@ -44,8 +44,6 @@ def _get_jinja_env() -> Environment:
     env.filters["strip_ansi"] = strip_ansi
     env.filters["truncate_preview"] = truncate_preview
     env.filters["prettify_json"] = prettify_json
-    env.filters["detect_language"] = detect_language
-    env.filters["highlight_code"] = highlight_code
     env.globals["detect_language"] = detect_language
     env.globals["highlight_code"] = highlight_code
     env.globals["match_tool_for_block"] = match_tool_for_block
