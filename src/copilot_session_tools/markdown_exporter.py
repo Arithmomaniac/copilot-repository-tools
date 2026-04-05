@@ -12,10 +12,16 @@ from pathlib import Path
 
 from .scanner import ChatMessage, ChatSession
 from .utils import (
+    detect_language as _detect_language,
+)
+from .utils import (
     format_timestamp as _format_timestamp_raw,
 )
 from .utils import (
     generate_session_filename as _generate_session_filename,
+)
+from .utils import (
+    prettify_json as _prettify_json,
 )
 from .utils import (
     urldecode as _urldecode,
@@ -50,7 +56,9 @@ def _format_tool_summary(message: ChatMessage, include_inputs: bool = False) -> 
     if include_inputs:
         for tool in message.tool_invocations:
             if tool.input:
-                summary += f"\n\n**{tool.name} input:**\n```\n{tool.input}\n```"
+                lang = _detect_language(tool.input, tool.name) or ""
+                pretty = _prettify_json(tool.input) if lang == "json" else tool.input
+                summary += f"\n\n**{tool.name} input:**\n```{lang}\n{pretty}\n```"
 
     return summary
 

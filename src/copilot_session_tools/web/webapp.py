@@ -11,11 +11,14 @@ from copilot_session_tools.html_exporter import generate_session_html_filename, 
 from copilot_session_tools.refresh import enrich_single_session, run_enrichment, run_refresh
 from copilot_session_tools.utils import (
     build_block_metadata,
+    detect_language,
     extract_filename,
     format_timestamp,
+    highlight_code,
     markdown_to_html,
     match_tool_for_block,
     parse_diff_stats,
+    prettify_json,
     strip_ansi,
     truncate_preview,
     urldecode,
@@ -70,6 +73,11 @@ def create_app(
     app.jinja_env.filters["strip_ansi"] = strip_ansi
     app.jinja_env.filters["truncate_preview"] = truncate_preview
     app.jinja_env.filters["from_json"] = _from_json
+    app.jinja_env.filters["prettify_json"] = prettify_json
+
+    # Register global functions for template calls
+    app.jinja_env.globals["detect_language"] = detect_language
+    app.jinja_env.globals["highlight_code"] = highlight_code
 
     # Register global function for tool matching
     app.jinja_env.globals["match_tool_for_block"] = match_tool_for_block

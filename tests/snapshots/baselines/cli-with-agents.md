@@ -68,13 +68,18 @@ The JWT token refresh bug is fixed. Both agents confirmed the fix is complete.
 *🔧 Tools: task, task*
 
 **task input:**
-```
-{"agent_type": "general-purpose", "description": "Fix JWT token refresh bug"}
+```json
+{
+  "agent_type": "general-purpose",
+  "description": "Fix JWT token refresh bug"
+}
 ```
 
 **task input:**
-```
-{"agent_type": "explore"}
+```json
+{
+  "agent_type": "explore"
+}
 ```
 
 ---

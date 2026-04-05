@@ -379,6 +379,19 @@ class TestFormatToolSummary:
         assert "npm run test" not in result
         assert "```" not in result
 
+    def test_json_input_gets_language_tag(self):
+        """Test that JSON tool inputs get ```json language tag and are prettified."""
+        message = ChatMessage(
+            role="assistant",
+            content="Hello",
+            tool_invocations=[
+                ToolInvocation(name="grep", input='{"pattern":"TODO","path":"src/"}'),
+            ],
+        )
+        result = _format_tool_summary(message, include_inputs=True)
+        assert "```json" in result
+        assert '"pattern": "TODO"' in result  # prettified
+
 
 class TestFormatFileChangesSummary:
     """Tests for _format_file_changes_summary helper with diffs."""
