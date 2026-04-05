@@ -266,6 +266,48 @@ def create_app(
 
             message_metadata[msg_idx] = build_block_metadata(message.content_blocks, message.tool_invocations, message.command_runs)
 
+        # Reconstruct IO entries for async shell blocks from shell backlink data.
+        # IO entries are not stored in the DB — they're rebuilt at render time by
+        # matching shell backlinks (read/write/stop_powershell) to their parent CommandRun.
+        from copilot_session_tools.scanner.models import ShellIOEntry
+
+        shell_cmd_map: dict[str, "CommandRun"] = {}
+        for message in session.messages:
+            for cmd in message.command_runs:
+                if cmd.is_async and cmd.shell_id:
+                    shell_cmd_map[cmd.shell_id] = cmd
+        if shell_cmd_map:
+            io_counters: dict[str, int] = {}
+            for message in session.messages:
+                for tool in message.tool_invocations:
+                    if not tool.is_shell_backlink or not tool.backlink_shell_id:
+                        continue
+                    parent_cmd = shell_cmd_map.get(tool.backlink_shell_id)
+                    if not parent_cmd:
+                        continue
+                    action = tool.name.replace("_powershell", "")
+                    counter_key = f"{tool.backlink_shell_id}-{action}"
+                    io_counters[counter_key] = io_counters.get(counter_key, 0) + 1
+                    count = io_counters[counter_key]
+                    anchor_id = f"io-{tool.backlink_shell_id}-{action}-{count}"
+                    pill_id = f"pill-{tool.backlink_shell_id}-{action}-{count}"
+                    input_text = None
+                    if action == "write" and tool.input:
+                        try:
+                            args = json.loads(tool.input)
+                            input_text = args.get("input", "")
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                    parent_cmd.io_entries.append(ShellIOEntry(
+                        action=action,
+                        input_text=input_text,
+                        result=tool.result,
+                        anchor_id=anchor_id,
+                        pill_id=pill_id,
+                    ))
+                    tool.shell_pill_id = pill_id
+                    tool.shell_anchor_id = anchor_id
+
         enrichment_version = db.get_session_enrichment_version(session_id) if is_enriched else None
         needs_version_refresh = False
         if is_enriched and (enrichment_version is None or enrichment_version != __version__):
