@@ -1015,25 +1015,34 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
             return None
 
         # Post-process: collect shell IO entries and attach to parent CommandRun
-        # Build shellId → CommandRun map from all async shells
-        shell_cmd_map: dict[str, CommandRun] = {}
-        for msg in messages:
+        # Build shellId → list of (msg_idx, CommandRun) for temporal scoping
+        shell_cmd_runs: dict[str, list[tuple[int, CommandRun]]] = {}
+        for msg_idx, msg in enumerate(messages):
             for cmd in msg.command_runs:
                 if cmd.is_async and cmd.shell_id:
-                    shell_cmd_map[cmd.shell_id] = cmd
+                    shell_cmd_runs.setdefault(cmd.shell_id, []).append((msg_idx, cmd))
 
         # Walk all tool invocations, create IO entries for shell backlinks
-        io_counters: dict[str, int] = {}  # shellId-action → counter for unique IDs
+        # For duplicate shellIds, attach to the most recent CommandRun that appeared before the backlink
+        io_counters: dict[str, int] = {}  # (shellId, cmd_msg_idx, action) → counter for unique IDs
         for msg_idx, msg in enumerate(messages):
             for tool in msg.tool_invocations:
                 if not tool.is_shell_backlink or not tool.backlink_shell_id:
                     continue
-                parent_cmd = shell_cmd_map.get(tool.backlink_shell_id)
-                if not parent_cmd:
+                runs = shell_cmd_runs.get(tool.backlink_shell_id)
+                if not runs:
                     continue
+                # Find the most recent CommandRun at or before this message
+                parent_cmd = None
+                for run_msg_idx, cmd in reversed(runs):
+                    if run_msg_idx <= msg_idx:
+                        parent_cmd = cmd
+                        break
+                if not parent_cmd:
+                    parent_cmd = runs[0][1]  # fallback to first
                 action = tool.name.replace("_powershell", "")
-                # Generate unique IDs for bidirectional linking
-                counter_key = f"{tool.backlink_shell_id}-{action}"
+                # Generate unique IDs scoped to the specific CommandRun instance
+                counter_key = f"{tool.backlink_shell_id}-{id(parent_cmd)}-{action}"
                 io_counters[counter_key] = io_counters.get(counter_key, 0) + 1
                 count = io_counters[counter_key]
                 anchor_id = f"io-{tool.backlink_shell_id}-{action}-{count}"

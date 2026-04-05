@@ -3372,3 +3372,78 @@ class TestCLIAsyncShellFields:
         read_tools = [t for msg in session.messages for t in msg.tool_invocations if t.name == "read_powershell"]
         assert "Start dev server" in read_tools[0].invocation_message
         assert "read" in read_tools[0].invocation_message
+
+    def test_duplicate_shellid_scoped_temporally(self, tmp_path):
+        """When the same shellId is reused, IO entries attach to the correct CommandRun."""
+        events = [
+            # First shell with shellId "srv"
+            {
+                "type": "assistant.message",
+                "data": {
+                    "content": "Starting first server.",
+                    "toolRequests": [
+                        {"toolCallId": "tc-srv1", "name": "powershell", "arguments": {"command": "npm run dev", "description": "First server", "mode": "async", "shellId": "srv"}},
+                    ],
+                },
+            },
+            {"type": "tool.execution_start", "data": {"toolCallId": "tc-srv1", "toolName": "powershell", "arguments": {"command": "npm run dev", "mode": "async", "shellId": "srv"}}},
+            {"type": "tool.execution_complete", "data": {"toolCallId": "tc-srv1", "success": True, "result": {"content": "started"}}},
+            # Write to first shell (same assistant message — no user break)
+            {
+                "type": "assistant.message",
+                "data": {
+                    "content": "Sending input to first.",
+                    "toolRequests": [{"toolCallId": "tc-w1", "name": "write_powershell", "arguments": {"shellId": "srv", "input": "first-input"}}],
+                },
+            },
+            {"type": "tool.execution_start", "data": {"toolCallId": "tc-w1", "toolName": "write_powershell", "arguments": {"shellId": "srv", "input": "first-input"}}},
+            {"type": "tool.execution_complete", "data": {"toolCallId": "tc-w1", "success": True, "result": {"content": "first-response"}}},
+            # Stop first shell
+            {
+                "type": "assistant.message",
+                "data": {
+                    "content": "Stopping first.",
+                    "toolRequests": [{"toolCallId": "tc-s1", "name": "stop_powershell", "arguments": {"shellId": "srv"}}],
+                },
+            },
+            {"type": "tool.execution_start", "data": {"toolCallId": "tc-s1", "toolName": "stop_powershell", "arguments": {"shellId": "srv"}}},
+            {"type": "tool.execution_complete", "data": {"toolCallId": "tc-s1", "success": True, "result": {"content": "stopped"}}},
+            # User message separates the two shell runs
+            {"type": "user.message", "data": {"content": "Start another one"}},
+            # Second shell reusing shellId "srv"
+            {
+                "type": "assistant.message",
+                "data": {
+                    "content": "Starting second server.",
+                    "toolRequests": [
+                        {"toolCallId": "tc-srv2", "name": "powershell", "arguments": {"command": "npm run dev:hot", "description": "Second server", "mode": "async", "shellId": "srv"}},
+                    ],
+                },
+            },
+            {"type": "tool.execution_start", "data": {"toolCallId": "tc-srv2", "toolName": "powershell", "arguments": {"command": "npm run dev:hot", "mode": "async", "shellId": "srv"}}},
+            {"type": "tool.execution_complete", "data": {"toolCallId": "tc-srv2", "success": True, "result": {"content": "started"}}},
+            # Write to second shell
+            {
+                "type": "assistant.message",
+                "data": {
+                    "content": "Sending input to second.",
+                    "toolRequests": [{"toolCallId": "tc-w2", "name": "write_powershell", "arguments": {"shellId": "srv", "input": "second-input"}}],
+                },
+            },
+            {"type": "tool.execution_start", "data": {"toolCallId": "tc-w2", "toolName": "write_powershell", "arguments": {"shellId": "srv", "input": "second-input"}}},
+            {"type": "tool.execution_complete", "data": {"toolCallId": "tc-w2", "success": True, "result": {"content": "second-response"}}},
+            {"type": "assistant.message", "data": {"content": "Done."}},
+        ]
+        session = self._parse(tmp_path, *events)
+        async_cmds = [c for msg in session.messages for c in msg.command_runs if c.is_async and c.shell_id == "srv"]
+        assert len(async_cmds) == 2, f"Expected 2 async shells with shellId 'srv', got {len(async_cmds)}"
+        first_cmd, second_cmd = async_cmds
+        # First shell should have write + stop IO entries
+        assert len(first_cmd.io_entries) == 2, f"First shell expected 2 IO entries, got {len(first_cmd.io_entries)}"
+        assert first_cmd.io_entries[0].action == "write"
+        assert first_cmd.io_entries[0].result == "first-response"
+        assert first_cmd.io_entries[1].action == "stop"
+        # Second shell should have only its own write IO entry
+        assert len(second_cmd.io_entries) == 1, f"Second shell expected 1 IO entry, got {len(second_cmd.io_entries)}"
+        assert second_cmd.io_entries[0].action == "write"
+        assert second_cmd.io_entries[0].result == "second-response"
