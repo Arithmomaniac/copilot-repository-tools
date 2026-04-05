@@ -2770,12 +2770,20 @@ input:checked + .toggle-switch::after {
                                             <pre><code>{{ matched_cmd.command }}</code></pre>
                                         </div>
                                         {% if matched_cmd.output or matched_cmd.result %}
+                                        {% set cmd_output = (matched_cmd.output or matched_cmd.result) | strip_ansi %}
                                         {% if matched_cmd.is_async and matched_cmd.shell_id %}
                                         <div class="shell-id-label">shellId: <code>{{ matched_cmd.shell_id }}</code></div>
+                                        {% set is_boilerplate = cmd_output.strip().startswith('<command started in background') %}
+                                        {% if not is_boilerplate and cmd_output.strip() %}
+                                        <div class="tool-section tool-section-output">
+                                            <span class="tool-label">Output:</span>
+                                            <pre><code>{{ cmd_output }}</code></pre>
+                                        </div>
+                                        {% endif %}
                                         {% else %}
                                         <div class="tool-section tool-section-output">
                                             <span class="tool-label">Output:</span>
-                                            <pre><code>{{ (matched_cmd.output or matched_cmd.result) | strip_ansi }}</code></pre>
+                                            <pre><code>{{ cmd_output }}</code></pre>
                                         </div>
                                         {% endif %}
                                         {% endif %}
@@ -2794,7 +2802,7 @@ input:checked + .toggle-switch::after {
                                                 {% endif %}
                                                 <span class="io-action">{{ io.action }}</span>
                                                 {% if io.pill_id %}
-                                                <a href="#{{ io.pill_id }}" class="io-context-link" onclick="document.getElementById('{{ io.pill_id }}')?.scrollIntoView({behavior:'smooth'}); return false;">↗ context</a>
+                                                <a href="#{{ io.pill_id }}" class="io-context-link" data-pill-target="{{ io.pill_id }}" onclick="var t=document.getElementById(this.dataset.pillTarget); if(t) t.scrollIntoView({behavior:'smooth'}); return false;">↗ context</a>
                                                 {% endif %}
                                             </div>
                                             {% if io.action == 'write' and io.input_text %}
@@ -2868,7 +2876,8 @@ input:checked + .toggle-switch::after {
                             <a href="#{{ matched_tool.shell_anchor_id }}"
                                class="shell-conv-pill"
                                id="{{ matched_tool.shell_pill_id }}"
-                               onclick="scrollToShellIO('{{ matched_tool.shell_anchor_id }}'); return false;">
+                               data-shell-target="{{ matched_tool.shell_anchor_id }}"
+                               onclick="scrollToShellIO(this.dataset.shellTarget); return false;">
                                 <i class="{{ shell_icon }}"></i>
                                 ↩ <span class="shell-pill-action">{{ shell_action | upper }}</span> — {{ shell_display }}
                             </a>

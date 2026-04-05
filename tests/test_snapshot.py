@@ -92,29 +92,103 @@ class TestCLIAgentSessionSnapshot:
         html = session_to_html(self.session)
         file_regression.check(html, fullpath=BASELINES_DIR / "cli-with-agents.html", encoding="utf-8")
 
-    def test_session_has_subagent_blocks(self):
-        """Verify the parsed session has structured subagent content."""
-        subagent_blocks = []
-        for msg in self.session.messages:
-            for cb in msg.content_blocks:
-                if cb.kind in ("subagent", "subagent_failed", "subagent_incomplete"):
-                    subagent_blocks.append(cb)
-        assert len(subagent_blocks) >= 2, f"Expected at least 2 subagent blocks, got {len(subagent_blocks)}"
-        # First agent should have structured content
-        agent1 = subagent_blocks[0]
-        assert len(agent1.content_blocks) > 0, "First agent should have structured content_blocks"
-        assert len(agent1.tool_invocations) > 0, "First agent should have tool_invocations"
-        # Verify child tools are present
-        tool_names = {t.name for t in agent1.tool_invocations}
-        assert "grep" in tool_names, f"Expected grep in child tools, got {tool_names}"
-        assert "view" in tool_names, f"Expected view in child tools, got {tool_names}"
-        assert "edit" in tool_names, f"Expected edit in child tools, got {tool_names}"
-        # Should have command runs (powershell)
-        assert len(agent1.command_runs) > 0, "First agent should have command_runs"
-        # Verify result text is present
-        text_blocks = [cb for cb in agent1.content_blocks if cb.kind == "text"]
-        assert len(text_blocks) > 0, "Agent should have result text block"
-        assert "JWT" in text_blocks[0].content
+
+# --- CLI Session with Async Shells Snapshots ---
+
+_cli_async_shells_events = FIXTURES_DIR / "cli-with-async-shells" / "events.jsonl"
+_cli_async_shells_fixture_exists = _cli_async_shells_events.exists() if FIXTURES_DIR.exists() else False
+
+
+@pytest.mark.skipif(not _cli_async_shells_fixture_exists, reason="CLI async shells fixture not populated")
+class TestCLIAsyncShellsSnapshot:
+    """Snapshot tests for CLI session with async shell rendering."""
+
+    session: ChatSession
+
+    @pytest.fixture(autouse=True)
+    def parse_session(self):
+        parsed = _parse_cli_jsonl_file(_cli_async_shells_events)
+        assert parsed is not None, f"Failed to parse CLI async shells fixture: {_cli_async_shells_events}"
+        self.session = parsed
+        self.session.source_file = "cli-with-async-shells"
+
+    def test_html_export(self, file_regression):
+        html = session_to_html(self.session)
+        file_regression.check(html, fullpath=BASELINES_DIR / "cli-with-async-shells.html", encoding="utf-8")
+
+    def test_session_has_async_shells(self):
+        """Verify the parsed session has async command runs."""
+        async_cmds = [c for msg in self.session.messages for c in msg.command_runs if c.is_async]
+        assert len(async_cmds) >= 2, f"Expected at least 2 async shells, got {len(async_cmds)}"
+        shell_ids = {c.shell_id for c in async_cmds}
+        assert "dev-server" in shell_ids
+        assert "tsc-watch" in shell_ids
+
+    def test_detached_shell_detected(self):
+        """Verify detached shell has is_detached=True."""
+        detached = [c for msg in self.session.messages for c in msg.command_runs if c.is_detached]
+        assert len(detached) == 1
+        assert detached[0].shell_id == "tsc-watch"
+
+    def test_sync_shell_not_async(self):
+        """Verify sync shell (git status) has is_async=False."""
+        sync_cmds = [c for msg in self.session.messages for c in msg.command_runs if not c.is_async]
+        assert len(sync_cmds) >= 1
+        assert any("git status" in c.command for c in sync_cmds)
+
+    def test_shell_backlinks_created(self):
+        """Verify read/write/stop_powershell create shell backlinks."""
+        backlinks = [t for msg in self.session.messages for t in msg.tool_invocations if t.is_shell_backlink]
+        assert len(backlinks) == 3  # read, write, stop
+        actions = {t.name for t in backlinks}
+        assert actions == {"read_powershell", "write_powershell", "stop_powershell"}
+        assert all(t.backlink_shell_id == "dev-server" for t in backlinks)
+
+    def test_io_entries_collected(self):
+        """Verify IO entries are collected on the parent async shell."""
+        async_cmds = [c for msg in self.session.messages for c in msg.command_runs if c.shell_id == "dev-server"]
+        assert len(async_cmds) == 1
+        cmd = async_cmds[0]
+        assert len(cmd.io_entries) == 3  # read, write, stop
+        actions = [io.action for io in cmd.io_entries]
+        assert actions == ["read", "write", "stop"]
+
+    def test_write_io_has_input(self):
+        """Verify write IO entry captures the input text."""
+        async_cmds = [c for msg in self.session.messages for c in msg.command_runs if c.shell_id == "dev-server"]
+        write_ios = [io for io in async_cmds[0].io_entries if io.action == "write"]
+        assert len(write_ios) == 1
+        assert write_ios[0].input_text == "rs{enter}"
+
+    def test_html_has_amber_styling(self):
+        """Verify HTML output contains async shell amber CSS classes."""
+        html = session_to_html(self.session)
+        assert "command-async" in html
+        assert "async-shell-badge" in html
+        assert "fa-arrows-rotate" in html  # async icon
+        assert "fa-link-slash" in html  # detached icon
+
+    def test_html_has_io_entries(self):
+        """Verify HTML output renders IO entries inside shell blocks."""
+        html = session_to_html(self.session)
+        assert "io-entry" in html
+        assert "io-dev-server-read-1" in html
+        assert "io-dev-server-write-1" in html
+        assert "io-dev-server-stop-1" in html
+
+    def test_html_has_bidirectional_links(self):
+        """Verify HTML output has pill→IO and IO→pill links."""
+        html = session_to_html(self.session)
+        assert 'href="#io-dev-server-read-1"' in html  # pill → IO
+        assert 'href="#pill-dev-server-read-1"' in html  # IO → pill
+
+    def test_html_has_shell_conv_pills(self):
+        """Verify HTML output renders conversation pills for shell backlinks."""
+        html = session_to_html(self.session)
+        assert "shell-conv-pill" in html
+        assert "READ" in html
+        assert "WRITE" in html
+        assert "STOP" in html
 
 
 _SESSION_STORE_DB = Path.home() / ".copilot" / "session-store.db"

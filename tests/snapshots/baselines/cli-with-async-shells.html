@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Fix authentication bug using agents - Fix authentication bug using agents</title>
+    <title>Async shell rendering test - Async shell rendering test</title>
     
     <style>
 :root {
@@ -2004,12 +2004,14 @@ input:checked + .toggle-switch::after {
 
         <div class="session-detail-meta">
             
+            <span>📁 /home/user/myproject</span>
             
-            <span>Created: 2026-01-31T12:00:00Z</span>
             
-            <small>ID: <code>cli-agent-test-session</code></small>
+            <span>Created: 2026-01-01T00:00:00Z</span>
             
-            <small>Source: <code>cli-with-agents</code></small>
+            <small>ID: <code>async-shell-test</code></small>
+            
+            <small>Source: <code>cli-with-async-shells</code></small>
             
         </div>
 
@@ -2025,9 +2027,9 @@ input:checked + .toggle-switch::after {
             
             
             
-            <div class="message user" id="msg-1">
+            <div class="message assistant" id="msg-1">
                 <div class="message-header">
-                    <div class="message-role">user</div>
+                    <div class="message-role">assistant</div>
                     
                     <span class="message-timestamp">2024-02-01 00:00:01</span>
                     
@@ -2041,7 +2043,275 @@ input:checked + .toggle-switch::after {
                     
                     
                         
-                        <p>Fix the JWT token refresh bug and run tests to verify.</p>
+                        
+                            
+                            
+                            <div class="content-block content-block-text result-block">
+                                <p>Let me start a dev server and check the git status.</p>
+                            </div>
+                            
+                            
+                        
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            <div class="content-block content-block-toolInvocation tool-invocation-inline">
+                                <details class="tool-invocation-wrapper">
+                                    <summary>
+                                        <span class="collapsible-icon" aria-hidden="true">▶</span>
+                                        <span class="tool-invocation-message">
+                                            
+                                                Check git status
+                                            
+                                        </span>
+                                        
+                                        
+                                        <span class="status-badge success">success</span>
+                                        
+                                    </summary>
+                                    <div class="tool-invocation-content">
+                                        <div class="tool-section tool-section-input">
+                                            <span class="tool-label">Input:</span>
+                                            <pre><code>git status --short</code></pre>
+                                        </div>
+                                        
+                                        
+                                        
+                                        <div class="tool-section tool-section-output">
+                                            <span class="tool-label">Output:</span>
+                                            <pre><code>M src/app.ts
+M src/routes.ts</code></pre>
+                                        </div>
+                                        
+                                        
+                                        
+                                    </div>
+                                </details>
+                                
+                                <div class="tool-invocation-inline-fallback">
+                                    
+                                        Check git status
+                                    
+                                    
+                                    <span class="status-badge success">success</span>
+                                    
+                                </div>
+                            </div>
+                            
+                            
+                        
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            <div class="content-block content-block-toolInvocation tool-invocation-inline">
+                                <details class="tool-invocation-wrapper command-async" id="shell-dev-server">
+                                    <summary>
+                                        <span class="collapsible-icon" aria-hidden="true">▶</span>
+                                        <span class="tool-invocation-message">
+                                            
+                                                Start dev server
+                                            
+                                        </span>
+                                        
+                                        
+                                        <span class="async-shell-badge"><i class="fa-solid fa-arrows-rotate"></i> async</span>
+                                        
+                                        
+                                        
+                                        <span class="status-badge success">success</span>
+                                        
+                                    </summary>
+                                    <div class="tool-invocation-content">
+                                        <div class="tool-section tool-section-input">
+                                            <span class="tool-label">Input:</span>
+                                            <pre><code>npm run dev</code></pre>
+                                        </div>
+                                        
+                                        
+                                        
+                                        <div class="shell-id-label">shellId: <code>dev-server</code></div>
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        
+                                        <div class="io-entry" id="io-dev-server-read-1">
+                                            <div class="io-header">
+                                                
+                                                <i class="fa-solid fa-book-open"></i>
+                                                
+                                                <span class="io-action">read</span>
+                                                
+                                                <a href="#pill-dev-server-read-1" class="io-context-link" data-pill-target="pill-dev-server-read-1" onclick="var t=document.getElementById(this.dataset.pillTarget); if(t) t.scrollIntoView({behavior:'smooth'}); return false;">↗ context</a>
+                                                
+                                            </div>
+                                            
+                                            
+                                            <div class="io-sublabel">Output:</div>
+                                            <pre><code>  VITE v5.4.2  ready in 312 ms
+
+  &gt; Local:   http://localhost:5173/
+  &gt; Network: http://192.168.1.100:5173/</code></pre>
+                                            
+                                        </div>
+                                        
+                                        <div class="io-entry" id="io-dev-server-write-1">
+                                            <div class="io-header">
+                                                
+                                                <i class="fa-solid fa-keyboard"></i>
+                                                
+                                                <span class="io-action">write</span>
+                                                
+                                                <a href="#pill-dev-server-write-1" class="io-context-link" data-pill-target="pill-dev-server-write-1" onclick="var t=document.getElementById(this.dataset.pillTarget); if(t) t.scrollIntoView({behavior:'smooth'}); return false;">↗ context</a>
+                                                
+                                            </div>
+                                            
+                                            <div class="io-sublabel">Input:</div>
+                                            <pre><code>rs{enter}</code></pre>
+                                            
+                                            
+                                            <div class="io-sublabel">Response:</div>
+                                            <pre><code>  Restarted in 45ms</code></pre>
+                                            
+                                        </div>
+                                        
+                                        <div class="io-entry" id="io-dev-server-stop-1">
+                                            <div class="io-header">
+                                                
+                                                <i class="fa-solid fa-stop"></i>
+                                                
+                                                <span class="io-action">stop</span>
+                                                
+                                                <a href="#pill-dev-server-stop-1" class="io-context-link" data-pill-target="pill-dev-server-stop-1" onclick="var t=document.getElementById(this.dataset.pillTarget); if(t) t.scrollIntoView({behavior:'smooth'}); return false;">↗ context</a>
+                                                
+                                            </div>
+                                            
+                                            
+                                            <div class="io-sublabel">Result:</div>
+                                            <pre><code>Shell session ended</code></pre>
+                                            
+                                        </div>
+                                        
+                                        
+                                    </div>
+                                </details>
+                                
+                                <div class="tool-invocation-inline-fallback">
+                                    
+                                        Start dev server
+                                    
+                                    
+                                    <span class="status-badge success">success</span>
+                                    
+                                </div>
+                            </div>
+                            
+                            
+                        
+                            
+                            
+                            <div class="content-block content-block-text result-block">
+                                <p>Server started. Let me check if it&rsquo;s ready.</p>
+                            </div>
+                            
+                            
+                        
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            <a href="#io-dev-server-read-1"
+                               class="shell-conv-pill"
+                               id="pill-dev-server-read-1"
+                               data-shell-target="io-dev-server-read-1"
+                               onclick="scrollToShellIO(this.dataset.shellTarget); return false;">
+                                <i class="fa-solid fa-book-open"></i>
+                                ↩ <span class="shell-pill-action">READ</span> — Start dev server
+                            </a>
+                            
+                            
+                            
+                            
+                        
+                    
+
+                
+                
+                
+                    
+                    
+                
+                
+                
+
+                
+
+                
+                
+                
+        
+                    </div>
+                </div>
+            </div>
+            
+            
+            
+            
+            
+            <div class="message user" id="msg-2">
+                <div class="message-header">
+                    <div class="message-role">user</div>
+                    
+                    <span class="message-timestamp">2024-02-01 00:00:20</span>
+                    
+                    <a href="#msg-2" class="message-anchor" title="Link to this message">#2</a>
+                    
+                    
+                </div>
+                <div class="message-content">
+                    
+                    <div class="message-content-inner">
+                    
+                    
+                        
+                        <p>Can you send a reload signal?</p>
                     
 
                 
@@ -2064,13 +2334,13 @@ input:checked + .toggle-switch::after {
             
             
             
-            <div class="message assistant" id="msg-2">
+            <div class="message assistant" id="msg-3">
                 <div class="message-header">
                     <div class="message-role">assistant</div>
                     
-                    <span class="message-timestamp">2024-02-01 00:00:02</span>
+                    <span class="message-timestamp">2024-02-01 00:00:21</span>
                     
-                    <a href="#msg-2" class="message-anchor" title="Link to this message">#2</a>
+                    <a href="#msg-3" class="message-anchor" title="Link to this message">#3</a>
                     
                     
                 </div>
@@ -2084,138 +2354,57 @@ input:checked + .toggle-switch::after {
                             
                             
                             <div class="content-block content-block-text result-block">
-                                <p>I will fix the JWT bug using a sub-agent.</p>
+                                <p>Sure, sending restart command.</p>
                             </div>
                             
                             
                         
                             
                             
-                            <span class="skill-badge">skill: <code>azsafe</code></span>
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            <a href="#io-dev-server-write-1"
+                               class="shell-conv-pill"
+                               id="pill-dev-server-write-1"
+                               data-shell-target="io-dev-server-write-1"
+                               onclick="scrollToShellIO(this.dataset.shellTarget); return false;">
+                                <i class="fa-solid fa-keyboard"></i>
+                                ↩ <span class="shell-pill-action">WRITE</span> — Start dev server
+                            </a>
+                            
+                            
                             
                             
                         
                             
                             
-                            <details class="skill-block">
-                                <summary>
-                                    <span class="collapsible-icon" aria-hidden="true">▶</span>
-                                    <span class="skill-badge-label">⚡ skill: <code>Loaded skill: azsafe</code></span>
-                                </summary>
-                                <div class="skill-content">Safe Azure CLI proxy for read-only commands.</div>
-                            </details>
-                            
-                            
-                        
-                            
-                            <details class="subagent-block">
-                                <summary>
-                                    <span class="collapsible-icon" aria-hidden="true">▶</span>
-                                    <span class="subagent-label">General Purpose Agent: Fix JWT token refresh bug</span>
-                                    
-                                    
-                                    <span class="status-badge success">completed</span>
-                                    
-                                </summary>
-                                <div class="subagent-content">
-                                    
-                                    
-                                    
-                                    
-                                    
-                    
-                        
-                        
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            <div class="content-block content-block-toolInvocation tool-invocation-unmatched">
-                                <div class="tool-invocation-message"><p>Searching for <code>jwt.decode</code> in ``</p></div>
+                            <div class="content-block content-block-text result-block">
+                                <p>Server restarted. Let me also start a detached background watcher.</p>
                             </div>
-                            
-                            
-                            
-                            
-                        
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            <div class="content-block content-block-toolInvocation tool-invocation-unmatched">
-                                <div class="tool-invocation-message"><p>Viewing <code>jwt.py</code></p></div>
-                            </div>
-                            
-                            
-                            
-                            
-                        
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            <div class="content-block content-block-toolInvocation tool-invocation-unmatched">
-                                <div class="tool-invocation-message"><p>Edited <code>jwt.py</code></p></div>
-                            </div>
-                            
-                            
                             
                             
                         
@@ -2229,14 +2418,18 @@ input:checked + .toggle-switch::after {
                             
                             
                             <div class="content-block content-block-toolInvocation tool-invocation-inline">
-                                <details class="tool-invocation-wrapper">
+                                <details class="tool-invocation-wrapper command-async" id="shell-tsc-watch">
                                     <summary>
                                         <span class="collapsible-icon" aria-hidden="true">▶</span>
                                         <span class="tool-invocation-message">
                                             
-                                                Run auth tests
+                                                TypeScript watcher
                                             
                                         </span>
+                                        
+                                        
+                                        <span class="async-shell-badge"><i class="fa-solid fa-link-slash"></i> detached</span>
+                                        
                                         
                                         
                                         <span class="status-badge success">success</span>
@@ -2245,17 +2438,14 @@ input:checked + .toggle-switch::after {
                                     <div class="tool-invocation-content">
                                         <div class="tool-section tool-section-input">
                                             <span class="tool-label">Input:</span>
-                                            <pre><code>uv run pytest tests/test_auth.py -v</code></pre>
+                                            <pre><code>npx tsc --watch</code></pre>
                                         </div>
                                         
                                         
                                         
-                                        <div class="tool-section tool-section-output">
-                                            <span class="tool-label">Output:</span>
-                                            <pre><code>tests/test_auth.py::test_refresh PASSED
-tests/test_auth.py::test_expired PASSED
-2 passed in 0.3s</code></pre>
-                                        </div>
+                                        <div class="shell-id-label">shellId: <code>tsc-watch</code></div>
+                                        
+                                        
                                         
                                         
                                         
@@ -2264,7 +2454,7 @@ tests/test_auth.py::test_expired PASSED
                                 
                                 <div class="tool-invocation-inline-fallback">
                                     
-                                        Run auth tests
+                                        TypeScript watcher
                                     
                                     
                                     <span class="status-badge success">success</span>
@@ -2277,43 +2467,47 @@ tests/test_auth.py::test_expired PASSED
                             
                             
                             <div class="content-block content-block-text result-block">
-                                <p>Fixed the JWT token refresh bug in src/auth/jwt.py:<br />
-- Added algorithm parameter to jwt.decode()<br />
-- All 2 auth tests pass.</p>
+                                <p>Now let me stop the dev server.</p>
                             </div>
                             
                             
                         
-                    
-
-                
-                
-                
-                    
-                    
-                
-                    
-                    
-                
-                    
-                    
-                
-                
-                
-
-                
-
-                
-                
-                
-        
-                                    
-                                    
-                                </div>
-                            </details>
                             
-                        
                             
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            
+                            <a href="#io-dev-server-stop-1"
+                               class="shell-conv-pill"
+                               id="pill-dev-server-stop-1"
+                               data-shell-target="io-dev-server-stop-1"
+                               onclick="scrollToShellIO(this.dataset.shellTarget); return false;">
+                                <i class="fa-solid fa-stop"></i>
+                                ↩ <span class="shell-pill-action">STOP</span> — Start dev server
+                            </a>
                             
                             
                             
@@ -2322,102 +2516,7 @@ tests/test_auth.py::test_expired PASSED
                             
                             
                             <div class="content-block content-block-text result-block">
-                                <p>Now let me verify with an explore agent.</p>
-                            </div>
-                            
-                            
-                        
-                            
-                            <details class="subagent-block">
-                                <summary>
-                                    <span class="collapsible-icon" aria-hidden="true">▶</span>
-                                    <span class="subagent-label">Explore Agent: Verify fix in related files</span>
-                                    
-                                    
-                                    <span class="status-badge success">completed</span>
-                                    
-                                </summary>
-                                <div class="subagent-content">
-                                    
-                                    
-                                    
-                                    
-                                    
-                    
-                        
-                        
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            
-                            <div class="content-block content-block-toolInvocation tool-invocation-unmatched">
-                                <div class="tool-invocation-message"><p>Searching for <code>jwt.decode</code> in ``</p></div>
-                            </div>
-                            
-                            
-                            
-                            
-                        
-                            
-                            
-                            <div class="content-block content-block-text result-block">
-                                <p>Verified: only jwt.py uses jwt.decode(). The fix covers all paths.</p>
-                            </div>
-                            
-                            
-                        
-                    
-
-                
-                
-                
-                    
-                    
-                
-                
-                
-
-                
-
-                
-                
-                
-        
-                                    
-                                    
-                                </div>
-                            </details>
-                            
-                        
-                            
-                            
-                            
-                            
-                            
-                        
-                            
-                            
-                            <div class="content-block content-block-text result-block">
-                                <p>The JWT token refresh bug is fixed. Both agents confirmed the fix is complete.</p>
+                                <p>Dev server stopped. TypeScript watcher continues in background.</p>
                             </div>
                             
                             

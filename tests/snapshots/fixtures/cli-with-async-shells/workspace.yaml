@@ -1,0 +1,3 @@
+id: cli-async-shell-test
+cwd: /home/user/myproject
+summary: Async shell rendering test

@@ -1,0 +1,20 @@
+{"type":"session.start","timestamp":1706745600,"data":{"sessionId":"async-shell-test","startTime":"2026-01-01T00:00:00Z","context":{"cwd":"/home/user/myproject"}}}
+{"type":"assistant.message","timestamp":1706745601,"data":{"content":"Let me start a dev server and check the git status.","toolRequests":[{"toolCallId":"tc-sync-shell","name":"powershell","arguments":{"command":"git status --short","description":"Check git status"}},{"toolCallId":"tc-async-shell","name":"powershell","arguments":{"command":"npm run dev","description":"Start dev server","mode":"async","shellId":"dev-server"}}]}}
+{"type":"tool.execution_start","timestamp":1706745602,"data":{"toolCallId":"tc-sync-shell","toolName":"powershell","arguments":{"command":"git status --short","description":"Check git status"}}}
+{"type":"tool.execution_complete","timestamp":1706745603,"data":{"toolCallId":"tc-sync-shell","success":true,"result":{"content":"M src/app.ts\nM src/routes.ts"}}}
+{"type":"tool.execution_start","timestamp":1706745604,"data":{"toolCallId":"tc-async-shell","toolName":"powershell","arguments":{"command":"npm run dev","description":"Start dev server","mode":"async","shellId":"dev-server"}}}
+{"type":"tool.execution_complete","timestamp":1706745605,"data":{"toolCallId":"tc-async-shell","success":true,"result":{"content":"<command started in background with shellId: dev-server>"}}}
+{"type":"assistant.message","timestamp":1706745610,"data":{"content":"Server started. Let me check if it's ready.","toolRequests":[{"toolCallId":"tc-read-1","name":"read_powershell","arguments":{"shellId":"dev-server","delay":5}}]}}
+{"type":"tool.execution_start","timestamp":1706745611,"data":{"toolCallId":"tc-read-1","toolName":"read_powershell","arguments":{"shellId":"dev-server","delay":5}}}
+{"type":"tool.execution_complete","timestamp":1706745616,"data":{"toolCallId":"tc-read-1","success":true,"result":{"content":"  VITE v5.4.2  ready in 312 ms\n\n  > Local:   http://localhost:5173/\n  > Network: http://192.168.1.100:5173/"}}}
+{"type":"user.message","timestamp":1706745620,"data":{"content":"Can you send a reload signal?"}}
+{"type":"assistant.message","timestamp":1706745621,"data":{"content":"Sure, sending restart command.","toolRequests":[{"toolCallId":"tc-write-1","name":"write_powershell","arguments":{"shellId":"dev-server","input":"rs{enter}","delay":5}}]}}
+{"type":"tool.execution_start","timestamp":1706745622,"data":{"toolCallId":"tc-write-1","toolName":"write_powershell","arguments":{"shellId":"dev-server","input":"rs{enter}","delay":5}}}
+{"type":"tool.execution_complete","timestamp":1706745627,"data":{"toolCallId":"tc-write-1","success":true,"result":{"content":"  Restarted in 45ms"}}}
+{"type":"assistant.message","timestamp":1706745630,"data":{"content":"Server restarted. Let me also start a detached background watcher.","toolRequests":[{"toolCallId":"tc-detached","name":"powershell","arguments":{"command":"npx tsc --watch","description":"TypeScript watcher","mode":"async","detach":true,"shellId":"tsc-watch"}}]}}
+{"type":"tool.execution_start","timestamp":1706745631,"data":{"toolCallId":"tc-detached","toolName":"powershell","arguments":{"command":"npx tsc --watch","description":"TypeScript watcher","mode":"async","detach":true,"shellId":"tsc-watch"}}}
+{"type":"tool.execution_complete","timestamp":1706745632,"data":{"toolCallId":"tc-detached","success":true,"result":{"content":"<command started in background with shellId: tsc-watch>"}}}
+{"type":"assistant.message","timestamp":1706745635,"data":{"content":"Now let me stop the dev server.","toolRequests":[{"toolCallId":"tc-stop-1","name":"stop_powershell","arguments":{"shellId":"dev-server"}}]}}
+{"type":"tool.execution_start","timestamp":1706745636,"data":{"toolCallId":"tc-stop-1","toolName":"stop_powershell","arguments":{"shellId":"dev-server"}}}
+{"type":"tool.execution_complete","timestamp":1706745637,"data":{"toolCallId":"tc-stop-1","success":true,"result":{"content":"Shell session ended"}}}
+{"type":"assistant.message","timestamp":1706745640,"data":{"content":"Dev server stopped. TypeScript watcher continues in background."}}
