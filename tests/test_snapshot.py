@@ -570,7 +570,7 @@ class TestAsyncShellRendering:
     def test_shell_backlink_has_href(self, tmp_path):
         """Shell backlink should link to IO entry inside the shell block."""
         html = self._render_html(tmp_path, self._async_shell_events())
-        assert '#io-dev-srv-read-1' in html
+        assert "#io-dev-srv-read-1" in html
 
     def test_detached_shell_shows_link_slash_icon(self, tmp_path):
         """Detached shell should show fa-link-slash icon instead of fa-arrows-rotate."""

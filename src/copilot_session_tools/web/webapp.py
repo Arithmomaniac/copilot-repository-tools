@@ -279,7 +279,7 @@ def create_app(
         # matching shell backlinks (read/write/stop_powershell) to their parent CommandRun.
         from copilot_session_tools.scanner.models import ShellIOEntry
 
-        shell_cmd_runs: dict[str, list[tuple[int, "CommandRun"]]] = {}
+        shell_cmd_runs: dict[str, list[tuple[int, object]]] = {}
         for msg_idx, message in enumerate(session.messages):
             for cmd in message.command_runs:
                 if cmd.is_async and cmd.shell_id:
@@ -313,13 +313,15 @@ def create_app(
                             input_text = args.get("input", "")
                         except (json.JSONDecodeError, TypeError):
                             pass
-                    parent_cmd.io_entries.append(ShellIOEntry(
-                        action=action,
-                        input_text=input_text,
-                        result=tool.result,
-                        anchor_id=anchor_id,
-                        pill_id=pill_id,
-                    ))
+                    parent_cmd.io_entries.append(
+                        ShellIOEntry(
+                            action=action,
+                            input_text=input_text,
+                            result=tool.result,
+                            anchor_id=anchor_id,
+                            pill_id=pill_id,
+                        )
+                    )
                     tool.shell_pill_id = pill_id
                     tool.shell_anchor_id = anchor_id
 

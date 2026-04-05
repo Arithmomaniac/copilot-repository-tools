@@ -10,11 +10,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **Web Viewer**: Async shell rendering — `powershell(mode="async")` commands render with amber left-border and "⟳ async" badge (Font Awesome `fa-arrows-rotate`); detached shells (`detach: true`) show "🔗‍💥 detached" badge (`fa-link-slash`) instead
-- **Web Viewer**: Shell backlink pills — `read_powershell`, `write_powershell`, `stop_powershell` render as amber clickable pills (↩) that scroll to the original async shell block, with per-action icons (📖 read, ⌨️ write, ⏹ stop)
-- **Scanner**: New fields on `CommandRun`: `shell_id`, `is_async`, `is_detached` for tracking async shell lifecycle
-- **Scanner**: New fields on `ToolInvocation`: `is_shell_backlink`, `backlink_shell_id` for linking shell interactions back to their async shell block
+- **Web Viewer**: Grouped IO entries — `read_powershell`, `write_powershell`, `stop_powershell` results are collected inside the parent async shell block as expandable IO cards with Input/Output sections and syntax highlighting
+- **Web Viewer**: Bidirectional linking — conversation pills (↩ READ/WRITE/STOP) link into the shell block's IO entry; IO entries link back to conversation context (↗ context). Clicking a pill auto-opens the shell dropdown
+- **Web Viewer**: Async shell output simplified to `shellId: X` label (boilerplate `<command started in background>` text hidden)
+- **Scanner**: New fields on `CommandRun`: `shell_id`, `is_async`, `is_detached`, `io_entries` for tracking async shell lifecycle
+- **Scanner**: New fields on `ToolInvocation`: `is_shell_backlink`, `backlink_shell_id`, `shell_pill_id`, `shell_anchor_id` for bidirectional linking
 - **Scanner**: `read_powershell` is no longer skipped as an internal tool — it now renders as a visible shell backlink
+- **Scanner**: Shell title map — backlink pills use the launch block's title instead of raw shellId
 - **Database**: Schema v8 — new columns on `cst_command_runs` and `cst_tool_invocations` for async shell tracking (auto-migrated from v7)
+
+### Fixed
+
+- **Security**: Shell backlink onclick handlers use `data-*` attributes instead of interpolating shellId into JavaScript string literals (XSS prevention)
+- **Web Viewer**: Duplicate shellId handling — when the same shellId is reused across shell launches, IO entries are scoped temporally to the correct parent CommandRun
+- **Web Viewer**: IO entry results now use syntax highlighting pipeline (`detect_language` + `highlight_code`), matching main tool output rendering
 
 ## [0.10.2] - 2026-04-05
 

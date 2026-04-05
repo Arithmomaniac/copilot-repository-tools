@@ -3324,7 +3324,11 @@ class TestCLIAsyncShellFields:
             },
             {
                 "type": "tool.execution_start",
-                "data": {"toolCallId": "tc-det", "toolName": "powershell", "arguments": {"command": "python -m http.server", "mode": "async", "detach": True, "shellId": "http-srv"}},
+                "data": {
+                    "toolCallId": "tc-det",
+                    "toolName": "powershell",
+                    "arguments": {"command": "python -m http.server", "mode": "async", "detach": True, "shellId": "http-srv"},
+                },
             },
             {"type": "tool.execution_complete", "data": {"toolCallId": "tc-det", "success": True, "result": {"content": "Server started"}}},
             {"type": "assistant.message", "data": {"content": "Server running in background."}},
@@ -3382,11 +3386,27 @@ class TestCLIAsyncShellFields:
                 "data": {
                     "content": "Starting first server.",
                     "toolRequests": [
-                        {"toolCallId": "tc-srv1", "name": "powershell", "arguments": {"command": "npm run dev", "description": "First server", "mode": "async", "shellId": "srv"}},
+                        {
+                            "toolCallId": "tc-srv1",
+                            "name": "powershell",
+                            "arguments": {
+                                "command": "npm run dev",
+                                "description": "First server",
+                                "mode": "async",
+                                "shellId": "srv",
+                            },
+                        },
                     ],
                 },
             },
-            {"type": "tool.execution_start", "data": {"toolCallId": "tc-srv1", "toolName": "powershell", "arguments": {"command": "npm run dev", "mode": "async", "shellId": "srv"}}},
+            {
+                "type": "tool.execution_start",
+                "data": {
+                    "toolCallId": "tc-srv1",
+                    "toolName": "powershell",
+                    "arguments": {"command": "npm run dev", "mode": "async", "shellId": "srv"},
+                },
+            },
             {"type": "tool.execution_complete", "data": {"toolCallId": "tc-srv1", "success": True, "result": {"content": "started"}}},
             # Write to first shell (same assistant message — no user break)
             {
@@ -3416,11 +3436,27 @@ class TestCLIAsyncShellFields:
                 "data": {
                     "content": "Starting second server.",
                     "toolRequests": [
-                        {"toolCallId": "tc-srv2", "name": "powershell", "arguments": {"command": "npm run dev:hot", "description": "Second server", "mode": "async", "shellId": "srv"}},
+                        {
+                            "toolCallId": "tc-srv2",
+                            "name": "powershell",
+                            "arguments": {
+                                "command": "npm run dev:hot",
+                                "description": "Second server",
+                                "mode": "async",
+                                "shellId": "srv",
+                            },
+                        },
                     ],
                 },
             },
-            {"type": "tool.execution_start", "data": {"toolCallId": "tc-srv2", "toolName": "powershell", "arguments": {"command": "npm run dev:hot", "mode": "async", "shellId": "srv"}}},
+            {
+                "type": "tool.execution_start",
+                "data": {
+                    "toolCallId": "tc-srv2",
+                    "toolName": "powershell",
+                    "arguments": {"command": "npm run dev:hot", "mode": "async", "shellId": "srv"},
+                },
+            },
             {"type": "tool.execution_complete", "data": {"toolCallId": "tc-srv2", "success": True, "result": {"content": "started"}}},
             # Write to second shell
             {
