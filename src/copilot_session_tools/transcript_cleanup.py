@@ -4,11 +4,15 @@ Uses a two-stage approach:
 1. Heuristic pre-filter (pure Python, no deps) to identify likely voice-dictated messages
 2. Batch LLM call via LiteLLM to classify and clean messages in a single pass
 
-The LLM returns structured JSON via response_format schema validation.
+Uses structured output with auto-dispatch per model type:
+- GPT on /chat/completions: response_format=Pydantic (native json_schema)
+- GPT 5.4 family: litellm.aresponses() (Responses API)
+- Claude/Gemini/other: tool_choice (forced function call matching schema)
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from dataclasses import dataclass
@@ -107,7 +111,16 @@ def session_needs_cleanup(session: ChatSession, threshold: float = 0.3) -> list[
 # Batch LLM cleanup
 # ---------------------------------------------------------------------------
 
-DEFAULT_MODEL = "github_copilot/gpt-4o-mini"
+# GPT-5.4-mini chosen via Artificial Analysis IFBench (instruction following):
+#   gpt-5.4-mini: 0.733 IFBench, 179 tok/s, $1.69/1M
+#   gpt-4o-mini:  not ranked (legacy)
+#   claude-4.5-haiku: 0.543 IFBench — weaker at following cleanup rules
+# IFBench is the most relevant AA metric for transcript cleanup, which
+# requires precise instruction following over raw reasoning ability.
+DEFAULT_MODEL = "github_copilot/gpt-5.4-mini"
+
+# Models that require the /responses API (not available on /chat/completions)
+_RESPONSES_ONLY_MODELS = frozenset({"gpt-5.4-mini", "gpt-5.4", "gpt-5.4-nano"})
 
 _SYSTEM_PROMPT = """\
 You are a transcript cleanup assistant for Copilot chat sessions.
@@ -135,37 +148,138 @@ Rules for cleaning:
 - If typed, set cleaned to the original text unchanged"""
 
 
-def _build_response_schema(count: int) -> dict:
-    """Build the structured output schema for the cleanup response."""
-    return {
-        "type": "json_schema",
-        "json_schema": {
-            "name": "cleanup_results",
-            "schema": {
-                "type": "object",
-                "properties": {
-                    "messages": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "index": {"type": "integer"},
-                                "is_voice": {"type": "boolean"},
-                                "cleaned": {"type": "string"},
-                            },
-                            "required": ["index", "is_voice", "cleaned"],
-                            "additionalProperties": False,
-                        },
-                        "minItems": count,
-                        "maxItems": count,
-                    }
-                },
-                "required": ["messages"],
-                "additionalProperties": False,
+def _needs_responses_api(model: str) -> bool:
+    """Check if this model needs the /responses API instead of /chat/completions."""
+    short = model.rsplit("/", 1)[-1] if "/" in model else model
+    return short in _RESPONSES_ONLY_MODELS
+
+
+def _extract_responses_text(output: list) -> str:
+    """Extract text content from a Responses API output list."""
+    for item in output:
+        if hasattr(item, "content") and item.content:
+            for c in item.content:
+                if hasattr(c, "text"):
+                    return c.text
+    return ""
+
+
+def _structured_completion(
+    model: str,
+    messages: list[dict],
+    schema: dict,
+    schema_name: str,
+    **kwargs,
+) -> dict:
+    """Structured output with auto-dispatch per model type.
+
+    Three strategies (matching litellm-copilot skill guidance):
+    1. GPT on /chat/completions: response_format with json_schema (native)
+    2. GPT 5.4 family on /responses: text_format with Pydantic model (native)
+    3. Claude/Gemini/other: tool_choice (forced function call matching schema)
+
+    Returns parsed dict matching the schema.
+    """
+    import litellm
+
+    model_lower = model.lower()
+
+    if _needs_responses_api(model):
+        # Build a dynamic Pydantic model from the schema for text_format
+        pydantic_model = _schema_to_pydantic(schema, schema_name)
+        # Responses API accepts 'instructions' for system prompt and 'input' for user content
+        system_content = ""
+        user_content = ""
+        for msg in messages:
+            if msg["role"] == "system":
+                system_content = msg["content"]
+            elif msg["role"] == "user":
+                user_content = msg["content"]
+        resp = asyncio.run(
+            litellm.aresponses(
+                model=model,
+                input=user_content,
+                instructions=system_content or None,
+                text_format=pydantic_model,
+                max_output_tokens=kwargs.pop("max_tokens", 4096),
+                timeout=kwargs.pop("timeout", 60.0),
+            )
+        )
+        text = _extract_responses_text(resp.output) if resp.output else ""
+        if not text and hasattr(resp, "output_text") and resp.output_text:
+            text = resp.output_text
+        if not text:
+            msg = f"Empty response from Responses API for model {model}"
+            raise ValueError(msg)
+        return json.loads(text)
+
+    use_native = "gpt" in model_lower or "o3" in model_lower or "o4" in model_lower
+
+    if use_native:
+        response_format = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": schema_name,
+                "schema": schema,
+                "strict": True,
             },
-            "strict": True,
-        },
-    }
+        }
+        resp = litellm.completion(
+            model=model,
+            messages=messages,
+            response_format=response_format,
+            **kwargs,
+        )
+        return json.loads(resp.choices[0].message.content)
+    else:
+        # Tool-call mode for Claude, Gemini, etc.
+        tool_schema = {
+            "type": "function",
+            "function": {
+                "name": schema_name,
+                "description": f"Return a {schema_name} object.",
+                "parameters": schema,
+            },
+        }
+        resp = litellm.completion(
+            model=model,
+            messages=messages,
+            tools=[tool_schema],
+            tool_choice={"type": "function", "function": {"name": schema_name}},
+            **kwargs,
+        )
+        tool_call = resp.choices[0].message.tool_calls[0]
+        raw = tool_call.function.arguments
+        return json.loads(raw) if isinstance(raw, str) else raw
+
+
+def _schema_to_pydantic(schema: dict, name: str):
+    """Build a Pydantic model from a JSON schema dict for text_format.
+
+    Handles the cleanup_results schema: { messages: [{ index, is_voice, cleaned }] }
+    """
+    from pydantic import create_model
+
+    # For our specific cleanup schema, build directly
+    props = schema.get("properties", {})
+    if "messages" in props and props["messages"].get("type") == "array":
+        item_props = props["messages"]["items"]["properties"]
+        # Build the item model
+        fields = {}
+        for key, spec in item_props.items():
+            py_type = {"integer": int, "boolean": bool, "string": str}.get(spec["type"], str)
+            fields[key] = (py_type, ...)
+
+        ItemModel = create_model(f"{name}_Item", **fields)
+
+        return create_model(name, messages=(list[ItemModel], ...))
+
+    # Fallback: flat object
+    fields = {}
+    for key, spec in props.items():
+        py_type = {"integer": int, "boolean": bool, "string": str}.get(spec.get("type", "string"), str)
+        fields[key] = (py_type, ...)
+    return create_model(name, **fields)
 
 
 def _get_assistant_context(session: ChatSession, user_msg_index: int) -> str:
@@ -263,25 +377,54 @@ def call_cleanup_llm(
     model: str,
     expected_count: int,
 ) -> list[dict]:
-    """Call the LLM with structured output schema and return parsed results.
+    """Call the LLM with structured output and return parsed results.
+
+    Auto-dispatches structured output per model type:
+    - GPT on /chat/completions: native json_schema
+    - GPT 5.4 family: /responses API with prompt-based JSON
+    - Claude/Gemini/other: forced tool_choice
 
     Raises ImportError if litellm is not installed.
     Raises ValueError if the response doesn't match expected structure.
     """
     try:
-        import litellm
+        import litellm  # noqa: F401
     except ImportError as e:
         raise ImportError("litellm is required for transcript cleanup. Install with: pip install copilot-session-tools[llm]") from e
 
-    response = litellm.completion(
+    cleanup_schema = {
+        "type": "object",
+        "properties": {
+            "messages": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "index": {"type": "integer"},
+                        "is_voice": {"type": "boolean"},
+                        "cleaned": {"type": "string"},
+                    },
+                    "required": ["index", "is_voice", "cleaned"],
+                    "additionalProperties": False,
+                },
+            }
+        },
+        "required": ["messages"],
+        "additionalProperties": False,
+    }
+
+    # GPT-5.4 models don't support temperature=0; omit for responses API
+    kwargs: dict = {}
+    if not _needs_responses_api(model):
+        kwargs["temperature"] = 0.0
+
+    parsed = _structured_completion(
         model=model,
         messages=prompt_messages,
-        response_format=_build_response_schema(expected_count),
-        temperature=0.0,
+        schema=cleanup_schema,
+        schema_name="cleanup_results",
+        **kwargs,
     )
-
-    content = response.choices[0].message.content
-    parsed = json.loads(content)
 
     results = parsed.get("messages", [])
     if len(results) != expected_count:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -194,27 +194,13 @@ class TestBuildBatchPrompt:
 
 
 class TestCallCleanupLLM:
-    def _mock_response(self, results: list[dict]) -> MagicMock:
-        response = MagicMock()
-        response.choices = [MagicMock()]
-        import json
-
-        response.choices[0].message.content = json.dumps({"messages": results})
-        return response
-
     def test_basic_call(self):
-        mock_litellm = MagicMock()
-        mock_response = self._mock_response(
-            [
-                {"index": 0, "is_voice": True, "cleaned": "cleaned text"},
-            ]
-        )
-        mock_litellm.completion.return_value = mock_response
+        mock_result = {"messages": [{"index": 0, "is_voice": True, "cleaned": "cleaned text"}]}
 
-        with patch.dict("sys.modules", {"litellm": mock_litellm}):
+        with patch("copilot_session_tools.transcript_cleanup._structured_completion", return_value=mock_result):
             results = call_cleanup_llm(
                 [{"role": "user", "content": "test"}],
-                model="test-model",
+                model="github_copilot/gpt-5.4-mini",
                 expected_count=1,
             )
 
@@ -224,19 +210,15 @@ class TestCallCleanupLLM:
 
     def test_wrong_count_raises(self):
         """If the LLM returns wrong number of results, raise ValueError."""
+        mock_result = {"messages": [{"index": 0, "is_voice": True, "cleaned": "text"}]}
 
-        mock_litellm = MagicMock()
-        mock_response = self._mock_response(
-            [
-                {"index": 0, "is_voice": True, "cleaned": "text"},
-            ]
-        )
-        mock_litellm.completion.return_value = mock_response
-
-        with patch.dict("sys.modules", {"litellm": mock_litellm}), pytest.raises(ValueError, match="Expected 2 results"):
+        with (
+            patch("copilot_session_tools.transcript_cleanup._structured_completion", return_value=mock_result),
+            pytest.raises(ValueError, match="Expected 2 results"),
+        ):
             call_cleanup_llm(
                 [{"role": "user", "content": "test"}],
-                model="test-model",
+                model="github_copilot/gpt-5.4-mini",
                 expected_count=2,
             )
 
@@ -278,23 +260,17 @@ class TestCleanupSession:
         db.add_session(session)
         return db
 
-    def _mock_llm_response(self, results: list[dict]) -> MagicMock:
-        import json
-
-        response = MagicMock()
-        response.choices = [MagicMock()]
-        response.choices[0].message.content = json.dumps({"messages": results})
-        return response
+    def _mock_llm_result(self, results: list[dict]) -> dict:
+        return {"messages": results}
 
     def test_dry_run_no_changes(self, db_with_session):
-        mock_litellm = MagicMock()
-        mock_litellm.completion.return_value = self._mock_llm_response(
+        mock_result = self._mock_llm_result(
             [
                 {"index": 0, "is_voice": True, "cleaned": "I want to add a button"},
             ]
         )
 
-        with patch.dict("sys.modules", {"litellm": mock_litellm}):
+        with patch("copilot_session_tools.transcript_cleanup._structured_completion", return_value=mock_result):
             result = cleanup_session(
                 db=db_with_session,
                 session_id="test-session-123",
@@ -310,15 +286,14 @@ class TestCleanupSession:
         assert session.messages[0].original_content is None
 
     def test_cleanup_updates_content(self, db_with_session):
-        mock_litellm = MagicMock()
-        mock_litellm.completion.return_value = self._mock_llm_response(
+        mock_result = self._mock_llm_result(
             [
                 {"index": 0, "is_voice": True, "cleaned": "I want to add a button"},
                 {"index": 2, "is_voice": False, "cleaned": "yes go ahead"},
             ]
         )
 
-        with patch.dict("sys.modules", {"litellm": mock_litellm}):
+        with patch("copilot_session_tools.transcript_cleanup._structured_completion", return_value=mock_result):
             result = cleanup_session(
                 db=db_with_session,
                 session_id="test-session-123",
@@ -332,21 +307,20 @@ class TestCleanupSession:
         # Message 0 should be cleaned
         assert session.messages[0].content == "I want to add a button"
         assert "basically" in session.messages[0].original_content
-        assert session.messages[0].cleanup_model == "github_copilot/gpt-4o-mini"
+        assert session.messages[0].cleanup_model == "github_copilot/gpt-5.4-mini"
 
         # Message 2 should be unchanged (not voice)
         assert session.messages[2].content == "yes go ahead"
         assert session.messages[2].original_content is None
 
     def test_revert_message(self, db_with_session):
-        mock_litellm = MagicMock()
-        mock_litellm.completion.return_value = self._mock_llm_response(
+        mock_result = self._mock_llm_result(
             [
                 {"index": 0, "is_voice": True, "cleaned": "I want to add a button"},
             ]
         )
 
-        with patch.dict("sys.modules", {"litellm": mock_litellm}):
+        with patch("copilot_session_tools.transcript_cleanup._structured_completion", return_value=mock_result):
             cleanup_session(
                 db=db_with_session,
                 session_id="test-session-123",
@@ -368,15 +342,14 @@ class TestCleanupSession:
         assert session.messages[0].cleanup_model is None
 
     def test_revert_session(self, db_with_session):
-        mock_litellm = MagicMock()
-        mock_litellm.completion.return_value = self._mock_llm_response(
+        mock_result = self._mock_llm_result(
             [
                 {"index": 0, "is_voice": True, "cleaned": "I want to add a button"},
                 {"index": 2, "is_voice": True, "cleaned": "Yes, go ahead"},
             ]
         )
 
-        with patch.dict("sys.modules", {"litellm": mock_litellm}):
+        with patch("copilot_session_tools.transcript_cleanup._structured_completion", return_value=mock_result):
             cleanup_session(
                 db=db_with_session,
                 session_id="test-session-123",
@@ -391,14 +364,13 @@ class TestCleanupSession:
         assert session.messages[2].original_content is None
 
     def test_force_reclean(self, db_with_session):
-        mock_litellm = MagicMock()
-        mock_litellm.completion.return_value = self._mock_llm_response(
+        mock_result = self._mock_llm_result(
             [
                 {"index": 0, "is_voice": True, "cleaned": "First cleanup"},
             ]
         )
 
-        with patch.dict("sys.modules", {"litellm": mock_litellm}):
+        with patch("copilot_session_tools.transcript_cleanup._structured_completion", return_value=mock_result):
             cleanup_session(
                 db=db_with_session,
                 session_id="test-session-123",
@@ -406,8 +378,7 @@ class TestCleanupSession:
             )
 
         # Without force, should skip already-cleaned
-        mock_litellm.completion.return_value = self._mock_llm_response([])
-        with patch.dict("sys.modules", {"litellm": mock_litellm}):
+        with patch("copilot_session_tools.transcript_cleanup._structured_completion", return_value=self._mock_llm_result([])):
             result = cleanup_session(
                 db=db_with_session,
                 session_id="test-session-123",
@@ -417,12 +388,12 @@ class TestCleanupSession:
         assert result.cleaned == 0
 
         # With force, should re-clean
-        mock_litellm.completion.return_value = self._mock_llm_response(
+        mock_result2 = self._mock_llm_result(
             [
                 {"index": 0, "is_voice": True, "cleaned": "Second cleanup"},
             ]
         )
-        with patch.dict("sys.modules", {"litellm": mock_litellm}):
+        with patch("copilot_session_tools.transcript_cleanup._structured_completion", return_value=mock_result2):
             result = cleanup_session(
                 db=db_with_session,
                 session_id="test-session-123",
@@ -436,14 +407,13 @@ class TestCleanupSession:
 
     def test_fts_sync_after_cleanup(self, db_with_session):
         """Verify FTS5 index is updated after cleanup via UPDATE trigger."""
-        mock_litellm = MagicMock()
-        mock_litellm.completion.return_value = self._mock_llm_response(
+        mock_result = self._mock_llm_result(
             [
                 {"index": 0, "is_voice": True, "cleaned": "I want to add a button"},
             ]
         )
 
-        with patch.dict("sys.modules", {"litellm": mock_litellm}):
+        with patch("copilot_session_tools.transcript_cleanup._structured_completion", return_value=mock_result):
             cleanup_session(
                 db=db_with_session,
                 session_id="test-session-123",
@@ -533,25 +503,15 @@ class TestForceRecleanPreservesOriginal:
         db.add_session(session)
         return db
 
-    def _mock_response(self, results):
-        import json
-
-        response = MagicMock()
-        response.choices = [MagicMock()]
-        response.choices[0].message.content = json.dumps({"messages": results})
-        return response
-
     def test_second_cleanup_preserves_true_original(self, db_with_session):
-        mock_litellm = MagicMock()
-
         # First cleanup
-        mock_litellm.completion.return_value = self._mock_response([{"index": 0, "is_voice": True, "cleaned": "First cleanup"}])
-        with patch.dict("sys.modules", {"litellm": mock_litellm}):
+        mock1 = {"messages": [{"index": 0, "is_voice": True, "cleaned": "First cleanup"}]}
+        with patch("copilot_session_tools.transcript_cleanup._structured_completion", return_value=mock1):
             cleanup_session(db_with_session, "force-test", message_index=0)
 
         # Second cleanup with force
-        mock_litellm.completion.return_value = self._mock_response([{"index": 0, "is_voice": True, "cleaned": "Second cleanup"}])
-        with patch.dict("sys.modules", {"litellm": mock_litellm}):
+        mock2 = {"messages": [{"index": 0, "is_voice": True, "cleaned": "Second cleanup"}]}
+        with patch("copilot_session_tools.transcript_cleanup._structured_completion", return_value=mock2):
             cleanup_session(db_with_session, "force-test", message_index=0, force=True)
 
         session = db_with_session.get_session("force-test")
@@ -560,12 +520,10 @@ class TestForceRecleanPreservesOriginal:
         assert session.messages[0].original_content == "the the garbled original text"
 
     def test_revert_after_double_cleanup_restores_true_original(self, db_with_session):
-        mock_litellm = MagicMock()
-
         # Clean twice
         for text in ["First", "Second"]:
-            mock_litellm.completion.return_value = self._mock_response([{"index": 0, "is_voice": True, "cleaned": text}])
-            with patch.dict("sys.modules", {"litellm": mock_litellm}):
+            mock_result = {"messages": [{"index": 0, "is_voice": True, "cleaned": text}]}
+            with patch("copilot_session_tools.transcript_cleanup._structured_completion", return_value=mock_result):
                 cleanup_session(db_with_session, "force-test", message_index=0, force=True)
 
         # Revert should restore the true original
@@ -593,16 +551,7 @@ class TestPartialChunkFailure:
         db.add_session(session)
         return db
 
-    def _mock_response(self, results):
-        import json
-
-        response = MagicMock()
-        response.choices = [MagicMock()]
-        response.choices[0].message.content = json.dumps({"messages": results})
-        return response
-
     def test_partial_failure_reports_failed_count(self, db_with_large_session):
-        mock_litellm = MagicMock()
         call_count = 0
 
         def side_effect(*args, **kwargs):
@@ -610,13 +559,11 @@ class TestPartialChunkFailure:
             call_count += 1
             if call_count == 1:
                 # First chunk succeeds
-                return self._mock_response([{"index": i * 2, "is_voice": True, "cleaned": f"Cleaned {i}"} for i in range(10)])
+                return {"messages": [{"index": i * 2, "is_voice": True, "cleaned": f"Cleaned {i}"} for i in range(10)]}
             # Second chunk fails
             raise ConnectionError("Network error")
 
-        mock_litellm.completion.side_effect = side_effect
-
-        with patch.dict("sys.modules", {"litellm": mock_litellm}):
+        with patch("copilot_session_tools.transcript_cleanup._structured_completion", side_effect=side_effect):
             result = cleanup_session(db_with_large_session, "chunk-test", all_messages=True)
 
         assert result.cleaned > 0
