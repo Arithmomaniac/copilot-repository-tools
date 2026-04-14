@@ -238,7 +238,7 @@ wheels = [
 
 [[package]]
 name = "copilot-session-tools"
-version = "0.10.3"
+version = "0.10.4"
 source = { editable = "." }
 dependencies = [
     { name = "jinja2" },
@@ -281,7 +281,7 @@ requires-dist = [
     { name = "copilot-session-tools", extras = ["cli", "web", "llm"], marker = "extra == 'all'" },
     { name = "flask", marker = "extra == 'web'", specifier = ">=3.0.0" },
     { name = "jinja2", specifier = ">=3.0.0" },
-    { name = "litellm", marker = "extra == 'llm'", specifier = ">=1.50.0" },
+    { name = "litellm", marker = "extra == 'llm'", specifier = ">=1.70.0" },
     { name = "markdown", specifier = ">=3.4.0" },
     { name = "pygments", specifier = ">=2.17.0" },
     { name = "rich", marker = "extra == 'cli'", specifier = ">=13.0.0" },
