@@ -80,25 +80,30 @@ Then use `export-markdown --session-id` to retrieve the full session content.
 
 ## Direct SQL for advanced queries
 
-When the CLI search doesn't support your query shape, use SQLite directly on `~/.copilot/session-store.db`:
+When the CLI search doesn't support your query shape, use SQLite directly on `~/.copilot/copilot-session-tools.db`.
+
+**SQLite syntax reminders** (this is SQLite, not PostgreSQL):
+- Use `LIKE`, not `ILIKE` (SQLite LIKE is case-insensitive by default for ASCII)
+- Use `datetime('now', '-14 days')`, not `INTERVAL '14 days'` or `now() - INTERVAL`
+- Use `datetime('now')`, not `now()`
 
 ```powershell
 # Find sessions by workspace name
-sqlite3 "$HOME/.copilot/session-store.db" "SELECT session_id, workspace_name, created_at FROM cst_sessions WHERE workspace_name LIKE '%zts%' ORDER BY created_at DESC LIMIT 20"
+sqlite3 "$HOME/.copilot/copilot-session-tools.db" "SELECT session_id, workspace_name, created_at FROM cst_sessions WHERE workspace_name LIKE '%zts%' ORDER BY created_at DESC LIMIT 20"
 
 # Count messages per session (find long conversations)
-sqlite3 "$HOME/.copilot/session-store.db" "SELECT s.session_id, s.workspace_name, COUNT(m.id) as msg_count FROM cst_sessions s JOIN cst_messages m ON s.session_id = m.session_id GROUP BY s.session_id ORDER BY msg_count DESC LIMIT 20"
+sqlite3 "$HOME/.copilot/copilot-session-tools.db" "SELECT s.session_id, s.workspace_name, COUNT(m.id) as msg_count FROM cst_sessions s JOIN cst_messages m ON s.session_id = m.session_id GROUP BY s.session_id ORDER BY msg_count DESC LIMIT 20"
 
 # Find sessions with tool invocations of a specific tool
-sqlite3 "$HOME/.copilot/session-store.db" "SELECT DISTINCT s.session_id, s.workspace_name, s.created_at FROM cst_sessions s JOIN cst_messages m ON s.session_id = m.session_id JOIN cst_tool_invocations ti ON m.id = ti.message_id WHERE ti.name LIKE '%build%' ORDER BY s.created_at DESC LIMIT 20"
+sqlite3 "$HOME/.copilot/copilot-session-tools.db" "SELECT DISTINCT s.session_id, s.workspace_name, s.created_at FROM cst_sessions s JOIN cst_messages m ON s.session_id = m.session_id JOIN cst_tool_invocations ti ON m.id = ti.message_id WHERE ti.name LIKE '%build%' ORDER BY s.created_at DESC LIMIT 20"
 
 # Find file changes by path pattern
-sqlite3 "$HOME/.copilot/session-store.db" "SELECT DISTINCT s.session_id, s.workspace_name, fc.path FROM cst_sessions s JOIN cst_messages m ON s.session_id = m.session_id JOIN cst_file_changes fc ON m.id = fc.message_id WHERE fc.path LIKE '%Dockerfile%' ORDER BY s.created_at DESC LIMIT 20"
+sqlite3 "$HOME/.copilot/copilot-session-tools.db" "SELECT DISTINCT s.session_id, s.workspace_name, fc.path FROM cst_sessions s JOIN cst_messages m ON s.session_id = m.session_id JOIN cst_file_changes fc ON m.id = fc.message_id WHERE fc.path LIKE '%Dockerfile%' ORDER BY s.created_at DESC LIMIT 20"
 ```
 
 ## Database schema (quick reference)
 
-The tool extends `~/.copilot/session-store.db` with `cst_*` enrichment tables. Built-in tables are never modified.
+The tool extends `~/.copilot/copilot-session-tools.db` with `cst_*` enrichment tables. Built-in tables are never modified.
 
 **Built-in tables** (managed by Copilot CLI, read-only):
 
