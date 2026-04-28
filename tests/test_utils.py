@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from copilot_session_tools.scanner.models import (
+    ChatMessage,
     ChatSession,
     CommandRun,
     ContentBlock,
+    RootAgentInterval,
     ToolInvocation,
 )
 from copilot_session_tools.utils import (
     MILLISECONDS_THRESHOLD,
     build_block_metadata,
+    build_root_agent_markers,
     detect_language,
     extract_filename,
     format_timestamp,
@@ -25,6 +30,42 @@ from copilot_session_tools.utils import (
     truncate_preview,
     urldecode,
 )
+
+
+class TestBuildRootAgentMarkers:
+    """Tests for root custom-agent transition markers."""
+
+    def test_direct_agent_switch_does_not_emit_default_marker(self):
+        session = ChatSession(
+            session_id="root-agent-marker-test",
+            workspace_name="test-workspace",
+            workspace_path="/test",
+            messages=[
+                ChatMessage(role="user", content="first", timestamp="2026-01-01T00:00:02Z"),
+                ChatMessage(role="user", content="second", timestamp="2026-01-01T00:00:04Z"),
+            ],
+            root_agent_intervals=[
+                RootAgentInterval(
+                    agent_name="smart-merge",
+                    agent_display_name="Smart Merge",
+                    start_timestamp="2026-01-01T00:00:01Z",
+                    end_timestamp="2026-01-01T00:00:03Z",
+                ),
+                RootAgentInterval(
+                    agent_name="skill-audit",
+                    agent_display_name="Skill Audit",
+                    start_timestamp="2026-01-01T00:00:03Z",
+                ),
+            ],
+        )
+
+        markers = build_root_agent_markers(session)
+
+        assert markers == {
+            0: [{"kind": "enter", "label": "Entered Smart Merge", "timestamp": "2026-01-01T00:00:01Z"}],
+            1: [{"kind": "enter", "label": "Entered Skill Audit", "timestamp": "2026-01-01T00:00:03Z"}],
+        }
+
 
 # ---------------------------------------------------------------------------
 # format_timestamp
@@ -428,9 +469,9 @@ class TestSanitizeFilename:
 # ---------------------------------------------------------------------------
 
 
-def _session(**kwargs) -> ChatSession:
+def _session(**kwargs: Any) -> ChatSession:
     """Helper to build a ChatSession with sensible defaults."""
-    defaults = {
+    defaults: dict[str, Any] = {
         "session_id": "abcdef1234567890abcdef",
         "workspace_name": None,
         "workspace_path": None,
@@ -439,7 +480,7 @@ def _session(**kwargs) -> ChatSession:
         "custom_title": None,
     }
     defaults.update(kwargs)
-    return ChatSession(**defaults)  # ty: ignore[not-subscriptable]
+    return ChatSession(**defaults)
 
 
 class TestGenerateSessionFilename:

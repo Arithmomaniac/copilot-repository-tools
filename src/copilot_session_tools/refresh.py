@@ -143,7 +143,7 @@ def _classify_and_batch_write(
     return added, updated
 
 
-def _parse_cli_entry(entry: dict) -> tuple[str, ChatSession | str | None]:
+def _parse_cli_entry(entry: dict) -> tuple[str, ChatSession | str]:
     """Parse a single CLI session's ``events.jsonl``.  Runs in a worker process.
 
     Must be at module level for :class:`ProcessPoolExecutor` pickling on
@@ -172,7 +172,7 @@ def _enrich_session_batch(
     stamp_version_on_failure: bool = False,
     on_progress: ProgressCallback | None = None,
     skip_ids: set[str] | None = None,
-    executor: ProcessPoolExecutor | None = None,
+    executor: ProcessPoolExecutor,
 ) -> tuple[int, int]:
     """Enrich a batch of sessions, handling errors and version stamping.
 

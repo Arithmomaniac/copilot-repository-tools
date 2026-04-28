@@ -16,18 +16,20 @@ from .db_schema import (
     CST_CONTENT_BLOCK_COLUMNS,
     CST_FILE_CHANGE_COLUMNS,
     CST_MESSAGE_COLUMNS,
+    CST_ROOT_AGENT_INTERVAL_COLUMNS,
     CST_SESSION_COLUMNS,
     CST_TOOL_INVOCATION_COLUMNS,
     command_to_row,
     file_change_to_row,
     insert_sql,
+    root_agent_interval_to_row,
     session_to_row,
     tool_to_row,
 )
 from .markdown_exporter import message_to_markdown
 from .scanner import ChatSession
 
-CST_SCHEMA_VERSION = 8
+CST_SCHEMA_VERSION = 9
 
 
 CST_SCHEMA = """
@@ -133,6 +135,18 @@ CREATE TABLE IF NOT EXISTS cst_content_blocks (
 );
 CREATE INDEX IF NOT EXISTS idx_cst_content_blocks_message ON cst_content_blocks(message_id);
 
+CREATE TABLE IF NOT EXISTS cst_root_agent_intervals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL REFERENCES cst_sessions(session_id) ON DELETE CASCADE,
+    agent_name TEXT NOT NULL,
+    agent_display_name TEXT NOT NULL,
+    start_timestamp TEXT NOT NULL,
+    end_timestamp TEXT,
+    tools_json TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_cst_root_agent_intervals_session ON cst_root_agent_intervals(session_id, start_timestamp);
+CREATE INDEX IF NOT EXISTS idx_cst_root_agent_intervals_agent ON cst_root_agent_intervals(agent_name);
+
 CREATE VIEW IF NOT EXISTS cst_messages_tree AS
 SELECT
     m.id,
@@ -176,6 +190,57 @@ SELECT
     (SELECT COUNT(*) FROM cst_content_blocks cb WHERE cb.message_id = m.id) as content_block_count
 FROM cst_messages m
 WHERE m.parent_message_id IS NOT NULL;
+
+CREATE VIEW IF NOT EXISTS cst_root_agent_messages AS
+SELECT
+    i.id as interval_id,
+    i.session_id,
+    i.agent_name,
+    i.agent_display_name,
+    i.start_timestamp,
+    i.end_timestamp,
+    m.id as message_id,
+    m.message_index,
+    m.role,
+    m.timestamp,
+    m.content
+FROM cst_root_agent_intervals i
+JOIN cst_messages m
+    ON m.session_id = i.session_id
+    AND m.timestamp >= i.start_timestamp
+    AND (i.end_timestamp IS NULL OR m.timestamp < i.end_timestamp);
+
+CREATE VIEW IF NOT EXISTS cst_root_agent_tool_invocations AS
+SELECT
+    rm.interval_id,
+    rm.session_id,
+    rm.agent_name,
+    rm.agent_display_name,
+    rm.start_timestamp,
+    rm.end_timestamp,
+    t.id as tool_id,
+    t.name,
+    t.input,
+    t.result,
+    t.status,
+    t.invocation_message,
+    rm.message_id,
+    rm.message_index,
+    rm.role,
+    rm.timestamp
+FROM cst_root_agent_messages rm
+JOIN cst_tool_invocations t ON t.message_id = rm.message_id;
+
+CREATE VIEW IF NOT EXISTS cst_root_agent_usage AS
+SELECT
+    i.agent_name,
+    MAX(i.agent_display_name) as agent_display_name,
+    COUNT(*) as run_count,
+    COUNT(DISTINCT i.session_id) as session_count,
+    (SELECT COUNT(*) FROM cst_root_agent_messages rm WHERE rm.agent_name = i.agent_name) as message_count,
+    (SELECT COUNT(*) FROM cst_root_agent_tool_invocations rt WHERE rt.agent_name = i.agent_name) as tool_count
+FROM cst_root_agent_intervals i
+GROUP BY i.agent_name;
 """
 
 CST_FTS_SCHEMA = """
@@ -216,7 +281,7 @@ def _drop_and_recreate_cst_tables(conn: sqlite3.Connection) -> None:
     """
     cursor = conn.cursor()
     # Drop views before tables
-    for view in ["cst_messages_tree", "cst_all_tool_invocations", "cst_subagent_summary"]:
+    for view in ["cst_root_agent_usage", "cst_root_agent_tool_invocations", "cst_root_agent_messages", "cst_messages_tree", "cst_all_tool_invocations", "cst_subagent_summary"]:
         cursor.execute(f"DROP VIEW IF EXISTS {view}")
     # Drop in reverse dependency order
     for table in [
@@ -225,6 +290,7 @@ def _drop_and_recreate_cst_tables(conn: sqlite3.Connection) -> None:
         "cst_command_runs",
         "cst_file_changes",
         "cst_tool_invocations",
+        "cst_root_agent_intervals",
         "cst_messages",
         "cst_sessions",
         "cst_schema_version",
@@ -251,6 +317,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     # Check if schema already exists and needs migration BEFORE creating tables.
     # This is critical for v6+ because CST_SCHEMA includes views that reference
     # new columns — running it against a v5 table would fail.
+    current_version = 0
     needs_migration = False
     try:
         cursor.execute("SELECT COUNT(*) FROM cst_schema_version")
@@ -296,6 +363,9 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             for col in ("is_shell_backlink INTEGER DEFAULT 0", "backlink_shell_id TEXT"):
                 with contextlib.suppress(sqlite3.OperationalError):
                     cursor.execute(f"ALTER TABLE cst_tool_invocations ADD COLUMN {col}")
+        # v8 → v9: Add root custom-agent interval storage and views.
+        if current_version < 9:
+            conn.executescript(CST_SCHEMA)
         cursor.execute(
             "UPDATE cst_schema_version SET version = ?",
             (CST_SCHEMA_VERSION,),
@@ -420,7 +490,15 @@ def _delete_session_data(cursor: sqlite3.Cursor, session_id: str) -> None:
         (session_id,),
     )
     cursor.execute("DELETE FROM cst_messages_fts WHERE session_id = ?", (session_id,))
+    cursor.execute("DELETE FROM cst_root_agent_intervals WHERE session_id = ?", (session_id,))
     cursor.execute("DELETE FROM cst_messages WHERE session_id = ?", (session_id,))
+
+
+def _require_lastrowid(cursor: sqlite3.Cursor, table_name: str) -> int:
+    row_id = cursor.lastrowid
+    if row_id is None:
+        raise sqlite3.DatabaseError(f"Failed to insert row into {table_name}: SQLite did not return a row id")
+    return row_id
 
 
 def add_session(conn: sqlite3.Connection, session: ChatSession) -> bool:
@@ -497,7 +575,7 @@ def _insert_content_blocks_recursive(
                     block_idx,  # child_index = block position for ordering
                 ),
             )
-            child_message_id = cursor.lastrowid
+            child_message_id = _require_lastrowid(cursor, "cst_messages")
 
             # Insert child's artifacts
             for tool in child.tool_invocations:
@@ -545,6 +623,12 @@ def add_session_impl(cursor: sqlite3.Cursor, session: ChatSession) -> None:
         session_to_row(session, enrichment_version=__version__),
     )
 
+    for interval in session.root_agent_intervals:
+        cursor.execute(
+            insert_sql("cst_root_agent_intervals", CST_ROOT_AGENT_INTERVAL_COLUMNS),
+            root_agent_interval_to_row(session.session_id, interval),
+        )
+
     # Insert messages and related data
     for idx, msg in enumerate(session.messages):
         cached_markdown = message_to_markdown(
@@ -570,7 +654,7 @@ def add_session_impl(cursor: sqlite3.Cursor, session: ChatSession) -> None:
                 msg.child_index,
             ),
         )
-        message_id = cursor.lastrowid
+        message_id = _require_lastrowid(cursor, "cst_messages")
 
         # Insert tool invocations
         for tool in msg.tool_invocations:
@@ -836,6 +920,12 @@ def enrich_session(conn: sqlite3.Connection, session: ChatSession) -> None:
         session_to_row(session, enrichment_version=__version__, updated_at_fallback=enriched_at),
     )
 
+    for interval in session.root_agent_intervals:
+        cursor.execute(
+            insert_sql("cst_root_agent_intervals", CST_ROOT_AGENT_INTERVAL_COLUMNS),
+            root_agent_interval_to_row(session.session_id, interval),
+        )
+
     # Insert messages and related data
     for idx, msg in enumerate(session.messages):
         cached_markdown = message_to_markdown(
@@ -861,7 +951,7 @@ def enrich_session(conn: sqlite3.Connection, session: ChatSession) -> None:
                 msg.child_index,
             ),
         )
-        message_id = cursor.lastrowid
+        message_id = _require_lastrowid(cursor, "cst_messages")
 
         # Insert content blocks (recursive for nested subagent children)
         _insert_content_blocks_recursive(

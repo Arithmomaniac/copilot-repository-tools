@@ -631,6 +631,33 @@ header h1 {
     margin: 4px 0;
 }
 
+{%- if root_agent_markers is defined and root_agent_markers %}
+.root-agent-marker {
+    display: flex;
+    justify-content: flex-start;
+    margin: 10px 0 10px 12px;
+}
+
+.root-agent-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 12px;
+    border-radius: 999px;
+    border: 1px solid rgba(124, 58, 237, 0.35);
+    background: rgba(124, 58, 237, 0.12);
+    color: #6d28d9;
+    font-size: 0.85em;
+    font-weight: 600;
+}
+
+.root-agent-pill.default {
+    border-color: var(--border-color);
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+}
+{%- endif %}
+
 .status-badge.model-change {
     background-color: rgba(107, 114, 128, 0.15);
     color: #6b7280;
@@ -658,6 +685,13 @@ header h1 {
         background-color: rgba(248, 113, 113, 0.2);
         color: #f87171;
     }
+{%- if root_agent_markers is defined and root_agent_markers %}
+    .root-agent-pill {
+        border-color: rgba(167, 139, 250, 0.45);
+        background: rgba(124, 58, 237, 0.2);
+        color: #c4b5fd;
+    }
+{%- endif %}
 }
 
 /* Failed subagent collapsible */
@@ -3281,6 +3315,15 @@ input:checked + .toggle-switch::after {
 
         <div class="messages">
             {% for message in session.messages %}
+            {%- if root_agent_markers is defined and root_agent_markers %}
+            {% for marker in root_agent_markers.get(loop.index0, []) %}
+            <div class="root-agent-marker">
+                <span class="root-agent-pill {{ marker.kind }}" title="{{ marker.timestamp | format_timestamp }}">
+                    {% if marker.kind == 'enter' %}🤖{% else %}↩{% endif %} {{ marker.label }}
+                </span>
+            </div>
+            {% endfor %}
+            {%- endif %}
             {% set msg_meta = message_metadata.get(loop.index0, {}) %}
             {% set is_system_notification = message.role == 'user' and message.content.strip().startswith('<system_notification>') and 'agent' in message.content.lower() and ('completed' in message.content.lower() or 'failed' in message.content.lower()) %}
             {% if is_system_notification %}
@@ -3337,6 +3380,15 @@ input:checked + .toggle-switch::after {
             </div>
             {% endif %}
             {% endfor %}
+            {%- if root_agent_markers is defined and root_agent_markers %}
+            {% for marker in root_agent_markers.get(session.messages | length, []) %}
+            <div class="root-agent-marker">
+                <span class="root-agent-pill {{ marker.kind }}" title="{{ marker.timestamp | format_timestamp }}">
+                    {% if marker.kind == 'enter' %}🤖{% else %}↩{% endif %} {{ marker.label }}
+                </span>
+            </div>
+            {% endfor %}
+            {%- endif %}
         </div>
         {%- if new_turns %}
         <div class="unenriched-banner" style="margin-top: 24px;">

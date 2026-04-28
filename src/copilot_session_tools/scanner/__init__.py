@@ -5,7 +5,7 @@ Data structures are informed by:
 - microsoft/vscode-copilot-chat (https://github.com/microsoft/vscode-copilot-chat)
 """
 
-PARSER_VERSION = 3
+PARSER_VERSION = 4
 
 from .cli import _parse_cli_jsonl_file, _parse_workspace_yaml
 from .content import (
@@ -32,6 +32,7 @@ from .models import (
     CommandRun,
     ContentBlock,
     FileChange,
+    RootAgentInterval,
     SessionFileInfo,
     ToolInvocation,
 )
@@ -58,6 +59,7 @@ __all__ = [
     "CommandRun",
     "ContentBlock",
     "FileChange",
+    "RootAgentInterval",
     "SessionFileInfo",
     "ToolInvocation",
     "_apply_jsonl_operations",

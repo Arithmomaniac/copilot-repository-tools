@@ -11,6 +11,7 @@ from copilot_session_tools.html_exporter import generate_session_html_filename, 
 from copilot_session_tools.refresh import enrich_single_session, run_enrichment, run_refresh
 from copilot_session_tools.utils import (
     build_block_metadata,
+    build_root_agent_markers,
     detect_language,
     extract_filename,
     format_timestamp,
@@ -343,6 +344,7 @@ def create_app(
             message_count=len(session.messages),
             first_user_prompt=first_user_prompt,
             message_metadata=message_metadata,
+            root_agent_markers=build_root_agent_markers(session) if is_enriched else {},
             is_enriched=is_enriched,
             turns=turns,
             new_turns=new_turns,

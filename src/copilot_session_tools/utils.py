@@ -14,11 +14,11 @@ from urllib.parse import unquote
 import markdown
 from markupsafe import Markup
 from pygments import highlight as _pygments_highlight
-from pygments.formatters import HtmlFormatter as _HtmlFormatter
-from pygments.lexers import DiffLexer as _DiffLexer
-from pygments.lexers import JsonLexer as _JsonLexer
-from pygments.lexers import TextLexer as _TextLexer
+from pygments.formatters.html import HtmlFormatter as _HtmlFormatter
 from pygments.lexers import get_lexer_by_name as _get_lexer_by_name
+from pygments.lexers.data import JsonLexer as _JsonLexer
+from pygments.lexers.diff import DiffLexer as _DiffLexer
+from pygments.lexers.special import TextLexer as _TextLexer
 from pygments.util import ClassNotFound as _ClassNotFound
 
 from .scanner import ChatSession
@@ -32,6 +32,40 @@ MILLISECONDS_THRESHOLD = 1e12
 
 DEFAULT_DB_DIR = Path.home() / ".copilot"
 """Directory containing the session-store database."""
+
+
+def _first_message_index_at_or_after(session: ChatSession, timestamp: str) -> int:
+    """Find the first top-level message at or after an ISO timestamp."""
+    for index, message in enumerate(session.messages):
+        if message.timestamp and message.timestamp >= timestamp:
+            return index
+    return len(session.messages)
+
+
+def build_root_agent_markers(session: ChatSession) -> dict[int, list[dict[str, str]]]:
+    """Build transcript timeline markers for root custom-agent transitions."""
+    markers: dict[int, list[dict[str, str]]] = {}
+    start_timestamps = {interval.start_timestamp for interval in session.root_agent_intervals}
+    for interval in session.root_agent_intervals:
+        start_index = _first_message_index_at_or_after(session, interval.start_timestamp)
+        markers.setdefault(start_index, []).append(
+            {
+                "kind": "enter",
+                "label": f"Entered {interval.agent_display_name or interval.agent_name}",
+                "timestamp": interval.start_timestamp,
+            }
+        )
+        if interval.end_timestamp and interval.end_timestamp not in start_timestamps:
+            end_index = _first_message_index_at_or_after(session, interval.end_timestamp)
+            markers.setdefault(end_index, []).append(
+                {
+                    "kind": "default",
+                    "label": "Back to default",
+                    "timestamp": interval.end_timestamp,
+                }
+            )
+    return markers
+
 
 DEFAULT_DB_PATH = DEFAULT_DB_DIR / "copilot-session-tools.db"
 """Default path to the copilot-session-tools enrichment database."""

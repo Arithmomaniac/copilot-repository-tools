@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -9,16 +10,16 @@ import pytest
 from copilot_session_tools.scanner.models import ChatMessage, ChatSession, ContentBlock, ToolInvocation
 
 
-def _make_test_session(**kwargs) -> ChatSession:
+def _make_test_session(**kwargs: Any) -> ChatSession:
     """Helper to create ChatSession with sensible defaults for tests."""
-    defaults = {
+    defaults: dict[str, Any] = {
         "session_id": "test-session",
         "workspace_name": "test-workspace",
         "workspace_path": "/test/workspace",
         "messages": [],
     }
     defaults.update(kwargs)
-    return ChatSession(**defaults)  # ty: ignore[call-non-callable]
+    return ChatSession(**defaults)
 
 
 from copilot_session_tools.transcript_cleanup import (

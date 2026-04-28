@@ -126,6 +126,17 @@ class ChatMessage:
 
 
 @dataclass
+class RootAgentInterval:
+    """Represents a root custom-agent selection interval in a CLI session."""
+
+    agent_name: str
+    agent_display_name: str
+    start_timestamp: str
+    end_timestamp: str | None = None
+    tools: list[str] | None = None
+
+
+@dataclass
 class ChatSession:
     """Represents a Copilot chat session.
 
@@ -149,6 +160,7 @@ class ChatSession:
     repository_url: str | None = None  # Git remote URL for repository-scoped memories
     parser_version: int = 1
     source_format: str | None = None  # 'cli', 'json', 'jsonl', 'vscdb'
+    root_agent_intervals: list[RootAgentInterval] = field(default_factory=list)
 
 
 @dataclass

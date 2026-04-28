@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from copilot_session_tools import ChatMessage, ChatSession, CommandRun, ContentBlock, Database, FileChange, ToolInvocation, parse_search_query
+from copilot_session_tools.scanner import RootAgentInterval
 
 
 @pytest.fixture
@@ -86,6 +87,192 @@ class TestDatabase:
         assert len(retrieved.messages) == len(sample_session.messages)
         assert retrieved.messages[0].role == "user"
         assert "Python function" in retrieved.messages[0].content
+
+    def test_root_agent_intervals_persist_and_retrieve(self, temp_db):
+        """Test root custom-agent intervals persist and hydrate with sessions."""
+        session = ChatSession(
+            session_id="root-agent-session",
+            workspace_name="test-project",
+            workspace_path="/test",
+            messages=[
+                ChatMessage(role="user", content="Merge main", timestamp="2026-01-01T00:00:02Z"),
+                ChatMessage(
+                    role="assistant",
+                    content="Starting merge.",
+                    timestamp="2026-01-01T00:00:03Z",
+                    tool_invocations=[
+                        ToolInvocation(
+                            name="report_intent",
+                            input='{"intent": "Merging upstream"}',
+                            result="ok",
+                            status="success",
+                        )
+                    ],
+                ),
+                ChatMessage(role="assistant", content="Back to default.", timestamp="2026-01-01T00:00:05Z"),
+            ],
+            root_agent_intervals=[
+                RootAgentInterval(
+                    agent_name="smart-merge",
+                    agent_display_name="Smart Merge",
+                    start_timestamp="2026-01-01T00:00:01Z",
+                    end_timestamp="2026-01-01T00:00:04Z",
+                    tools=["report_intent", "powershell"],
+                )
+            ],
+        )
+
+        temp_db.add_session(session)
+
+        retrieved = temp_db.get_session("root-agent-session")
+        assert retrieved is not None
+        assert retrieved.root_agent_intervals == session.root_agent_intervals
+
+        with temp_db._get_connection() as conn:
+            row = conn.execute(
+                "SELECT agent_name, tools_json FROM cst_root_agent_intervals WHERE session_id = ?",
+                ("root-agent-session",),
+            ).fetchone()
+            assert row["agent_name"] == "smart-merge"
+            assert json.loads(row["tools_json"]) == ["report_intent", "powershell"]
+
+            messages = conn.execute(
+                "SELECT content FROM cst_root_agent_messages WHERE session_id = ? ORDER BY message_index",
+                ("root-agent-session",),
+            ).fetchall()
+            assert [row["content"] for row in messages] == ["Merge main", "Starting merge."]
+
+            usage = conn.execute("SELECT * FROM cst_root_agent_usage WHERE agent_name = ?", ("smart-merge",)).fetchone()
+            assert usage["run_count"] == 1
+            assert usage["session_count"] == 1
+            assert usage["message_count"] == 2
+            assert usage["tool_count"] == 1
+
+    def test_root_agent_views_include_nested_subagent_activity(self, temp_db):
+        """Root-agent usage includes child subagent work inside the interval."""
+        session = ChatSession(
+            session_id="root-agent-nested-session",
+            workspace_name="test-project",
+            workspace_path="/test",
+            messages=[
+                ChatMessage(
+                    role="assistant",
+                    content="Launching review.",
+                    timestamp="2026-01-01T00:00:02Z",
+                    tool_invocations=[
+                        ToolInvocation(
+                            name="task",
+                            input='{"agent_type": "code-review"}',
+                            result="started",
+                            status="success",
+                        )
+                    ],
+                    content_blocks=[
+                        ContentBlock(
+                            kind="subagent",
+                            content="Review result",
+                            description="code-review",
+                            child_message=ChatMessage(
+                                role="assistant",
+                                content="Reviewed file.",
+                                timestamp="2026-01-01T00:00:03Z",
+                                agent_id="tc1",
+                                agent_display_name="code-review",
+                                agent_nesting_level=1,
+                                tool_invocations=[
+                                    ToolInvocation(
+                                        name="view",
+                                        input='{"path": "src/example.py"}',
+                                        result="ok",
+                                        status="success",
+                                    )
+                                ],
+                            ),
+                        )
+                    ],
+                )
+            ],
+            root_agent_intervals=[
+                RootAgentInterval(
+                    agent_name="smart-merge",
+                    agent_display_name="Smart Merge",
+                    start_timestamp="2026-01-01T00:00:01Z",
+                    end_timestamp="2026-01-01T00:00:04Z",
+                )
+            ],
+        )
+
+        temp_db.add_session(session)
+
+        with temp_db._get_connection() as conn:
+            messages = conn.execute(
+                "SELECT content FROM cst_root_agent_messages WHERE session_id = ? ORDER BY timestamp, message_id",
+                ("root-agent-nested-session",),
+            ).fetchall()
+            tools = conn.execute(
+                "SELECT name FROM cst_root_agent_tool_invocations WHERE session_id = ? ORDER BY timestamp, tool_id",
+                ("root-agent-nested-session",),
+            ).fetchall()
+            usage = conn.execute("SELECT * FROM cst_root_agent_usage WHERE agent_name = ?", ("smart-merge",)).fetchone()
+
+        assert [row["content"] for row in messages] == ["Launching review.", "Reviewed file."]
+        assert [row["name"] for row in tools] == ["task", "view"]
+        assert usage["message_count"] == 2
+        assert usage["tool_count"] == 2
+
+    def test_root_agent_intervals_are_deleted_with_session_refresh(self, temp_db):
+        """Replacing a session clears stale root-agent intervals."""
+        session = ChatSession(
+            session_id="refresh-root-agent-session",
+            workspace_name="test-project",
+            workspace_path="/test",
+            messages=[ChatMessage(role="user", content="Initial", timestamp="2026-01-01T00:00:02Z")],
+            root_agent_intervals=[
+                RootAgentInterval(
+                    agent_name="smart-merge",
+                    agent_display_name="Smart Merge",
+                    start_timestamp="2026-01-01T00:00:01Z",
+                )
+            ],
+        )
+        temp_db.add_session(session)
+
+        refreshed = ChatSession(
+            session_id="refresh-root-agent-session",
+            workspace_name="test-project",
+            workspace_path="/test",
+            messages=[ChatMessage(role="user", content="Refreshed", timestamp="2026-01-01T00:01:02Z")],
+        )
+        temp_db.update_session(refreshed)
+
+        retrieved = temp_db.get_session("refresh-root-agent-session")
+        assert retrieved is not None
+        assert retrieved.root_agent_intervals == []
+
+    def test_root_agent_intervals_persist_through_enrichment_path(self, temp_db):
+        """Test scanner enrichment writes root custom-agent intervals."""
+        session = ChatSession(
+            session_id="enrich-root-agent-session",
+            workspace_name="test-project",
+            workspace_path="/test",
+            messages=[ChatMessage(role="user", content="Audit skills", timestamp="2026-01-01T00:00:02Z")],
+            root_agent_intervals=[
+                RootAgentInterval(
+                    agent_name="skill-audit",
+                    agent_display_name="Skill Audit",
+                    start_timestamp="2026-01-01T00:00:01Z",
+                )
+            ],
+        )
+
+        temp_db.enrich_session(session)
+
+        with temp_db._get_connection() as conn:
+            count = conn.execute(
+                "SELECT COUNT(*) FROM cst_root_agent_intervals WHERE session_id = ?",
+                ("enrich-root-agent-session",),
+            ).fetchone()[0]
+            assert count == 1
 
     def test_get_nonexistent_session(self, temp_db):
         """Test that getting a nonexistent session returns None."""
