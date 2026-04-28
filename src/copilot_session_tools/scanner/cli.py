@@ -14,6 +14,7 @@ from .models import (
     ChatSession,
     CommandRun,
     ContentBlock,
+    RootAgentInterval,
     ShellIOEntry,
     ToolInvocation,
 )
@@ -439,6 +440,8 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
 
         # Build tool execution map: toolCallId -> (start_data, complete_data, user_requested)
         tool_executions: dict = {}
+        root_agent_intervals: list[RootAgentInterval] = []
+        active_root_agent: RootAgentInterval | None = None
         # Map parent agent toolCallId -> list of child tool display names
         subagent_child_tools: dict[str, list[str]] = {}
         # Map parent agent toolCallId -> list of (ToolInvocation | None, CommandRun | None, content_blocks)
@@ -458,6 +461,7 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
         for event in events:
             event_type = event.get("type", "")
             event_data = event.get("data", {})
+            timestamp = event.get("timestamp")
 
             if event_type == "tool.execution_start":
                 tool_call_id = event_data.get("toolCallId")
@@ -538,6 +542,31 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                 tool_call_id = event_data.get("toolCallId", "")
                 if tool_call_id:
                     subagent_completions.add(tool_call_id)
+
+            elif event_type == "subagent.selected":
+                if timestamp is None:
+                    continue
+                if active_root_agent is not None:
+                    active_root_agent.end_timestamp = timestamp
+                    root_agent_intervals.append(active_root_agent)
+                agent_name = event_data.get("agentName") or event_data.get("agentDisplayName") or "unknown"
+                agent_display_name = event_data.get("agentDisplayName") or agent_name
+                tools = event_data.get("tools")
+                active_root_agent = RootAgentInterval(
+                    agent_name=agent_name,
+                    agent_display_name=agent_display_name,
+                    start_timestamp=timestamp,
+                    tools=tools if isinstance(tools, list) else None,
+                )
+
+            elif event_type == "subagent.deselected":
+                if active_root_agent is not None:
+                    active_root_agent.end_timestamp = timestamp
+                    root_agent_intervals.append(active_root_agent)
+                    active_root_agent = None
+
+        if active_root_agent is not None:
+            root_agent_intervals.append(active_root_agent)
 
         # Infer subagent completion from tool.execution_complete when no
         # explicit subagent.completed event was emitted (common in older CLI versions)
@@ -765,12 +794,12 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                 # Detect background agent (even for failed ones)
                 is_bg = tool_call_id in builder.bg_agent_id_map
                 bg_id = builder.bg_agent_id_map.get(tool_call_id, "")
+                result_text = ""
                 if failed:
                     error = builder.subagent_failures[tool_call_id]
                     parts.append(f"**Error:** {error}" if error else "**Error:** Unknown error")
                 else:
                     # Get the agent's result — check for background agent placeholder
-                    result_text = ""
                     execution = builder.tool_executions.get(tool_call_id, {})
                     complete_event = execution.get("complete")
                     if complete_event:
@@ -1001,9 +1030,6 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                 # Streaming tool events (partial results, final is in tool.execution_complete)
                 "tool.execution_partial_result",
                 "tool.execution_progress",
-                # Agent selection (routing metadata)
-                "subagent.selected",
-                "subagent.deselected",
             ):
                 pass
 
@@ -1117,6 +1143,7 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
             source_file_size=source_file_size,
             type="cli",
             repository_url=repository_url,
+            root_agent_intervals=root_agent_intervals,
         )
         session.parser_version = PARSER_VERSION
         return session

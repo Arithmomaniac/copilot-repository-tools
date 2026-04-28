@@ -7,9 +7,10 @@ and read path (db_retrieval.py) reference these constants.
 
 from __future__ import annotations
 
+import json
 import sqlite3
 
-from .scanner import ChatSession, CommandRun, FileChange, ToolInvocation
+from .scanner import ChatSession, CommandRun, FileChange, RootAgentInterval, ToolInvocation
 
 # ---------------------------------------------------------------------------
 # Column tuples used in INSERT statements (order matters for parameterized queries)
@@ -98,6 +99,15 @@ CST_CONTENT_BLOCK_COLUMNS = (
     "prompt",
     "is_background",
     "agent_id",
+)
+
+CST_ROOT_AGENT_INTERVAL_COLUMNS = (
+    "session_id",
+    "agent_name",
+    "agent_display_name",
+    "start_timestamp",
+    "end_timestamp",
+    "tools_json",
 )
 
 # ---------------------------------------------------------------------------
@@ -197,6 +207,19 @@ def command_to_row(message_id: int, cmd: CommandRun) -> tuple:
     )
 
 
+def root_agent_interval_to_row(session_id: str, interval: RootAgentInterval) -> tuple:
+    """Map a RootAgentInterval to a parameter tuple matching CST_ROOT_AGENT_INTERVAL_COLUMNS."""
+    tools_json = json.dumps(interval.tools) if interval.tools is not None else None
+    return (
+        session_id,
+        interval.agent_name,
+        interval.agent_display_name,
+        interval.start_timestamp,
+        interval.end_timestamp,
+        tools_json,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Row → dataclass helpers  (read path)
 # ---------------------------------------------------------------------------
@@ -219,6 +242,23 @@ def row_to_tool(row: sqlite3.Row) -> ToolInvocation:
         backlink_agent_id=row["backlink_agent_id"] if "backlink_agent_id" in keys else None,
         is_shell_backlink=bool(row["is_shell_backlink"]) if "is_shell_backlink" in keys and row["is_shell_backlink"] else False,
         backlink_shell_id=row["backlink_shell_id"] if "backlink_shell_id" in keys else None,
+    )
+
+
+def row_to_root_agent_interval(row: sqlite3.Row) -> RootAgentInterval:
+    """Map a cst_root_agent_intervals row to a RootAgentInterval."""
+    tools_json = row["tools_json"] if "tools_json" in row.keys() else None  # noqa: SIM118
+    tools = None
+    if tools_json:
+        parsed_tools = json.loads(tools_json)
+        if isinstance(parsed_tools, list):
+            tools = [str(tool) for tool in parsed_tools]
+    return RootAgentInterval(
+        agent_name=row["agent_name"],
+        agent_display_name=row["agent_display_name"],
+        start_timestamp=row["start_timestamp"],
+        end_timestamp=row["end_timestamp"],
+        tools=tools,
     )
 
 

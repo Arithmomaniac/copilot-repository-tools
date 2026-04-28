@@ -13,6 +13,7 @@ from copilot_session_tools import (
     ChatSession,
     CommandRun,
     FileChange,
+    RootAgentInterval,
     ToolInvocation,
     find_copilot_chat_dirs,
     scan_chat_sessions,
@@ -1348,6 +1349,115 @@ class TestCLINewEventHandlers:
             assert msg.agent_id is None
             assert msg.agent_display_name is None
             assert msg.agent_nesting_level == 0
+
+    # --- root custom-agent intervals ---
+
+    def test_root_agent_selection_creates_interval(self, tmp_path):
+        """subagent.selected records a root custom-agent interval without changing message metadata."""
+        session = self._parse(
+            tmp_path,
+            {
+                "type": "subagent.selected",
+                "timestamp": "2026-01-01T00:00:01Z",
+                "data": {"agentName": "smart-merge", "agentDisplayName": "smart-merge", "tools": ["sql", "powershell"]},
+            },
+            {"type": "user.message", "timestamp": "2026-01-01T00:00:02Z", "data": {"content": "Merge main"}},
+            {"type": "assistant.message", "timestamp": "2026-01-01T00:00:03Z", "data": {"content": "Starting merge."}},
+            {"type": "subagent.deselected", "timestamp": "2026-01-01T00:00:04Z", "data": {}},
+            {"type": "assistant.message", "timestamp": "2026-01-01T00:00:05Z", "data": {"content": "Back to default."}},
+        )
+
+        assert session is not None
+        assert session.root_agent_intervals == [
+            RootAgentInterval(
+                agent_name="smart-merge",
+                agent_display_name="smart-merge",
+                start_timestamp="2026-01-01T00:00:01Z",
+                end_timestamp="2026-01-01T00:00:04Z",
+                tools=["sql", "powershell"],
+            )
+        ]
+        assert [msg.agent_display_name for msg in session.messages] == [None, None]
+
+    def test_root_agent_reselection_closes_previous_interval(self, tmp_path):
+        """A new subagent.selected closes the previous root-agent interval."""
+        session = self._parse(
+            tmp_path,
+            {
+                "type": "subagent.selected",
+                "timestamp": "2026-01-01T00:00:01Z",
+                "data": {"agentName": "smart-merge", "agentDisplayName": "Smart Merge"},
+            },
+            {"type": "user.message", "timestamp": "2026-01-01T00:00:02Z", "data": {"content": "Merge main"}},
+            {
+                "type": "subagent.selected",
+                "timestamp": "2026-01-01T00:00:03Z",
+                "data": {"agentName": "skill-audit", "agentDisplayName": "Skill Audit"},
+            },
+            {"type": "assistant.message", "timestamp": "2026-01-01T00:00:04Z", "data": {"content": "Auditing."}},
+        )
+
+        assert session is not None
+        assert session.root_agent_intervals == [
+            RootAgentInterval(
+                agent_name="smart-merge",
+                agent_display_name="Smart Merge",
+                start_timestamp="2026-01-01T00:00:01Z",
+                end_timestamp="2026-01-01T00:00:03Z",
+            ),
+            RootAgentInterval(
+                agent_name="skill-audit",
+                agent_display_name="Skill Audit",
+                start_timestamp="2026-01-01T00:00:03Z",
+            ),
+        ]
+
+    def test_root_agent_selection_without_timestamp_is_ignored(self, tmp_path):
+        """A root-agent interval needs a timestamp anchor."""
+        session = self._parse(
+            tmp_path,
+            {"type": "subagent.selected", "data": {"agentName": "smart-merge", "agentDisplayName": "Smart Merge"}},
+            {"type": "user.message", "timestamp": "2026-01-01T00:00:02Z", "data": {"content": "Merge main"}},
+        )
+
+        assert session is not None
+        assert session.root_agent_intervals == []
+
+    def test_root_agent_selection_does_not_affect_nested_subagent_handling(self, tmp_path):
+        """Root-agent intervals stay separate from spawned task subagent records."""
+        session = self._parse(
+            tmp_path,
+            {
+                "type": "subagent.selected",
+                "timestamp": "2026-01-01T00:00:01Z",
+                "data": {"agentName": "smart-merge", "agentDisplayName": "smart-merge"},
+            },
+            {"type": "assistant.message", "timestamp": "2026-01-01T00:00:02Z", "data": {"content": "Spawning explorer."}},
+            {
+                "type": "tool.execution_start",
+                "timestamp": "2026-01-01T00:00:03Z",
+                "data": {"toolCallId": "tc1", "toolName": "task", "arguments": {"agent_type": "explore"}},
+            },
+            {"type": "subagent.started", "timestamp": "2026-01-01T00:00:03Z", "data": {"toolCallId": "tc1", "agentDisplayName": "explore"}},
+            {
+                "type": "tool.execution_start",
+                "timestamp": "2026-01-01T00:00:04Z",
+                "data": {"toolCallId": "child1", "toolName": "view", "parentToolCallId": "tc1", "arguments": {"path": "README.md"}},
+            },
+            {
+                "type": "tool.execution_complete",
+                "timestamp": "2026-01-01T00:00:05Z",
+                "data": {"toolCallId": "tc1", "success": True, "result": {"content": "Found the answer"}},
+            },
+            {"type": "subagent.completed", "timestamp": "2026-01-01T00:00:05Z", "data": {"toolCallId": "tc1", "agentDisplayName": "explore"}},
+        )
+
+        assert session is not None
+        assert len(session.root_agent_intervals) == 1
+        subagent_blocks = [block for msg in session.messages for block in msg.content_blocks if block.kind == "subagent"]
+        assert len(subagent_blocks) == 1
+        assert subagent_blocks[0].child_message is not None
+        assert subagent_blocks[0].child_message.agent_display_name == "explore"
 
     # --- subagent.completed (emits subagent content block) ---
 

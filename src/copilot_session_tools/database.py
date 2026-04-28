@@ -52,6 +52,7 @@ class Database:
         "cst_command_runs",
         "cst_file_changes",
         "cst_tool_invocations",
+        "cst_root_agent_intervals",
         "cst_messages",
         "cst_sessions",
     ]

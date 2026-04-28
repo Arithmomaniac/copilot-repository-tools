@@ -11,9 +11,10 @@ Extracted from database.py to isolate read-path concerns:
 
 from __future__ import annotations
 
+import contextlib
 import sqlite3
 
-from .db_schema import row_to_command, row_to_file_change, row_to_tool
+from .db_schema import row_to_command, row_to_file_change, row_to_root_agent_interval, row_to_tool
 from .markdown_exporter import message_to_markdown
 from .scanner import (
     ChatMessage,
@@ -194,6 +195,14 @@ def get_cst_session(conn: sqlite3.Connection, session_id: str) -> ChatSession | 
         block, child_msg_id = _deserialize_content_block(b)
         blocks_by_msg[b["message_id"]].append((block, child_msg_id))
 
+    root_agent_intervals = []
+    with contextlib.suppress(sqlite3.OperationalError):
+        cursor.execute(
+            "SELECT * FROM cst_root_agent_intervals WHERE session_id = ? ORDER BY start_timestamp, id",
+            (session_id,),
+        )
+        root_agent_intervals = [row_to_root_agent_interval(r) for r in cursor.fetchall()]
+
     # --- Reconstruct messages from pre-fetched data ---
     messages_by_id: dict[int, ChatMessage] = {}
     content_block_child_ids: dict[int, dict[int, int]] = {}
@@ -283,6 +292,7 @@ def get_cst_session(conn: sqlite3.Connection, session_id: str) -> ChatSession | 
         source_file_size=safe_get("source_file_size"),
         type=safe_get("type") or "vscode",
         repository_url=safe_get("repository_url"),
+        root_agent_intervals=root_agent_intervals,
     )
 
 

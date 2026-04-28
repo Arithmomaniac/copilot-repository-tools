@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from copilot_session_tools import ChatMessage, ChatSession, ContentBlock, Database
+from copilot_session_tools import ChatMessage, ChatSession, ContentBlock, Database, RootAgentInterval
 from copilot_session_tools.utils import (
     extract_filename as _extract_filename,
 )
@@ -263,6 +263,37 @@ class TestWebappRoutes:
         response = client.get("/session/webapp-test-session")
         assert response.status_code == 200
         assert b"What is Python?" in response.data
+
+    def test_session_shows_root_agent_transition_pills(self, temp_db):
+        """Root custom-agent intervals render as timeline transition pills."""
+        db = Database(temp_db)
+        session = ChatSession(
+            session_id="root-agent-web-session",
+            workspace_name="test-workspace",
+            workspace_path="/home/user/test",
+            messages=[
+                ChatMessage(role="user", content="Merge main", timestamp="2026-01-01T00:00:02Z"),
+                ChatMessage(role="assistant", content="Merged.", timestamp="2026-01-01T00:00:03Z"),
+                ChatMessage(role="user", content="Thanks", timestamp="2026-01-01T00:00:05Z"),
+            ],
+            root_agent_intervals=[
+                RootAgentInterval(
+                    agent_name="smart-merge",
+                    agent_display_name="smart-merge",
+                    start_timestamp="2026-01-01T00:00:01Z",
+                    end_timestamp="2026-01-01T00:00:04Z",
+                )
+            ],
+        )
+        db.add_session(session)
+
+        app = create_app(temp_db, title="Test Archive", storage_paths=[])
+        app.config["TESTING"] = True
+        response = app.test_client().get("/session/root-agent-web-session")
+
+        assert response.status_code == 200
+        assert b"Entered smart-merge" in response.data
+        assert b"Back to default" in response.data
 
     def test_session_not_found(self, client):
         """Test 404 for non-existent session."""

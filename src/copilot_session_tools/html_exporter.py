@@ -12,6 +12,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from .scanner import ChatSession
 from .utils import (
     build_block_metadata,
+    build_root_agent_markers,
     detect_language,
     extract_filename,
     format_timestamp,
@@ -113,6 +114,7 @@ def session_to_html(session: ChatSession, content_set: set[str] | None = None) -
         message_count=len(session.messages),
         first_user_prompt=first_user_prompt,
         message_metadata=message_metadata,
+        root_agent_markers=build_root_agent_markers(session),
         static=True,
         is_enriched=True,
         include_agent_details=include_agent_details,

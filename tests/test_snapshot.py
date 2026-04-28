@@ -397,6 +397,7 @@ class TestBacklinkStateRendering:
         f = tmp_path / "events.jsonl"
         f.write_text(self._make_events(*events), encoding="utf-8")
         session = _parse_cli_jsonl_file(f)
+        assert session is not None
         return session_to_html(session)
 
     def test_running_agent_gets_in_progress_class(self, tmp_path):
@@ -425,6 +426,7 @@ class TestBacklinkStateRendering:
         f = tmp_path / "events.jsonl"
         f.write_text(self._make_events(*events), encoding="utf-8")
         session = _parse_cli_jsonl_file(f)
+        assert session is not None
         html = session_to_html(session)
         # The CSS class may exist in stylesheet, but no element should use it
         assert '<span class="subagent-started">' not in html
@@ -543,6 +545,7 @@ class TestAsyncShellRendering:
         f = tmp_path / "events.jsonl"
         f.write_text(self._make_events(*events), encoding="utf-8")
         session = _parse_cli_jsonl_file(f)
+        assert session is not None
         return session_to_html(session)
 
     def test_async_shell_renders_with_amber_class(self, tmp_path):
