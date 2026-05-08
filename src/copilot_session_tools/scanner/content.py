@@ -292,10 +292,13 @@ def _humanize_server_name(server_name: str) -> str:
     return " ".join(word.capitalize() for word in server_name.replace("-", " ").replace("_", " ").split())
 
 
-def _extract_best_param(arguments: dict) -> str:
+def _extract_best_param(arguments: object) -> str:
     """Extract the most descriptive parameter value from tool arguments."""
+    if not isinstance(arguments, dict):
+        return ""
+    argument_dict: dict[str, object] = {str(key): value for key, value in arguments.items()}
     for key in ("question", "query", "intent", "identifier", "description", "url", "path", "repoName", "libraryName"):
-        val = arguments.get(key)
+        val = argument_dict.get(key)
         if val and isinstance(val, str):
             return val[:100] + "..." if len(val) > 100 else val
     return ""
@@ -334,27 +337,28 @@ _TOOL_DISPLAY_FORMATS: dict[str, tuple[str, list[str]]] = {
 
 def _format_tool_display_message(
     tool_name: str,
-    arguments: dict,
+    arguments: object,
     description: str | None = None,
     mcp_server_name: str | None = None,
     mcp_tool_name: str | None = None,
 ) -> str:
     """Generate a display message for a tool invocation using data-driven formats."""
+    argument_dict: dict[str, object] = {str(key): value for key, value in arguments.items()} if isinstance(arguments, dict) else {}
     fmt = _TOOL_DISPLAY_FORMATS.get(tool_name)
     if fmt:
         template, arg_keys = fmt
         # Build substitution dict
         subs: dict[str, str] = {}
         for key in arg_keys:
-            val = arguments.get(key, "")
+            val = argument_dict.get(key, "")
             subs[key] = str(val) if val else ""
         # Fallback: if 'question' is empty but 'message' exists (ask_user tool)
         if not subs.get("question") and subs.get("message"):
             subs["question"] = subs["message"]
         # Auto-generate short_path from path arg (default to empty)
         subs.setdefault("short_path", "")
-        if "path" in arguments:
-            subs["short_path"] = _shorten_path(arguments.get("path", ""))
+        if "path" in argument_dict:
+            subs["short_path"] = _shorten_path(str(argument_dict.get("path", "")))
         # Auto-generate truncated versions
         for key in ("query", "url", "question", "message"):
             if key in subs:
@@ -367,8 +371,8 @@ def _format_tool_display_message(
 
     # Handle str_replace_editor specially (command-dependent)
     if tool_name == "str_replace_editor":
-        cmd = arguments.get("command", "view")
-        path = _shorten_path(arguments.get("path", ""))
+        cmd = argument_dict.get("command", "view")
+        path = _shorten_path(str(argument_dict.get("path", "")))
         if cmd == "create":
             return f"Created `{path}`"
         elif cmd == "str_replace":

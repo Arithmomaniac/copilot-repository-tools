@@ -20,6 +20,29 @@ from .models import (
 )
 
 
+def _as_tool_argument_dict(arguments: object) -> dict[str, object]:
+    """Return mapping-style tool arguments; freeform tools may store a string."""
+    return {str(key): value for key, value in arguments.items()} if isinstance(arguments, dict) else {}
+
+
+def _serialize_tool_arguments(arguments: object) -> str | None:
+    """Serialize tool arguments for storage without losing freeform string input."""
+    if not arguments:
+        return None
+    if isinstance(arguments, str):
+        return arguments
+    try:
+        return json.dumps(arguments)
+    except (TypeError, ValueError):
+        return str(arguments)
+
+
+def _get_tool_arg_str(arguments: dict[str, object], key: str, default: str = "") -> str:
+    """Get a string-valued tool argument."""
+    value = arguments.get(key)
+    return value if isinstance(value, str) else default
+
+
 def _parse_workspace_yaml(session_dir: Path) -> dict[str, str]:
     """Parse a workspace.yaml file from a CLI session directory.
 
@@ -132,8 +155,9 @@ class _CliSessionBuilder:
         self.current_assistant_command_runs = []
         self.current_assistant_timestamp = None
 
-    def build_tool_invocation(self, tool_call_id: str, tool_name: str, arguments: dict) -> tuple[ToolInvocation | None, CommandRun | None]:
+    def build_tool_invocation(self, tool_call_id: str, tool_name: str, arguments: object) -> tuple[ToolInvocation | None, CommandRun | None]:
         """Build a ToolInvocation or CommandRun from tool request data."""
+        argument_dict = _as_tool_argument_dict(arguments)
         # Get execution result if available
         execution = self.tool_executions.get(tool_call_id, {})
         complete_event = execution.get("complete")
@@ -156,19 +180,21 @@ class _CliSessionBuilder:
         mcp_tool_name = None
         if start_event:
             start_data = start_event.get("data", {})
-            start_args = start_data.get("arguments", {})
-            description = start_args.get("description")
-            mcp_server_name = start_data.get("mcpServerName")
-            mcp_tool_name = start_data.get("mcpToolName")
+            start_args = _as_tool_argument_dict(start_data.get("arguments", {}))
+            description = _get_tool_arg_str(start_args, "description") or None
+            server_name = start_data.get("mcpServerName")
+            tool_name_value = start_data.get("mcpToolName")
+            mcp_server_name = server_name if isinstance(server_name, str) else None
+            mcp_tool_name = tool_name_value if isinstance(tool_name_value, str) else None
         if not description:
-            description = arguments.get("description")
+            description = _get_tool_arg_str(argument_dict, "description") or None
 
         # Check if this is a shell/powershell command
         if tool_name in ("powershell", "bash", "shell", "run_command"):
-            command = arguments.get("command", "")
-            shell_mode = arguments.get("mode", "")
-            shell_id = arguments.get("shellId", "")
-            detach = arguments.get("detach", False)
+            command = _get_tool_arg_str(argument_dict, "command")
+            shell_mode = _get_tool_arg_str(argument_dict, "mode")
+            shell_id = _get_tool_arg_str(argument_dict, "shellId")
+            detach = argument_dict.get("detach", False)
             is_async = shell_mode in ("async", "background") or bool(detach)
             return None, CommandRun(
                 command=command,
@@ -182,17 +208,12 @@ class _CliSessionBuilder:
             )
         else:
             # Regular tool invocation
-            input_str = None
-            if arguments:
-                try:
-                    input_str = json.dumps(arguments)
-                except (TypeError, ValueError):
-                    input_str = str(arguments)
+            input_str = _serialize_tool_arguments(arguments)
 
             # Build invocation message for inline display
             invocation_message = _format_tool_display_message(
                 tool_name,
-                arguments,
+                argument_dict,
                 description,
                 mcp_server_name=mcp_server_name,
                 mcp_tool_name=mcp_tool_name,
@@ -207,11 +228,12 @@ class _CliSessionBuilder:
                 source_type="mcp" if mcp_server_name else None,
             ), None
 
-    def add_tool_inline(self, tool_call_id: str, tool_name: str, arguments: dict, *, intention_summary: str | None = None, tool_title: str | None = None) -> None:
+    def add_tool_inline(self, tool_call_id: str, tool_name: str, arguments: object, *, intention_summary: str | None = None, tool_title: str | None = None) -> None:
         """Add a tool invocation inline in the current assistant message."""
+        argument_dict = _as_tool_argument_dict(arguments)
         # Handle special meta-tools with pretty formatting
         if tool_name == "report_intent":
-            intent_text = arguments.get("intent", arguments.get("description", ""))
+            intent_text = _get_tool_arg_str(argument_dict, "intent") or _get_tool_arg_str(argument_dict, "description")
             if intent_text:
                 self.current_assistant_content_blocks.append(
                     ContentBlock(
@@ -222,7 +244,7 @@ class _CliSessionBuilder:
             return
 
         if tool_name == "skill":
-            skill_name = arguments.get("name", arguments.get("skill", ""))
+            skill_name = _get_tool_arg_str(argument_dict, "name") or _get_tool_arg_str(argument_dict, "skill")
             if skill_name:
                 self.current_assistant_content_blocks.append(
                     ContentBlock(
@@ -233,8 +255,9 @@ class _CliSessionBuilder:
             return
 
         if tool_name == "ask_user":
-            question = arguments.get("question") or arguments.get("message", "")
-            choices = arguments.get("choices", [])
+            question = _get_tool_arg_str(argument_dict, "question") or _get_tool_arg_str(argument_dict, "message")
+            choices_value = argument_dict.get("choices", [])
+            choices = choices_value if isinstance(choices_value, list) else []
             if question:
                 content = f"❓ {question}"
                 if choices:
@@ -278,7 +301,7 @@ class _CliSessionBuilder:
             "stop_powershell": "stop",
         }
         if tool_name in shell_interaction_tools:
-            shell_id = arguments.get("shellId", "")
+            shell_id = str(argument_dict.get("shellId", ""))
             action = shell_interaction_tools[tool_name]
             shell_title = self.shell_title_map.get(shell_id, shell_id) if shell_id else ""
             label = f"↩ {shell_title} — {action}" if shell_title else f"↩ shell — {action}"
@@ -293,7 +316,7 @@ class _CliSessionBuilder:
 
         # Resolve read_agent agent_id to display name
         if tool_name == "read_agent":
-            agent_id = arguments.get("agent_id", "")
+            agent_id = str(argument_dict.get("agent_id", ""))
             display = self.agent_display_names.get(agent_id, agent_id)
             resolved_msg = f"⏳ Checking agent {display}"
             self.current_assistant_content_blocks.append(ContentBlock(kind="toolInvocation", content=resolved_msg))
@@ -506,9 +529,9 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                         # Build display name from task tool arguments
                         start_info = tool_executions[tool_call_id].get("start")
                         if start_info:
-                            args = start_info.get("data", {}).get("arguments", {})
-                            agent_type = args.get("agent_type", "agent")
-                            desc = args.get("description", "")
+                            args = _as_tool_argument_dict(start_info.get("data", {}).get("arguments", {}))
+                            agent_type = _get_tool_arg_str(args, "agent_type", "agent")
+                            desc = _get_tool_arg_str(args, "description")
                             agent_display_names[bg_id] = f"{agent_type}: {desc}" if desc else agent_type
                     # Collect read_agent results for background agents
                     start_info = tool_executions[tool_call_id].get("start")
@@ -522,7 +545,8 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                         # Use the longer of content-after-Result vs detailedContent
                         best = result_from_content if len(result_from_content) > len(detailed) else detailed
                         if best:
-                            agent_id = start_info["data"].get("arguments", {}).get("agent_id", "")
+                            args = _as_tool_argument_dict(start_info["data"].get("arguments", {}))
+                            agent_id = str(args.get("agent_id", ""))
                             # Only keep the best (longest) result per agent
                             if len(best) > len(bg_agent_results.get(agent_id, "")):
                                 bg_agent_results[agent_id] = best
@@ -779,8 +803,8 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                 display_name = event_data.get("agentDisplayName") or event_data.get("agentName", "unknown")
                 tool_call_id = event_data.get("toolCallId", "")
                 req = builder.pending_tool_requests.get(tool_call_id, {})
-                req_args = req.get("arguments", {})
-                description = req_args.get("description", "")
+                req_args = _as_tool_argument_dict(req.get("arguments", {}))
+                description = _get_tool_arg_str(req_args, "description")
                 failed = tool_call_id in builder.subagent_failures
                 completed = tool_call_id in builder.subagent_completions
                 # Title includes status indicator for template
@@ -871,7 +895,7 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                     content=content,
                     description=title,
                     child_message=child_msg,
-                    prompt=req_args.get("prompt", ""),
+                    prompt=_get_tool_arg_str(req_args, "prompt"),
                     is_background=is_bg,
                     agent_id=bg_id if is_bg else "",
                 )
@@ -885,8 +909,8 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                 display_name = event_data.get("agentDisplayName") or event_data.get("agentName", "unknown")
                 tool_call_id = event_data.get("toolCallId", "")
                 req = builder.pending_tool_requests.get(tool_call_id, {})
-                req_args = req.get("arguments", {})
-                description = req_args.get("description", "")
+                req_args = _as_tool_argument_dict(req.get("arguments", {}))
+                description = _get_tool_arg_str(req_args, "description")
                 label = f"{display_name}: {description} — completed" if description else f"{display_name} — completed"
                 builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=label, description="subagent"))
 
@@ -894,8 +918,8 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                 display_name = event_data.get("agentDisplayName") or event_data.get("agentName", "unknown")
                 tool_call_id = event_data.get("toolCallId", "")
                 req = builder.pending_tool_requests.get(tool_call_id, {})
-                req_args = req.get("arguments", {})
-                description = req_args.get("description", "")
+                req_args = _as_tool_argument_dict(req.get("arguments", {}))
+                description = _get_tool_arg_str(req_args, "description")
                 label = f"{display_name}: {description} — failed" if description else f"{display_name} — failed"
                 builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=label, description="subagent-error"))
 
@@ -927,6 +951,11 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                 branch = event_data.get("branch") or ""
                 branch_info = f" ({branch})" if branch else ""
                 builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=f"Context changed: {cwd}{branch_info}", description="context-change"))
+
+            elif event_type == "session.remote_steerable_changed":
+                remote_steerable = event_data.get("remoteSteerable")
+                state = "enabled" if remote_steerable else "disabled"
+                builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=f"Remote steering {state}", description="remote-steering"))
 
             elif event_type == "session.plan_changed":
                 operation = event_data.get("operation") or "changed"
@@ -1021,9 +1050,23 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                 "exit_plan_mode.completed",
                 # Internal state tracking
                 "pending_messages.modified",
+                # Ephemeral SDK/client dispatch events. Slash-command chat content
+                # persists through user.message/session.mode_changed instead.
+                "capabilities.changed",
+                "command.execute",
+                "commands.changed",
+                "mcp.oauth_completed",
+                "mcp.oauth_required",
+                "sampling.completed",
+                "sampling.requested",
                 "session.background_tasks_changed",
+                "session.custom_agents_updated",
+                "session.extensions_loaded",
                 "session.idle",
                 "session.import_legacy",
+                "session.mcp_server_status_changed",
+                "session.mcp_servers_loaded",
+                "session.skills_loaded",
                 "session.snapshot_rewind",
                 "session.tools_updated",
                 "session.usage_info",
