@@ -2740,12 +2740,24 @@ class TestCLIv105EventHandlers:
             "assistant.reasoning_delta",
             "assistant.streaming_delta",
             "assistant.intent",
+            "capabilities.changed",
+            "command.execute",
+            "commands.changed",
             "exit_plan_mode.requested",
             "exit_plan_mode.completed",
+            "mcp.oauth_completed",
+            "mcp.oauth_required",
             "pending_messages.modified",
+            "sampling.completed",
+            "sampling.requested",
             "session.background_tasks_changed",
+            "session.custom_agents_updated",
+            "session.extensions_loaded",
             "session.idle",
             "session.import_legacy",
+            "session.mcp_server_status_changed",
+            "session.mcp_servers_loaded",
+            "session.skills_loaded",
             "session.snapshot_rewind",
             "session.tools_updated",
             "session.usage_info",
@@ -2800,6 +2812,53 @@ class TestCLIv105EventHandlers:
         # Only the text block from assistant.message, no hook-related blocks
         status_blocks = [b for b in all_blocks if b.kind == "status"]
         assert len(status_blocks) == 0
+
+    def test_remote_steerable_changed_renders_status(self, tmp_path):
+        """session.remote_steerable_changed should render the remote steering state."""
+        session = self._parse(
+            tmp_path,
+            {"type": "user.message", "data": {"content": "Start remote work"}},
+            {"type": "assistant.message", "data": {"content": "Starting."}},
+            {"type": "session.remote_steerable_changed", "data": {"remoteSteerable": True}},
+        )
+        blocks = self._find_status_blocks(session, "remote-steering")
+        assert len(blocks) == 1
+        assert blocks[0].content == "Remote steering enabled"
+
+    def test_freeform_tool_string_arguments_parse(self, tmp_path):
+        """Freeform tools like apply_patch can store arguments as a raw string."""
+        patch = "*** Begin Patch\n*** Add File: example.txt\n+hello\n*** End Patch\n"
+        tool_call_id = "custom_call_string_args"
+
+        session = self._parse(
+            tmp_path,
+            {"type": "user.message", "data": {"content": "Add the file"}},
+            {"type": "assistant.message", "data": {"content": "Applying the patch."}},
+            {
+                "type": "tool.execution_start",
+                "data": {
+                    "toolCallId": tool_call_id,
+                    "toolName": "apply_patch",
+                    "arguments": patch,
+                },
+            },
+            {
+                "type": "tool.execution_complete",
+                "data": {
+                    "toolCallId": tool_call_id,
+                    "success": True,
+                    "result": {"content": "Modified 1 file(s): example.txt"},
+                },
+            },
+        )
+
+        assert session is not None
+        assistant = session.messages[1]
+        assert assistant.tool_invocations[0].name == "apply_patch"
+        assert assistant.tool_invocations[0].input == patch
+        assert assistant.tool_invocations[0].status == "success"
+        tool_blocks = [block for block in assistant.content_blocks if block.kind == "toolInvocation"]
+        assert tool_blocks[0].content == "apply_patch"
 
     # ---- T7: session.title_changed ----
 
