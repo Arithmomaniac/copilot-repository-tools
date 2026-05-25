@@ -761,6 +761,22 @@ def _rich_session() -> ChatSession:
     )
 
 
+def _system_message_session() -> ChatSession:
+    """Session containing a system-role message for include/exclude testing."""
+    return ChatSession(
+        session_id="system-md-test",
+        workspace_name="test-ws",
+        workspace_path="/test",
+        messages=[
+            ChatMessage(role="user", content="Hello"),
+            ChatMessage(role="system", content="Hidden by default"),
+            ChatMessage(role="assistant", content="Done"),
+        ],
+        created_at="1704067200000",
+        vscode_edition="stable",
+    )
+
+
 class TestEmojiPrefixes:
     """Emoji prefixes appear on tool, file, and command summary lines."""
 
@@ -871,3 +887,25 @@ class TestContentSetEdgeCases:
         md_none = session_to_markdown(session, content_set=None)
         md_explicit = session_to_markdown(session, content_set=DEFAULT_INCLUDES.copy())
         assert md_none == md_explicit
+
+
+class TestSystemMessagesContentSet:
+    """System-role message inclusion/exclusion in markdown export."""
+
+    def test_system_messages_omitted_by_default(self):
+        """System messages are omitted when content_set uses defaults."""
+        md = session_to_markdown(_system_message_session())
+        assert "Hidden by default" not in md
+        assert "## Message 2: **SYSTEM**" not in md
+
+    def test_system_messages_included_when_requested(self):
+        """Adding system-messages includes system-role content."""
+        md = session_to_markdown(_system_message_session(), content_set={"agent-details", "tools", "commands", "file-changes", "system-messages"})
+        assert "Hidden by default" in md
+        assert "## Message 2: **SYSTEM**" in md
+
+    def test_system_messages_excluded_when_not_in_content_set(self):
+        """System messages are omitted when explicitly excluded from a full set."""
+        full_set = {"thinking", "diffs", "tool-inputs", "agent-details", "tools", "commands", "file-changes", "system-messages"}
+        md = session_to_markdown(_system_message_session(), content_set=full_set - {"system-messages"})
+        assert "Hidden by default" not in md

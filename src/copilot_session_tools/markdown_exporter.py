@@ -227,7 +227,7 @@ def session_to_markdown(
         session: The ChatSession to convert.
         content_set: Controls which content types to include.
             Supported keys: "diffs", "tool-inputs", "thinking", "agent-details",
-            "tools", "commands", "file-changes".
+            "tools", "commands", "file-changes", "system-messages".
             If None, uses DEFAULT_INCLUDES from content_types module.
 
     Returns:
@@ -245,6 +245,7 @@ def session_to_markdown(
     include_tools = "tools" in content_set
     include_commands = "commands" in content_set
     include_file_changes = "file-changes" in content_set
+    include_system_messages = "system-messages" in content_set
     lines = []
 
     # Header block with metadata
@@ -294,6 +295,8 @@ def session_to_markdown(
 
     # Messages
     for i, message in enumerate(session.messages, 1):
+        if message.role == "system" and not include_system_messages:
+            continue
         msg_md = message_to_markdown(
             message,
             message_number=i,

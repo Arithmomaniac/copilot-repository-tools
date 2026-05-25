@@ -994,6 +994,32 @@ header h1 {
     display: inline-block;
 }
 
+.system-message-details {
+    opacity: 0.85;
+}
+
+.system-message-details > summary {
+    cursor: pointer;
+    list-style: none;
+}
+
+.system-message-details > summary::-webkit-details-marker {
+    display: none;
+}
+
+.system-message-details > summary .collapsible-icon {
+    display: inline-block;
+    color: var(--text-secondary);
+}
+
+.system-message-details[open] > summary .collapsible-icon {
+    transform: rotate(90deg);
+}
+
+.expand-system-messages .system-message-details {
+    opacity: 1;
+}
+
 /* Agent back-link */
 .agent-backlink {
     display: inline-flex;
@@ -2514,6 +2540,7 @@ input:checked + .toggle-switch::after {
         buildContentSet() {
           const set = [];
           if (this.thinking) set.push('thinking');
+          set.push('system-messages');
           if (this.diffs) set.push('diffs');
           if (this.toolInputs) set.push('tool-inputs');
           if (this.agentDetails) set.push('agent-details');
@@ -3331,6 +3358,29 @@ input:checked + .toggle-switch::after {
                 <div class="system-notification-indicator">
                     🔔 {{ message.content | replace('<system_notification>', '') | replace('</system_notification>', '') | truncate(100) | safe }}
                 </div>
+            </div>
+            {% elif message.role == 'system' %}
+            <div class="message system" id="msg-{{ loop.index }}">
+                <details class="system-message-details"{% if static and include_system_messages %} open{% endif %}>
+                    <summary class="message-header">
+                        <span class="collapsible-icon" aria-hidden="true">▶</span>
+                        <div class="message-role">{{ message.role }}</div>
+                        {% if message.timestamp %}
+                        <span class="message-timestamp">{{ message.timestamp | format_timestamp }}</span>
+                        {% endif %}
+                        <a href="#msg-{{ loop.index }}" class="message-anchor" title="Link to this message" onclick="event.stopPropagation()">#{{ loop.index }}</a>
+                        {% if not static %}
+                        <button type="button" class="message-copy-btn" data-message-index="{{ loop.index }}" data-session-id="{{ session.session_id }}" title="Copy this message as markdown" aria-label="Copy message as markdown" onclick="event.stopPropagation()">
+                            <i class="fa-regular fa-copy"></i>
+                        </button>
+                        {% endif %}
+                    </summary>
+                    <div class="message-content">
+                        <div class="message-content-inner">
+                        {{ render_content_blocks(message.content_blocks, message.tool_invocations, message.file_changes, message.command_runs, msg_meta, message.content) }}
+                        </div>
+                    </div>
+                </details>
             </div>
             {% else %}
             <div class="message {{ message.role }}" id="msg-{{ loop.index }}">

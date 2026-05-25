@@ -27,6 +27,11 @@ def runner():
 class TestResolveContentSet:
     """Unit tests for resolve_content_set()."""
 
+    def test_system_messages_token_registered(self):
+        """system-messages is a valid export content token."""
+        assert "system-messages" in CONTENT_TYPES
+        assert "system-messages" not in DEFAULT_INCLUDES
+
     def test_resolve_default(self):
         """Default content_set matches DEFAULT_INCLUDES."""
         result = resolve_content_set()
@@ -121,7 +126,7 @@ class TestResolveSearchContentSet:
     """Unit tests for resolve_search_content_set()."""
 
     def test_default_returns_all_tokens(self):
-        """No args → all 8 search tokens."""
+        """No args → all search tokens."""
         result = resolve_search_content_set()
         assert result == SEARCH_DEFAULT_INCLUDES
         assert len(result) == 8
@@ -143,7 +148,7 @@ class TestResolveSearchContentSet:
         assert result == {"tool-inputs", "tools"}
 
     def test_exclude_messages(self):
-        """--exclude messages → 7 tokens remaining."""
+        """--exclude messages removes only messages token."""
         result = resolve_search_content_set(exclude=["messages"])
         assert "messages" not in result
         assert len(result) == 7

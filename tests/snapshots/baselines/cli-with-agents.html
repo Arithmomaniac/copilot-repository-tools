@@ -935,6 +935,32 @@ header h1 {
     display: inline-block;
 }
 
+.system-message-details {
+    opacity: 0.85;
+}
+
+.system-message-details > summary {
+    cursor: pointer;
+    list-style: none;
+}
+
+.system-message-details > summary::-webkit-details-marker {
+    display: none;
+}
+
+.system-message-details > summary .collapsible-icon {
+    display: inline-block;
+    color: var(--text-secondary);
+}
+
+.system-message-details[open] > summary .collapsible-icon {
+    transform: rotate(90deg);
+}
+
+.expand-system-messages .system-message-details {
+    opacity: 1;
+}
+
 /* Agent back-link */
 .agent-backlink {
     display: inline-flex;

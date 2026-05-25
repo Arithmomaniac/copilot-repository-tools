@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **Web Viewer / HTML Export**: `role == "system"` messages now render as collapsible `<details>` blocks with a chevron, collapsed by default and expandable inline.
+- **Content Types / Exporters**: New `system-messages` content type for `--include/--exclude`. In markdown export, system messages are omitted unless included. In HTML export, system messages always render but are collapsed by default; including `system-messages` opens them by default.
+
 ## [0.10.3] - 2026-04-05
 
 ### Added

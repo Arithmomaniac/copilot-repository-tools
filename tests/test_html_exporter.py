@@ -108,6 +108,22 @@ def session_with_thinking():
     )
 
 
+@pytest.fixture
+def session_with_system_message():
+    """Create a session containing a system-role message."""
+    return ChatSession(
+        session_id="system-test-session",
+        workspace_name="system-project",
+        workspace_path="/home/user/system-project",
+        messages=[
+            ChatMessage(role="user", content="Hello"),
+            ChatMessage(role="system", content="System instructions go here"),
+            ChatMessage(role="assistant", content="Got it"),
+        ],
+        vscode_edition="stable",
+    )
+
+
 class TestSessionToHtml:
     """Tests for session_to_html function."""
 
@@ -241,6 +257,21 @@ class TestSessionToHtml:
         assert "alpinejs" not in html
         assert 'x-data="' not in html
         assert '<button class="settings-btn"' not in html
+
+    def test_system_messages_collapsed_by_default_in_static_export(self, session_with_system_message):
+        """System-role messages render as collapsed details by default."""
+        html = session_to_html(session_with_system_message)
+        assert '<details class="system-message-details">' in html
+        assert '<span class="collapsible-icon" aria-hidden="true">▶</span>' in html
+        assert '<a href="#msg-2" class="message-anchor"' in html
+        assert "System instructions go here" in html
+        assert 'class="system-message-details" open' not in html
+
+    def test_system_messages_expand_when_included(self, session_with_system_message):
+        """Including system-messages opens system details by default in static export."""
+        html = session_to_html(session_with_system_message, content_set={"agent-details", "tools", "commands", "file-changes", "system-messages"})
+        assert 'class="system-message-details" open' in html
+        assert "expand-system-messages" in html
 
 
 class TestExportSessionToHtmlFile:

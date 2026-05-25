@@ -14,6 +14,7 @@ import typer
 
 CONTENT_TYPES: dict[str, str] = {
     "thinking": "Include thinking/reasoning blocks",
+    "system-messages": "Expand system-role messages by default",
     "diffs": "Include file change diffs",
     "tool-inputs": "Include tool input parameters",
     "agent-details": "Include full agent/subagent content",
