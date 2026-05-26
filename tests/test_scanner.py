@@ -1558,6 +1558,61 @@ class TestCLINewEventHandlers:
         assert len(blocks) == 1
         assert blocks[0].content == "🔄 Session handoff from vscode (octocat/hello-world)"
 
+    # --- session.info fork ---
+
+    def test_session_info_fork_renders_status(self, tmp_path):
+        current_session_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+        session_id = "12345678-1234-1234-1234-123456789abc"
+        session = self._parse(
+            tmp_path,
+            {"type": "session.start", "data": {"sessionId": current_session_id, "startTime": "2026-01-01T00:00:00Z"}},
+            {"type": "session.info", "data": {"infoType": "fork", "message": f'Forked this session into "new-session" ({session_id}).'}},
+        )
+        blocks = self._find_status_blocks(session, "fork")
+        assert len(blocks) == 1
+        assert blocks[0].content == f"Forked as [new-session](/session/{session_id})."
+
+    def test_session_info_fork_links_parent_but_not_self(self, tmp_path):
+        source_id = "11111111-1111-1111-1111-111111111111"
+        fork_id = "22222222-2222-2222-2222-222222222222"
+        event_id = "33333333-3333-3333-3333-333333333333"
+        session = self._parse(
+            tmp_path,
+            {"type": "session.start", "data": {"sessionId": fork_id, "startTime": "2026-01-01T00:00:00Z"}},
+            {"type": "session.info", "data": {"infoType": "fork", "message": f"Forked from {source_id} before event {event_id} as {fork_id}."}},
+        )
+        blocks = self._find_status_blocks(session, "fork")
+        assert len(blocks) == 1
+        assert blocks[0].content == f"Forked from [11111111](/session/{source_id}) before event {event_id}."
+
+    def test_session_info_fork_escapes_markdown_link_text(self, tmp_path):
+        current_session_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+        fork_id = "11111111-1111-1111-1111-111111111111"
+        session = self._parse(
+            tmp_path,
+            {"type": "session.start", "data": {"sessionId": current_session_id, "startTime": "2026-01-01T00:00:00Z"}},
+            {
+                "type": "session.info",
+                "data": {
+                    "infoType": "fork",
+                    "message": f'Forked this session into "<img src=x onerror=alert(1)> [oops]" ({fork_id}).',
+                },
+            },
+        )
+        blocks = self._find_status_blocks(session, "fork")
+        assert len(blocks) == 1
+        assert blocks[0].content == f"Forked as [&lt;img src=x onerror=alert(1)&gt; \\[oops\\]](/session/{fork_id})."
+
+    def test_session_info_non_fork_still_skipped(self, tmp_path):
+        session = self._parse(
+            tmp_path,
+            {"type": "user.message", "data": {"content": "Hello"}},
+            {"type": "assistant.message", "data": {"content": "Hi"}},
+            {"type": "session.info", "data": {"infoType": "authentication", "message": "Logged in."}},
+        )
+        assert session is not None
+        assert self._find_status_blocks(session, "fork") == []
+
     # --- session.warning ---
 
     def test_session_warning(self, tmp_path):
@@ -1683,8 +1738,6 @@ class TestCLINewEventHandlers:
             {"type": "assistant.turn_start", "data": {}},
             {"type": "assistant.turn_end", "data": {}},
             {"type": "session.resume", "data": {}},
-            {"type": "session.truncation", "data": {}},
-            {"type": "session.workspace_file_changed", "data": {}},
         ]
         session = self._parse(tmp_path, *internal_events)
         # Internal events add no content, so parser returns None (no messages)
@@ -1695,27 +1748,66 @@ class TestCLINewEventHandlers:
             all_blocks.extend(msg.content_blocks)
         assert len(all_blocks) == 0
 
-    def test_skip_ephemeral_events(self, tmp_path):
-        """Ephemeral events from v0.0.422+ schema should produce no content blocks."""
-        ephemeral_events = [
-            {"type": "permission.requested", "data": {"requestId": "r1", "permissionRequest": {"kind": "shell"}}},
-            {"type": "permission.completed", "data": {"requestId": "r1"}},
-            {"type": "elicitation.requested", "data": {"requestId": "r2", "message": "Choose:", "requestedSchema": {}}},
-            {"type": "elicitation.completed", "data": {"requestId": "r2"}},
-            {"type": "user_input.requested", "data": {"requestId": "r3", "question": "Continue?"}},
-            {"type": "user_input.completed", "data": {"requestId": "r3"}},
-            {"type": "external_tool.requested", "data": {"requestId": "r4", "toolName": "ext"}},
-            {"type": "external_tool.completed", "data": {"requestId": "r4"}},
-            {"type": "command.queued", "data": {"requestId": "r5", "command": "npm test"}},
-            {"type": "command.completed", "data": {"requestId": "r5"}},
+    def test_permission_and_user_input_events_render(self, tmp_path):
+        """Prompt-style CLI events should preserve user-visible interaction context."""
+        session = self._parse(
+            tmp_path,
+            {"type": "user.message", "data": {"content": "Do the thing"}},
+            {"type": "assistant.message", "data": {"content": "I need confirmation."}},
+            {
+                "type": "permission.requested",
+                "data": {"requestId": "r1", "permissionRequest": {"kind": "shell", "command": "npm test"}},
+            },
+            {"type": "permission.completed", "data": {"requestId": "r1", "result": {"kind": "approved"}}},
+            {"type": "user_input.requested", "data": {"requestId": "r2", "question": "Continue?", "choices": ["yes", "no"]}},
+            {"type": "user_input.completed", "data": {"requestId": "r2", "answer": "yes"}},
+        )
+
+        assert session is not None
+        permission_blocks = self._find_status_blocks(session, "permission")
+        assert [block.content for block in permission_blocks] == [
+            "Permission requested: shell - npm test",
+            "Permission approved",
         ]
-        session = self._parse(tmp_path, *ephemeral_events)
-        if session is None:
-            return
-        all_blocks = []
-        for msg in session.messages:
-            all_blocks.extend(msg.content_blocks)
-        assert len(all_blocks) == 0
+        ask_blocks = [block for msg in session.messages for block in msg.content_blocks if block.kind == "ask_user"]
+        assert len(ask_blocks) == 1
+        assert "Continue?" in ask_blocks[0].content
+        assert "yes, no" in ask_blocks[0].content
+        user_input_status = self._find_status_blocks(session, "user-input")
+        assert user_input_status[0].content == "User answered: yes"
+
+    def test_new_status_events_render(self, tmp_path):
+        """Recent runtime status events should not be dropped from CLI sessions."""
+        session = self._parse(
+            tmp_path,
+            {"type": "user.message", "data": {"content": "Run checks"}},
+            {"type": "assistant.message", "data": {"content": "Working."}},
+            {"type": "external_tool.requested", "data": {"requestId": "r4", "toolName": "ext"}},
+            {"type": "command.queued", "data": {"requestId": "r5", "command": "npm test"}},
+            {"type": "session.truncation", "data": {"reason": "context_window"}},
+            {"type": "session.workspace_file_changed", "data": {"operation": "updated", "path": "src/app.py"}},
+            {"type": "system.notification", "data": {"content": "Shell command completed"}},
+            {"type": "hook.end", "data": {"hookType": "postToolUse", "success": False, "error": "blocked"}},
+        )
+
+        assert session is not None
+        assert self._find_status_blocks(session, "external-tool")[0].content == "External tool requested: ext"
+        assert self._find_status_blocks(session, "command")[0].content == "Command queued: npm test"
+        assert self._find_status_blocks(session, "truncation")[0].content == "Context truncated: context_window"
+        assert self._find_status_blocks(session, "workspace-file")[0].content == "Workspace file changed: updated src/app.py"
+        assert self._find_status_blocks(session, "notification")[0].content == "Shell command completed"
+        assert self._find_status_blocks(session, "hook-error")[0].content == "Hook failed: postToolUse - blocked"
+
+    def test_status_event_payloads_strip_ansi_codes(self, tmp_path):
+        """Runtime status payloads can contain terminal output with ANSI escapes."""
+        session = self._parse(
+            tmp_path,
+            {"type": "assistant.message", "data": {"content": "Working."}},
+            {"type": "hook.end", "data": {"hookType": "postToolUse", "success": False, "error": "\x1b[31mblocked\x1b[0m"}},
+        )
+
+        assert session is not None
+        assert self._find_status_blocks(session, "hook-error")[0].content == "Hook failed: postToolUse - blocked"
 
 
 class TestCLISubagentBrackets:
@@ -2735,22 +2827,21 @@ class TestCLIv105EventHandlers:
         [
             "hook.start",
             "hook.end",
-            "system.notification",
             "assistant.message_delta",
+            "assistant.message_start",
             "assistant.reasoning_delta",
             "assistant.streaming_delta",
-            "assistant.intent",
             "capabilities.changed",
-            "command.execute",
             "commands.changed",
             "exit_plan_mode.requested",
             "exit_plan_mode.completed",
-            "mcp.oauth_completed",
-            "mcp.oauth_required",
             "pending_messages.modified",
             "sampling.completed",
             "sampling.requested",
             "session.background_tasks_changed",
+            "session.canvas.opened",
+            "session.canvas.registry_changed",
+            "session.custom_notification",
             "session.custom_agents_updated",
             "session.extensions_loaded",
             "session.idle",
@@ -2761,8 +2852,6 @@ class TestCLIv105EventHandlers:
             "session.snapshot_rewind",
             "session.tools_updated",
             "session.usage_info",
-            "tool.execution_partial_result",
-            "tool.execution_progress",
             "subagent.selected",
             "subagent.deselected",
         ],

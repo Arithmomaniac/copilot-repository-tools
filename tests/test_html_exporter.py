@@ -132,6 +132,32 @@ class TestSessionToHtml:
         assert "Hello, can you help me?" in html
         assert "Sure, I can help!" in html
 
+    def test_fork_status_escaped_session_name_is_not_rendered_as_html(self):
+        """Test that escaped fork link labels remain text when rendered as Markdown."""
+        session_id = "11111111-1111-1111-1111-111111111111"
+        session = ChatSession(
+            session_id="fork-xss-test",
+            workspace_name="fork-project",
+            workspace_path="/home/user/fork-project",
+            messages=[
+                ChatMessage(
+                    role="assistant",
+                    content="",
+                    content_blocks=[
+                        ContentBlock(
+                            kind="status",
+                            content=f"Forked as [&lt;img src=x onerror=alert(1)&gt;](/session/{session_id}).",
+                            description="fork",
+                        )
+                    ],
+                )
+            ],
+        )
+
+        html = session_to_html(session)
+        assert '<a href="/session/11111111-1111-1111-1111-111111111111">&lt;img src=x onerror=alert(1)&gt;</a>' in html
+        assert "<img src=x" not in html
+
     def test_static_mode_no_toolbar(self, sample_session):
         """Test that static HTML has no copy toolbar HTML element."""
         html = session_to_html(sample_session)
