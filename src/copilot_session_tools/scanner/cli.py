@@ -1,7 +1,10 @@
 """GitHub Copilot CLI session parsing."""
 
+import html
 import json
+import re
 from pathlib import Path
+from typing import cast
 
 import ssrjson
 
@@ -18,6 +21,14 @@ from .models import (
     ShellIOEntry,
     ToolInvocation,
 )
+
+_ANSI_ESCAPE_PATTERN = re.compile(r"\x1b(?:\[[0-9;]*[A-Za-z]|\][^\x07]*\x07|\][^\x1b]*\x1b\\)")
+_SESSION_ID_PATTERN = r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+_SESSION_REFERENCE_PATTERN = re.compile(
+    rf'(?:"(?P<name>[^"\n]+)" \((?P<named_id>{_SESSION_ID_PATTERN})\)|(?P<bare_id>{_SESSION_ID_PATTERN}))',
+    re.IGNORECASE,
+)
+_FORK_BOUNDARY_PATTERN = re.compile(rf" before event (?P<event_id>{_SESSION_ID_PATTERN})", re.IGNORECASE)
 
 
 def _as_tool_argument_dict(arguments: object) -> dict[str, object]:
@@ -41,6 +52,199 @@ def _get_tool_arg_str(arguments: dict[str, object], key: str, default: str = "")
     """Get a string-valued tool argument."""
     value = arguments.get(key)
     return value if isinstance(value, str) else default
+
+
+def _stringify_event_value(value: object) -> str:
+    """Return a compact display string for structured event payload values."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return _ANSI_ESCAPE_PATTERN.sub("", value).strip()
+    if isinstance(value, bool | int | float):
+        return str(value)
+    if isinstance(value, list):
+        value_list = cast("list[object]", value)
+        parts = [_stringify_event_value(item) for item in value_list[:5]]
+        text = ", ".join(part for part in parts if part)
+        if len(value_list) > 5:
+            text += f", ... (+{len(value_list) - 5} more)" if text else f"+{len(value_list) - 5} more"
+        return text
+    if isinstance(value, dict):
+        value_dict = cast("dict[str, object]", value)
+        for key in (
+            "message",
+            "content",
+            "text",
+            "value",
+            "answer",
+            "command",
+            "commandName",
+            "toolName",
+            "serverName",
+            "url",
+            "path",
+            "name",
+            "kind",
+            "action",
+            "operation",
+            "reason",
+            "error",
+        ):
+            if key in value_dict:
+                text = _stringify_event_value(value_dict.get(key))
+                if text:
+                    return text
+        return ", ".join(f"{key}={_stringify_event_value(val)}" for key, val in value_dict.items() if _stringify_event_value(val))
+    return str(value).strip()
+
+
+def _format_permission_request(event_data: dict) -> str:
+    request = event_data.get("permissionRequest")
+    prompt = event_data.get("promptRequest")
+    request_dict = request if isinstance(request, dict) else {}
+    prompt_dict = prompt if isinstance(prompt, dict) else {}
+
+    kind = request_dict.get("kind") or prompt_dict.get("kind") or "permission"
+    details = _stringify_event_value(request_dict.get("command") or request_dict.get("path") or request_dict.get("url") or request_dict.get("toolName"))
+    if not details:
+        details = _stringify_event_value(prompt_dict.get("commands") or prompt_dict.get("path") or prompt_dict.get("url"))
+    content = f"Permission requested: {kind}"
+    return f"{content} - {details}" if details else content
+
+
+def _format_permission_result(event_data: dict) -> str:
+    result = event_data.get("result")
+    result_dict = result if isinstance(result, dict) else {}
+    verdict = result_dict.get("kind") or result_dict.get("decision") or result_dict.get("type") or _stringify_event_value(result)
+    return f"Permission {verdict}" if verdict else "Permission completed"
+
+
+def _format_fork_session_reference(match: re.Match[str], current_session_id: str) -> str:
+    session_id = match.group("named_id") or match.group("bare_id")
+    display = match.group("name") or session_id[:8]
+    safe_display = _escape_markdown_text(display)
+    if session_id.lower() == current_session_id.lower():
+        return safe_display
+    return f"[{safe_display}](/session/{session_id})"
+
+
+def _escape_markdown_text(text: str) -> str:
+    escaped = html.escape(text, quote=False)
+    return escaped.replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
+
+
+def _format_fork_info_message(message: str, current_session_id: str) -> str:
+    references = list(_SESSION_REFERENCE_PATTERN.finditer(message))
+    if not references:
+        return _escape_markdown_text(message)
+
+    boundary_match = _FORK_BOUNDARY_PATTERN.search(message)
+    boundary = f" before event {boundary_match.group('event_id')}" if boundary_match else ""
+
+    if message.startswith("Forked this session into "):
+        return f"Forked as {_format_fork_session_reference(references[0], current_session_id)}{boundary}."
+
+    if message.startswith("Forked from "):
+        return f"Forked from {_format_fork_session_reference(references[0], current_session_id)}{boundary}."
+
+    parts: list[str] = []
+    position = 0
+    for reference in references:
+        parts.append(_escape_markdown_text(message[position : reference.start()]))
+        parts.append(_format_fork_session_reference(reference, current_session_id))
+        position = reference.end()
+    parts.append(_escape_markdown_text(message[position:]))
+    return "".join(parts)
+
+
+def _format_session_event_status(event_type: str, event_data: dict) -> tuple[str, str] | None:
+    """Format newer CLI event types that carry user-visible status."""
+    if event_type == "auto_mode_switch.requested":
+        code = event_data.get("errorCode")
+        retry = event_data.get("retryAfterSeconds")
+        details = f" ({code})" if code else ""
+        if retry:
+            details += f", retry after {retry}s"
+        return f"Auto mode switch requested{details}", "auto-mode"
+    if event_type == "auto_mode_switch.completed":
+        response = _stringify_event_value(event_data.get("response"))
+        return f"Auto mode switch completed: {response}" if response else "Auto mode switch completed", "auto-mode"
+    if event_type == "command.queued":
+        command = _stringify_event_value(event_data.get("command"))
+        return f"Command queued: {command}" if command else "Command queued", "command"
+    if event_type == "command.execute":
+        command = _stringify_event_value(event_data.get("command") or event_data.get("commandName"))
+        return f"Command executed: {command}" if command else "Command executed", "command"
+    if event_type == "command.completed":
+        return "Command completed", "command"
+    if event_type == "external_tool.requested":
+        tool_name = _stringify_event_value(event_data.get("toolName"))
+        return f"External tool requested: {tool_name}" if tool_name else "External tool requested", "external-tool"
+    if event_type == "external_tool.completed":
+        return "External tool completed", "external-tool"
+    if event_type == "hook.end" and not event_data.get("success", True):
+        hook_type = _stringify_event_value(event_data.get("hookType"))
+        error = _stringify_event_value(event_data.get("error"))
+        label = f"Hook failed: {hook_type}" if hook_type else "Hook failed"
+        return f"{label} - {error}" if error else label, "hook-error"
+    if event_type == "mcp_app.tool_call_complete":
+        server = _stringify_event_value(event_data.get("serverName"))
+        tool = _stringify_event_value(event_data.get("toolName"))
+        success = event_data.get("success")
+        label = "MCP app tool completed"
+        if server or tool:
+            label += f": {server}/{tool}" if server and tool else f": {server or tool}"
+        if success is False:
+            error = _stringify_event_value(event_data.get("error"))
+            label += f" - failed: {error}" if error else " - failed"
+        return label, "mcp-app"
+    if event_type == "mcp.oauth_required":
+        server = _stringify_event_value(event_data.get("serverName") or event_data.get("serverUrl"))
+        return f"MCP OAuth required: {server}" if server else "MCP OAuth required", "mcp-oauth"
+    if event_type == "mcp.oauth_completed":
+        return "MCP OAuth completed", "mcp-oauth"
+    if event_type == "model.call_failure":
+        source = _stringify_event_value(event_data.get("source"))
+        error = _stringify_event_value(event_data.get("error") or event_data.get("message"))
+        label = f"Model call failed: {source}" if source else "Model call failed"
+        return f"{label} - {error}" if error else label, "error"
+    if event_type == "permission.requested":
+        return _format_permission_request(event_data), "permission"
+    if event_type == "permission.completed":
+        return _format_permission_result(event_data), "permission"
+    if event_type == "session.compaction_start":
+        tokens = [event_data.get("systemTokens"), event_data.get("conversationTokens"), event_data.get("toolDefinitionsTokens")]
+        token_text = ", ".join(f"{int(token):,}" for token in tokens if isinstance(token, int | float))
+        return f"Compaction started ({token_text} tokens)" if token_text else "Compaction started", "compaction"
+    if event_type == "session.schedule_created":
+        prompt = _stringify_event_value(event_data.get("prompt"))
+        interval = _stringify_event_value(event_data.get("interval"))
+        details = " | ".join(part for part in (interval, prompt) if part)
+        return f"Schedule created: {details}" if details else "Schedule created", "schedule"
+    if event_type == "session.schedule_cancelled":
+        schedule_id = _stringify_event_value(event_data.get("id") or event_data.get("scheduleId"))
+        return f"Schedule cancelled: {schedule_id}" if schedule_id else "Schedule cancelled", "schedule"
+    if event_type == "session.truncation":
+        reason = _stringify_event_value(event_data.get("reason"))
+        return f"Context truncated: {reason}" if reason else "Context truncated", "truncation"
+    if event_type == "session.workspace_file_changed":
+        operation = _stringify_event_value(event_data.get("operation"))
+        path = _stringify_event_value(event_data.get("path"))
+        details = " ".join(part for part in (operation, path) if part)
+        return f"Workspace file changed: {details}" if details else "Workspace file changed", "workspace-file"
+    if event_type == "system.notification":
+        content = _stringify_event_value(event_data.get("content"))
+        kind = _stringify_event_value(event_data.get("kind"))
+        if content:
+            return content, "notification"
+        return f"System notification: {kind}" if kind else "System notification", "notification"
+    if event_type == "tool.execution_progress":
+        progress = _stringify_event_value(event_data.get("progressMessage"))
+        return f"Tool progress: {progress}" if progress else "Tool progress", "tool-progress"
+    if event_type == "tool.execution_partial_result":
+        partial = _stringify_event_value(event_data.get("partialOutput"))
+        return f"Tool partial result: {partial}" if partial else "Tool partial result", "tool-progress"
+    return None
 
 
 def _parse_workspace_yaml(session_dir: Path) -> dict[str, str]:
@@ -759,6 +963,16 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                         )
                     )
 
+            elif event_type == "assistant.intent":
+                intent_text = (event_data.get("intent") or "").strip()
+                if intent_text:
+                    builder.current_assistant_content_blocks.append(
+                        ContentBlock(
+                            kind="intent",
+                            content=intent_text,
+                        )
+                    )
+
             elif event_type == "skill.invoked":
                 # Skill was loaded - show name and content summary
                 skill_name = event_data.get("name", "unknown")
@@ -924,6 +1138,12 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                 builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=label, description="subagent-error"))
 
             # --- Session lifecycle events ---
+            elif event_type == "session.info" and event_data.get("infoType") == "fork":
+                message = _stringify_event_value(event_data.get("message"))
+                if message:
+                    fork_message = _format_fork_info_message(message, session_id)
+                    builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=fork_message, description="fork"))
+
             elif event_type == "session.handoff":
                 source_type = event_data.get("sourceType") or "unknown"
                 repo = event_data.get("repository") or {}
@@ -1009,42 +1229,63 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                         parts.append(f"{model_name}: {requests} requests, cost {cost}")
                 builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=" · ".join(parts), description="shutdown"))
 
+            elif event_type == "elicitation.requested":
+                message = _stringify_event_value(event_data.get("message"))
+                if message:
+                    mode = _stringify_event_value(event_data.get("mode"))
+                    content = f"? {message}"
+                    if mode:
+                        content += f"\n   Mode: {mode}"
+                    builder.current_assistant_content_blocks.append(ContentBlock(kind="ask_user", content=content, description="elicitation"))
+
+            elif event_type == "elicitation.completed":
+                action = _stringify_event_value(event_data.get("action"))
+                content = _stringify_event_value(event_data.get("content"))
+                if action or content:
+                    label = f"Elicitation {action}" if action else "Elicitation completed"
+                    if content:
+                        label += f": {content}"
+                    builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=label, description="elicitation"))
+
+            elif event_type == "user_input.requested":
+                question = _stringify_event_value(event_data.get("question"))
+                if question:
+                    choices_value = event_data.get("choices")
+                    choices = choices_value if isinstance(choices_value, list) else []
+                    content = f"? {question}"
+                    if choices:
+                        content += f"\n   Options: {_stringify_event_value(choices)}"
+                    if event_data.get("allowFreeform"):
+                        content += "\n   Freeform answer allowed"
+                    builder.current_assistant_content_blocks.append(ContentBlock(kind="ask_user", content=content, description="user-input"))
+
+            elif event_type == "user_input.completed":
+                answer = _stringify_event_value(event_data.get("answer"))
+                if answer:
+                    builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=f"User answered: {answer}", description="user-input"))
+
+            elif formatted_status := _format_session_event_status(event_type, event_data):
+                content, description = formatted_status
+                if content:
+                    builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=content, description=description))
+
             # Skip internal/metadata events (already parsed in metadata extraction or no user content)
             elif event_type in (
                 "session.start",  # Parsed above for sessionId, startTime, context
                 "session.info",  # Informational (e.g., model confirmations)
-                "session.compaction_start",  # Boundary event, paired with compaction_complete
                 "session.error",  # Handled above
                 # Internal turn boundary markers
                 "assistant.turn_start",
                 "assistant.turn_end",
                 # Internal lifecycle
                 "session.resume",
-                # Internal token management
-                "session.truncation",
-                # Internal file notification
-                "session.workspace_file_changed",
-                # Ephemeral UI events (permission/elicitation/input prompts — not persisted)
-                "permission.requested",
-                "permission.completed",
-                "elicitation.requested",
-                "elicitation.completed",
-                "user_input.requested",
-                "user_input.completed",
-                "external_tool.requested",
-                "external_tool.completed",
-                "command.queued",
-                "command.completed",
-                # Hook lifecycle (noisy — results reflected in tool execution outcomes)
+                # Hook starts are noisy; failed hook endings are rendered above.
                 "hook.start",
-                "hook.end",
-                # Shell/task completion notifications (content duplicates tool results)
-                "system.notification",
                 # Streaming deltas (partial content, final is in assistant.message)
+                "assistant.message_start",
                 "assistant.message_delta",
                 "assistant.reasoning_delta",
                 "assistant.streaming_delta",
-                "assistant.intent",
                 # Plan mode lifecycle
                 "exit_plan_mode.requested",
                 "exit_plan_mode.completed",
@@ -1053,13 +1294,13 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                 # Ephemeral SDK/client dispatch events. Slash-command chat content
                 # persists through user.message/session.mode_changed instead.
                 "capabilities.changed",
-                "command.execute",
                 "commands.changed",
-                "mcp.oauth_completed",
-                "mcp.oauth_required",
                 "sampling.completed",
                 "sampling.requested",
                 "session.background_tasks_changed",
+                "session.canvas.opened",
+                "session.canvas.registry_changed",
+                "session.custom_notification",
                 "session.custom_agents_updated",
                 "session.extensions_loaded",
                 "session.idle",
@@ -1070,9 +1311,6 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                 "session.snapshot_rewind",
                 "session.tools_updated",
                 "session.usage_info",
-                # Streaming tool events (partial results, final is in tool.execution_complete)
-                "tool.execution_partial_result",
-                "tool.execution_progress",
             ):
                 pass
 

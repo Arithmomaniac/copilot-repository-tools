@@ -631,6 +631,16 @@ header h1 {
     margin: 4px 0;
 }
 
+.status-badge.fork p {
+    display: inline;
+    margin: 0;
+}
+
+.status-badge.fork a {
+    color: inherit;
+    text-decoration: underline;
+}
+
 {%- if root_agent_markers is defined and root_agent_markers %}
 .root-agent-marker {
     display: flex;
@@ -2884,6 +2894,8 @@ input:checked + .toggle-switch::after {
                                     {{ block.content | markdown | safe }}
                                 </div>
                             </details>
+                            {% elif block.description == 'fork' %}
+                            <span class="status-badge fork">{{ block.content | markdown | safe }}</span>
                             {% else %}
                             <span class="status-badge {{ block.description or '' }}">{{ block.content }}</span>
                             {% endif %}
