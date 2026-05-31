@@ -450,6 +450,21 @@ header h1 {
     margin-bottom: 0;
 }
 
+.message-details > summary {
+    cursor: pointer;
+    list-style: none;
+}
+
+.message-details > summary::-webkit-details-marker {
+    display: none;
+}
+
+.message-details > summary .collapsible-icon {
+    color: var(--text-secondary);
+    font-size: 0.9em;
+    line-height: 1;
+}
+
 .message-anchor {
     color: var(--text-secondary);
     text-decoration: none;
@@ -955,6 +970,24 @@ header h1 {
     border-radius: 4px;
     background: var(--bg-tertiary);
     display: inline-block;
+}
+
+.system-message-details {
+    opacity: 0.85;
+}
+
+.system-message-details > summary {
+    cursor: pointer;
+    list-style: none;
+}
+
+.system-message-details > summary::-webkit-details-marker {
+    display: none;
+}
+
+.system-message-details > summary .collapsible-icon {
+    display: inline-block;
+    color: var(--text-secondary);
 }
 
 /* Agent back-link */
@@ -1983,6 +2016,7 @@ footer a {
 
 /* Toggle hide rules — driven by Alpine settings panel */
 .hide-thinking .thinking-block { display: none !important; }
+.hide-system-messages .message.system { display: none !important; }
 .hide-diffs .file-change .diff { display: none !important; }
 .hide-tool-inputs .tool-section-input { display: none !important; }
 /* Tools OFF: hide collapsible wrappers + section header + summaries, show inline fallbacks */
@@ -1998,6 +2032,7 @@ footer a {
 
 /* Prevent hidden elements from being chosen as scroll anchors */
 .thinking-block,
+.message.system,
 .tool-invocation-wrapper,
 .tool-section-input,
 .subagent-content,
@@ -2188,10 +2223,13 @@ input:checked + .toggle-switch::after {
                     
                     
                     <div class="message user basic-turn" id="msg-1">
-                        <div class="message-header">
+                        <details class="message-details" open>
+                        <summary class="message-header">
+                            <span class="collapsible-icon" aria-hidden="true">▼</span>
                             <div class="message-role">user</div>
-                            <a href="#msg-1" class="message-anchor" title="Link to this message">#1</a>
-                        </div>
+                            <a href="#msg-1" class="message-anchor" title="Link to this message" onclick="event.stopPropagation()">#1</a>
+                        </summary>
+                        <div class="message-content">
                         <p>Available Result Categories:</p>
 <pre><code class="language-json">[
   {
@@ -2230,36 +2268,51 @@ input:checked + .toggle-switch::after {
   &ldquo;confidence&rdquo;: &lt;0.0 to 1.0&gt;,<br />
   &ldquo;summary&rdquo;: &ldquo;<short summary of what occurred in the session being analyzed>&ldquo;<br />
 }</p>
+                        </div>
+                        </details>
                     </div>
                     
                     
                     
                     <div class="message assistant basic-turn" id="msg-2">
-                        <div class="message-header">
+                        <details class="message-details" open>
+                        <summary class="message-header">
+                            <span class="collapsible-icon" aria-hidden="true">▼</span>
                             <div class="message-role">assistant</div>
-                            <a href="#msg-2" class="message-anchor" title="Link to this message">#2</a>
-                        </div>
+                            <a href="#msg-2" class="message-anchor" title="Link to this message" onclick="event.stopPropagation()">#2</a>
+                        </summary>
+                        <div class="message-content">
                         <p>The result file already exists with the correct classification. The session was indeed <strong>succeeded</strong> - the task was completed successfully.</p>
+                        </div>
+                        </details>
                     </div>
                     
                 
                     
                     
                     <div class="message user basic-turn" id="msg-3">
-                        <div class="message-header">
+                        <details class="message-details" open>
+                        <summary class="message-header">
+                            <span class="collapsible-icon" aria-hidden="true">▼</span>
                             <div class="message-role">user</div>
-                            <a href="#msg-3" class="message-anchor" title="Link to this message">#3</a>
-                        </div>
+                            <a href="#msg-3" class="message-anchor" title="Link to this message" onclick="event.stopPropagation()">#3</a>
+                        </summary>
+                        <div class="message-content">
                         <p>You are analyzing the results of an agent execution. Based on the session file content below, classify the execution result into one of the available categories. Ensure your response is valid JSON and is NOT surrounded by markdown code blocks.</p>
+                        </div>
+                        </details>
                     </div>
                     
                     
                     
                     <div class="message assistant basic-turn" id="msg-4">
-                        <div class="message-header">
+                        <details class="message-details" open>
+                        <summary class="message-header">
+                            <span class="collapsible-icon" aria-hidden="true">▼</span>
                             <div class="message-role">assistant</div>
-                            <a href="#msg-4" class="message-anchor" title="Link to this message">#4</a>
-                        </div>
+                            <a href="#msg-4" class="message-anchor" title="Link to this message" onclick="event.stopPropagation()">#4</a>
+                        </summary>
+                        <div class="message-content">
                         <p>{<br />
   &ldquo;name&rdquo;: &ldquo;succeeded&rdquo;,<br />
   &ldquo;code&rdquo;: 0,<br />
@@ -2270,30 +2323,40 @@ input:checked + .toggle-switch::after {
   &ldquo;confidence&rdquo;: 1.0,<br />
   &ldquo;summary&rdquo;: &ldquo;User asked a simple arithmetic question (1 + 1). Assistant correctly answered 2 and marked the task complete.&rdquo;<br />
 }</p>
+                        </div>
+                        </details>
                     </div>
                     
                 
                     
                     
                     <div class="message user basic-turn" id="msg-5">
-                        <div class="message-header">
+                        <details class="message-details" open>
+                        <summary class="message-header">
+                            <span class="collapsible-icon" aria-hidden="true">▼</span>
                             <div class="message-role">user</div>
-                            <a href="#msg-5" class="message-anchor" title="Link to this message">#5</a>
-                        </div>
+                            <a href="#msg-5" class="message-anchor" title="Link to this message" onclick="event.stopPropagation()">#5</a>
+                        </summary>
+                        <div class="message-content">
                         <p><current_datetime>2026-02-09T07:57:46.281Z</current_datetime></p>
 <p>You are analyzing the results of an agent execution. Based on the session file content below, classify the execution result into one of the available categories. Ensure your response is valid JSON and is NOT surrounded by markdown code blocks.</p>
 <p><reminder><br />
 <sql_tables>No tables currently exist. Default tables (todos, todo_deps) will be created automatically when you first use the SQL tool.</sql_tables><br />
 </reminder></p>
+                        </div>
+                        </details>
                     </div>
                     
                     
                     
                     <div class="message assistant basic-turn" id="msg-6">
-                        <div class="message-header">
+                        <details class="message-details" open>
+                        <summary class="message-header">
+                            <span class="collapsible-icon" aria-hidden="true">▼</span>
                             <div class="message-role">assistant</div>
-                            <a href="#msg-6" class="message-anchor" title="Link to this message">#6</a>
-                        </div>
+                            <a href="#msg-6" class="message-anchor" title="Link to this message" onclick="event.stopPropagation()">#6</a>
+                        </summary>
+                        <div class="message-content">
                         <p>{<br />
   &ldquo;name&rdquo;: &ldquo;succeeded&rdquo;,<br />
   &ldquo;code&rdquo;: 0,<br />
@@ -2304,37 +2367,52 @@ input:checked + .toggle-switch::after {
   &ldquo;confidence&rdquo;: 1.0,<br />
   &ldquo;summary&rdquo;: &ldquo;User asked a simple arithmetic question (1 + 1). Assistant correctly answered 2 and marked the task complete.&rdquo;<br />
 }</p>
+                        </div>
+                        </details>
                     </div>
                     
                 
                     
                     
                     <div class="message user basic-turn" id="msg-7">
-                        <div class="message-header">
+                        <details class="message-details" open>
+                        <summary class="message-header">
+                            <span class="collapsible-icon" aria-hidden="true">▼</span>
                             <div class="message-role">user</div>
-                            <a href="#msg-7" class="message-anchor" title="Link to this message">#7</a>
-                        </div>
+                            <a href="#msg-7" class="message-anchor" title="Link to this message" onclick="event.stopPropagation()">#7</a>
+                        </summary>
+                        <div class="message-content">
                         <p>Intent logged</p>
+                        </div>
+                        </details>
                     </div>
                     
                     
                     
                     <div class="message assistant basic-turn" id="msg-8">
-                        <div class="message-header">
+                        <details class="message-details" open>
+                        <summary class="message-header">
+                            <span class="collapsible-icon" aria-hidden="true">▼</span>
                             <div class="message-role">assistant</div>
-                            <a href="#msg-8" class="message-anchor" title="Link to this message">#8</a>
-                        </div>
+                            <a href="#msg-8" class="message-anchor" title="Link to this message" onclick="event.stopPropagation()">#8</a>
+                        </summary>
+                        <div class="message-content">
                         <p>The result.json file already exists with the correct classification. The session was classified as <strong>succeeded</strong> - the agent correctly answered &ldquo;1 + 1 = 2&rdquo; and called task_complete successfully.</p>
+                        </div>
+                        </details>
                     </div>
                     
                 
                     
                     
                     <div class="message user basic-turn" id="msg-9">
-                        <div class="message-header">
+                        <details class="message-details" open>
+                        <summary class="message-header">
+                            <span class="collapsible-icon" aria-hidden="true">▼</span>
                             <div class="message-role">user</div>
-                            <a href="#msg-9" class="message-anchor" title="Link to this message">#9</a>
-                        </div>
+                            <a href="#msg-9" class="message-anchor" title="Link to this message" onclick="event.stopPropagation()">#9</a>
+                        </summary>
+                        <div class="message-content">
                         <ol>
 <li>{&ldquo;data&rdquo;:{&ldquo;copilotVersion&rdquo;:&rdquo;0.0.406&rdquo;,&rdquo;producer&rdquo;:&rdquo;agency&rdquo;,&rdquo;sessionId&rdquo;:&rdquo;4541686a-6b49-4c34-82b3-525c3b1c8106&rdquo;,&rdquo;startTime&rdquo;:&rdquo;2026-02-09T07:55:27.758Z&rdquo;,&rdquo;version&rdquo;:1},&rdquo;id&rdquo;:&rdquo;21e75518-b048-4be8-bc4a-2d844ceb8089&rdquo;,&rdquo;parentId&rdquo;:null,&rdquo;timestamp&rdquo;:&rdquo;2026-02-09T07:55:27.758Z&rdquo;,&rdquo;type&rdquo;:&rdquo;session.start&rdquo;}</li>
 <li>{&ldquo;type&rdquo;:&rdquo;session.resume&rdquo;,&rdquo;data&rdquo;:{&ldquo;resumeTime&rdquo;:&rdquo;2026-02-09T07:55:30.001Z&rdquo;,&rdquo;eventCount&rdquo;:1,&rdquo;context&rdquo;:{&ldquo;cwd&rdquo;:&rdquo;C:\_SRC\ZTS&rdquo;,&rdquo;gitRoot&rdquo;:&rdquo;C:\_SRC\ZTS&rdquo;,&rdquo;branch&rdquo;:&rdquo;main&rdquo;}},&rdquo;id&rdquo;:&rdquo;64e2b868-4dc6-4abf-8c50-730a9158c9c3&rdquo;,&rdquo;timestamp&rdquo;:&rdquo;2026-02-09T07:55:30.001Z&rdquo;,&rdquo;parentId&rdquo;:&rdquo;21e75518-b048-4be8-bc4a-2d844ceb8089&rdquo;}</li>
@@ -2350,15 +2428,20 @@ input:checked + .toggle-switch::after {
 <li>{&ldquo;type&rdquo;:&rdquo;assistant.turn_end&rdquo;,&rdquo;data&rdquo;:{&ldquo;turnId&rdquo;:&rdquo;1&rdquo;},&rdquo;id&rdquo;:&rdquo;9ca164cb-2d94-48b8-9c4f-2c52d7149df2&rdquo;,&rdquo;timestamp&rdquo;:&rdquo;2026-02-09T07:56:39.474Z&rdquo;,&rdquo;parentId&rdquo;:&rdquo;030c8f7b-b73d-4605-a389-0744cb619a76&rdquo;}<br />
 13.</li>
 </ol>
+                        </div>
+                        </details>
                     </div>
                     
                     
                     
                     <div class="message assistant basic-turn" id="msg-10">
-                        <div class="message-header">
+                        <details class="message-details" open>
+                        <summary class="message-header">
+                            <span class="collapsible-icon" aria-hidden="true">▼</span>
                             <div class="message-role">assistant</div>
-                            <a href="#msg-10" class="message-anchor" title="Link to this message">#10</a>
-                        </div>
+                            <a href="#msg-10" class="message-anchor" title="Link to this message" onclick="event.stopPropagation()">#10</a>
+                        </summary>
+                        <div class="message-content">
                         <p>{<br />
   &ldquo;name&rdquo;: &ldquo;succeeded&rdquo;,<br />
   &ldquo;code&rdquo;: 0,<br />
@@ -2369,27 +2452,39 @@ input:checked + .toggle-switch::after {
   &ldquo;confidence&rdquo;: 1.0,<br />
   &ldquo;summary&rdquo;: &ldquo;User asked a simple arithmetic question (1 + 1). Assistant correctly answered 2 and marked the task complete.&rdquo;<br />
 }</p>
+                        </div>
+                        </details>
                     </div>
                     
                 
                     
                     
                     <div class="message user basic-turn" id="msg-11">
-                        <div class="message-header">
+                        <details class="message-details" open>
+                        <summary class="message-header">
+                            <span class="collapsible-icon" aria-hidden="true">▼</span>
                             <div class="message-role">user</div>
-                            <a href="#msg-11" class="message-anchor" title="Link to this message">#11</a>
-                        </div>
+                            <a href="#msg-11" class="message-anchor" title="Link to this message" onclick="event.stopPropagation()">#11</a>
+                        </summary>
+                        <div class="message-content">
                         <p>The session completed successfully - the agent answered &ldquo;1 + 1 = 2&rdquo; and called <code>task_complete</code>. Let me write the classification.</p>
+                        </div>
+                        </details>
                     </div>
                     
                     
                     
                     <div class="message assistant basic-turn" id="msg-12">
-                        <div class="message-header">
+                        <details class="message-details" open>
+                        <summary class="message-header">
+                            <span class="collapsible-icon" aria-hidden="true">▼</span>
                             <div class="message-role">assistant</div>
-                            <a href="#msg-12" class="message-anchor" title="Link to this message">#12</a>
-                        </div>
+                            <a href="#msg-12" class="message-anchor" title="Link to this message" onclick="event.stopPropagation()">#12</a>
+                        </summary>
+                        <div class="message-content">
                         <p>Classification written successfully. The session was classified as <strong>succeeded</strong> (exit code 0).</p>
+                        </div>
+                        </details>
                     </div>
                     
                 
@@ -2416,7 +2511,7 @@ input:checked + .toggle-switch::after {
                 }
             }
 
-            document.querySelectorAll('details.collapsible, details.tool-invocations-header, details.terminal-output-toggle, details.tool-invocation-wrapper, details.skill-block').forEach(details => {
+            document.querySelectorAll('details.collapsible, details.tool-invocations-header, details.terminal-output-toggle, details.tool-invocation-wrapper, details.skill-block, details.task-complete-block, details.subagent-block, details.subagent-prompt, details.thinking-block, details.system-message-details, details.message-details').forEach(details => {
                 details.addEventListener('toggle', function() {
                     const icon = this.querySelector(':scope > summary > .collapsible-icon');
                     if (icon) {

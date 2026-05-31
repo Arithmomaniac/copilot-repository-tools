@@ -410,6 +410,8 @@ def _search_messages(
         if effective_role:
             message_query += " AND m.role = ?"
             params.append(effective_role)
+        else:
+            message_query += " AND m.role != 'system'"
 
         message_query = _append_session_filters(message_query, params, **filter_kwargs)
 
@@ -444,6 +446,8 @@ def _search_messages(
         if effective_role:
             message_query += " AND m.role = ?"
             params.append(effective_role)
+        else:
+            message_query += " AND m.role != 'system'"
 
         message_query = _append_session_filters(message_query, params, **filter_kwargs)
 

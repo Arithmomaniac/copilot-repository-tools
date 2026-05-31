@@ -1560,6 +1560,43 @@ class TestGranularSearchContentSet:
         tool_hits_msgs = [r for r in results_msgs if r["match_type"] == "tool_invocation"]
         assert len(tool_hits_msgs) == 0
 
+    def test_message_search_excludes_system_messages_by_default(self, tmp_path):
+        """Default message search does not return system-role messages."""
+        db = Database(tmp_path / "system_search.db")
+        db.add_session(
+            ChatSession(
+                session_id="system-search-session",
+                workspace_name="system-search-project",
+                workspace_path="/tmp/system-search",
+                messages=[
+                    ChatMessage(role="user", content="hello"),
+                    ChatMessage(role="system", content="xyzzySystemSecret11 internal instructions"),
+                ],
+            )
+        )
+
+        results = db.search("xyzzySystemSecret11", search_content_set={"messages"})
+        assert results == []
+
+    def test_role_system_search_finds_system_messages(self, tmp_path):
+        """Explicit role=system search still returns system-role messages."""
+        db = Database(tmp_path / "system_search.db")
+        db.add_session(
+            ChatSession(
+                session_id="system-search-session",
+                workspace_name="system-search-project",
+                workspace_path="/tmp/system-search",
+                messages=[
+                    ChatMessage(role="user", content="hello"),
+                    ChatMessage(role="system", content="xyzzySystemSecret11 internal instructions"),
+                ],
+            )
+        )
+
+        results = db.search("xyzzySystemSecret11", role="system", search_content_set={"messages"})
+        assert len(results) == 1
+        assert results[0]["role"] == "system"
+
     # 2. Tools-only search
     def test_tools_only_search(self, rich_db):
         """search_content_set={'tools'} only returns tool invocation matches."""

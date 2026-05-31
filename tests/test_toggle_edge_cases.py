@@ -177,7 +177,7 @@ class TestHtmlToggleCombinations:
         session = _make_session()
         html = session_to_html(session, content_set={"agent-details", "tools"})
         # Thinking content block elements are stripped server-side
-        assert '<details class="thinking-block">' not in html
+        assert '<details class="thinking-block" open>' not in html
         # CSS hide class is still applied to body for belt-and-suspenders hiding
         assert "hide-thinking" in html
 

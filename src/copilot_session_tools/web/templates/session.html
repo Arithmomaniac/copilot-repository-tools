@@ -463,6 +463,21 @@ header h1 {
     margin-bottom: 0;
 }
 
+.message-details > summary {
+    cursor: pointer;
+    list-style: none;
+}
+
+.message-details > summary::-webkit-details-marker {
+    display: none;
+}
+
+.message-details > summary .collapsible-icon {
+    color: var(--text-secondary);
+    font-size: 0.9em;
+    line-height: 1;
+}
+
 .message-anchor {
     color: var(--text-secondary);
     text-decoration: none;
@@ -1020,14 +1035,6 @@ header h1 {
 .system-message-details > summary .collapsible-icon {
     display: inline-block;
     color: var(--text-secondary);
-}
-
-.system-message-details[open] > summary .collapsible-icon {
-    transform: rotate(90deg);
-}
-
-.expand-system-messages .system-message-details {
-    opacity: 1;
 }
 
 /* Agent back-link */
@@ -2056,6 +2063,7 @@ footer a {
 
 /* Toggle hide rules — driven by Alpine settings panel */
 .hide-thinking .thinking-block { display: none !important; }
+.hide-system-messages .message.system { display: none !important; }
 .hide-diffs .file-change .diff { display: none !important; }
 .hide-tool-inputs .tool-section-input { display: none !important; }
 /* Tools OFF: hide collapsible wrappers + section header + summaries, show inline fallbacks */
@@ -2071,6 +2079,7 @@ footer a {
 
 /* Prevent hidden elements from being chosen as scroll anchors */
 .thinking-block,
+.message.system,
 .tool-invocation-wrapper,
 .tool-section-input,
 .subagent-content,
@@ -2253,6 +2262,7 @@ input:checked + .toggle-switch::after {
         diffs: true,
         toolInputs: true,
         agentDetails: true,
+        systemMessages: false,
         tools: true,
         commands: true,
         fileChanges: true,
@@ -2289,6 +2299,7 @@ input:checked + .toggle-switch::after {
           if (!this.diffs) classes.push('hide-diffs');
           if (!this.toolInputs) classes.push('hide-tool-inputs');
           if (!this.agentDetails) classes.push('hide-agent-details');
+          if (!this.systemMessages) classes.push('hide-system-messages');
           if (!this.tools) classes.push('hide-tools');
           if (!this.commands) classes.push('hide-commands');
           if (!this.fileChanges) classes.push('hide-file-changes');
@@ -2322,6 +2333,10 @@ input:checked + .toggle-switch::after {
             const anchor = this.getAnchorState();
             this.$nextTick(() => { this.restoreScroll(anchor); this.saveSettings(); });
           });
+          this.$watch('systemMessages', () => {
+            const anchor = this.getAnchorState();
+            this.$nextTick(() => { this.restoreScroll(anchor); this.saveSettings(); });
+          });
           this.$watch('tools', () => {
             const anchor = this.getAnchorState();
             this.$nextTick(() => { this.restoreScroll(anchor); this.saveSettings(); });
@@ -2348,7 +2363,7 @@ input:checked + .toggle-switch::after {
           }
 
           // Toggle collapsible icon on details open/close
-          document.querySelectorAll('details.collapsible, details.tool-invocations-header, details.terminal-output-toggle, details.tool-invocation-wrapper, details.skill-block').forEach(details => {
+          document.querySelectorAll('details.collapsible, details.tool-invocations-header, details.terminal-output-toggle, details.tool-invocation-wrapper, details.skill-block, details.task-complete-block, details.subagent-block, details.subagent-prompt, details.thinking-block, details.system-message-details, details.message-details').forEach(details => {
             details.addEventListener('toggle', function() {
               const icon = this.querySelector(':scope > summary > .collapsible-icon');
               if (icon) {
@@ -2398,6 +2413,7 @@ input:checked + .toggle-switch::after {
             // Open clicked indicator's popover
             const indicator = e.target.closest('.cleanup-indicator');
             if (indicator) {
+              e.preventDefault();
               const popover = indicator.parentElement.querySelector('.cleanup-popover');
               if (popover) popover.classList.toggle('open');
             }
@@ -2407,6 +2423,7 @@ input:checked + .toggle-switch::after {
           document.addEventListener('click', async function(e) {
             const btn = e.target.closest('.popover-cleanup-btn');
             if (!btn) return;
+            e.preventDefault();
             const sessionId = btn.dataset.sessionId;
             const messageIndex = parseInt(btn.dataset.messageIndex);
             const msgEl = document.getElementById('msg-' + (messageIndex + 1));
@@ -2472,6 +2489,7 @@ input:checked + .toggle-switch::after {
           document.addEventListener('click', function(e) {
             const btn = e.target.closest('.popover-toggle-btn');
             if (!btn) return;
+            e.preventDefault();
             const msgIndex = btn.dataset.messageIndex;
             const msgEl = document.getElementById('msg-' + (parseInt(msgIndex) + 1));
             if (!msgEl) return;
@@ -2497,6 +2515,7 @@ input:checked + .toggle-switch::after {
           document.addEventListener('click', async function(e) {
             const btn = e.target.closest('.popover-revert-btn');
             if (!btn) return;
+            e.preventDefault();
             const sessionId = btn.dataset.sessionId;
             const messageIndex = parseInt(btn.dataset.messageIndex);
             const msgEl = document.getElementById('msg-' + (messageIndex + 1));
@@ -2541,7 +2560,7 @@ input:checked + .toggle-switch::after {
           try {
             localStorage.setItem('cst-settings', JSON.stringify({
               thinking: this.thinking, diffs: this.diffs, toolInputs: this.toolInputs,
-              agentDetails: this.agentDetails, tools: this.tools, commands: this.commands,
+              agentDetails: this.agentDetails, systemMessages: this.systemMessages, tools: this.tools, commands: this.commands,
               fileChanges: this.fileChanges, syntaxHighlight: this.syntaxHighlight
             }));
           } catch(e) {}
@@ -2550,7 +2569,7 @@ input:checked + .toggle-switch::after {
         buildContentSet() {
           const set = [];
           if (this.thinking) set.push('thinking');
-          set.push('system-messages');
+          if (this.systemMessages) set.push('system-messages');
           if (this.diffs) set.push('diffs');
           if (this.toolInputs) set.push('tool-inputs');
           if (this.agentDetails) set.push('agent-details');
@@ -2789,6 +2808,11 @@ input:checked + .toggle-switch::after {
                     <span class="toggle-switch"></span>
                     <span>Agent details</span>
                   </label>
+                  <label class="settings-toggle">
+                   <input type="checkbox" x-model="systemMessages">
+                   <span class="toggle-switch"></span>
+                   <span>System messages</span>
+                  </label>
                 </div>
 
                 <div class="settings-group">
@@ -2869,9 +2893,9 @@ input:checked + .toggle-switch::after {
                             <span class="intent-badge">{{ block.content }}</span>
                             {% elif block.kind == 'skill' %}
                             {% if block.description %}
-                            <details class="skill-block">
+                            <details class="skill-block" open>
                                 <summary>
-                                    <span class="collapsible-icon" aria-hidden="true">▶</span>
+                                       <span class="collapsible-icon" aria-hidden="true">▼</span>
                                     <span class="skill-badge-label">⚡ skill: <code>{{ block.content }}</code></span>
                                 </summary>
                                 <div class="skill-content">{{ block.description }}</div>
@@ -2885,9 +2909,9 @@ input:checked + .toggle-switch::after {
                             {% elif block.description == 'subagent-error' %}
                             {# Hidden: standalone subagent error pills are redundant with agent block headers and read_agent backlinks #}
                             {% elif block.description == 'task-complete' %}
-                            <details class="task-complete-block">
+                            <details class="task-complete-block" open>
                                 <summary>
-                                    <span class="collapsible-icon" aria-hidden="true">▶</span>
+                                    <span class="collapsible-icon" aria-hidden="true">▼</span>
                                     <span class="task-complete-label">✅ Task complete</span>
                                 </summary>
                                 <div class="task-complete-content">
@@ -2900,9 +2924,9 @@ input:checked + .toggle-switch::after {
                             <span class="status-badge {{ block.description or '' }}">{{ block.content }}</span>
                             {% endif %}
                             {% elif block.kind in ('subagent', 'subagent_failed', 'subagent_incomplete') %}
-                            <details class="subagent-block{% if block.kind == 'subagent_failed' %} subagent-failed{% endif %}{% if block.is_background %} subagent-background{% endif %}"{% if block.agent_id %} id="agent-{{ block.agent_id }}"{% endif %}>
+                            <details class="subagent-block{% if block.kind == 'subagent_failed' %} subagent-failed{% endif %}{% if block.is_background %} subagent-background{% endif %}"{% if block.agent_id %} id="agent-{{ block.agent_id }}"{% endif %} open>
                                 <summary>
-                                    <span class="collapsible-icon" aria-hidden="true">▶</span>
+                                    <span class="collapsible-icon" aria-hidden="true">▼</span>
                                     <span class="subagent-label">{{ block.description or 'Agent' }}</span>
                                     {% if block.is_background %}
                                     <span class="subagent-background-badge">↗ background</span>
@@ -2918,7 +2942,7 @@ input:checked + .toggle-switch::after {
                                 <div class="subagent-content">
                                     {% if block.prompt %}
                                     <details class="subagent-prompt" open>
-                                        <summary class="subagent-prompt-label">Prompt</summary>
+                                        <summary class="subagent-prompt-label"><span class="collapsible-icon" aria-hidden="true">▼</span> Prompt</summary>
                                         <div class="subagent-prompt-content">
                                             {{ block.prompt | markdown | safe }}
                                         </div>
@@ -2951,9 +2975,9 @@ input:checked + .toggle-switch::after {
                                 </div>
                             </details>
                             {% elif block.kind == 'thinking' and (include_thinking is not defined or include_thinking) %}
-                            <details class="thinking-block">
+                            <details class="thinking-block" open>
                                 <summary>
-                                    <span class="collapsible-icon" aria-hidden="true">▶</span>
+                                    <span class="collapsible-icon" aria-hidden="true">▼</span>
                                     <span class="thinking-label">Thinking</span>
                                     {% if block.description %}
                                     <span class="thinking-description">— {{ block.description }}</span>
@@ -2973,9 +2997,9 @@ input:checked + .toggle-switch::after {
                             {% if matched_cmd %}
                             {# CLI command run - show as collapsible command block with Input/Output like VSCode logs #}
                             <div class="content-block content-block-toolInvocation tool-invocation-inline">
-                                <details class="tool-invocation-wrapper{% if matched_cmd.is_async %} command-async{% endif %}"{% if matched_cmd.shell_id %} id="shell-{{ matched_cmd.shell_id }}"{% endif %}>
+                                <details class="tool-invocation-wrapper{% if matched_cmd.is_async %} command-async{% endif %}"{% if matched_cmd.shell_id %} id="shell-{{ matched_cmd.shell_id }}"{% endif %} open>
                                     <summary>
-                                        <span class="collapsible-icon" aria-hidden="true">▶</span>
+                                       <span class="collapsible-icon" aria-hidden="true">▼</span>
                                         <span class="tool-invocation-message">
                                             {% if matched_cmd.title %}
                                                 {{ matched_cmd.title }}
@@ -3124,9 +3148,9 @@ input:checked + .toggle-switch::after {
                             {% else %}
                             {% if show_collapsible %}
                             <div class="content-block content-block-toolInvocation tool-invocation-inline">
-                                <details class="tool-invocation-wrapper">
+                                <details class="tool-invocation-wrapper" open>
                                     <summary>
-                                        <span class="collapsible-icon" aria-hidden="true">▶</span>
+                                        <span class="collapsible-icon" aria-hidden="true">▼</span>
                                         <span class="tool-invocation-message">{{ pretty_header | markdown | safe }}</span>
                                         {% if matched_tool.status %}
                                         <span class="status-badge {{ matched_tool.status }}">{{ matched_tool.status }}</span>
@@ -3211,9 +3235,9 @@ input:checked + .toggle-switch::after {
                     </summary>
                     <div class="collapsible-content">
                         {% for tool in unmatched_tools %}
-                        <details class="tool-invocation-wrapper">
+                        <details class="tool-invocation-wrapper" open>
                             <summary>
-                                <span class="collapsible-icon" aria-hidden="true">▶</span>
+                                <span class="collapsible-icon" aria-hidden="true">▼</span>
                                 {% if tool.invocation_message %}
                                 <span class="tool-invocation-message">{{ tool.invocation_message | markdown | safe }}</span>
                                 {% else %}
@@ -3267,9 +3291,9 @@ input:checked + .toggle-switch::after {
 
                 {% if file_changes %}
                 <p class="tool-summary tool-summary-files"><em>Changed {{ file_changes | length }} file{{ 's' if file_changes | length > 1 else '' }}: {{ file_changes | map(attribute='path') | list | join(', ') | truncate(100) }}</em></p>
-                <details class="collapsible file-changes">
+                <details class="collapsible file-changes" open>
                     <summary aria-label="Toggle file changes section">
-                        <span class="collapsible-icon" aria-hidden="true">▶</span>
+                        <span class="collapsible-icon" aria-hidden="true">▼</span>
                         File Changes ({{ file_changes | length }})
                         <span class="preview-text">{{ file_changes | map(attribute='path') | map('extract_filename') | join(', ') | truncate(80) }}</span>
                     </summary>
@@ -3336,9 +3360,9 @@ input:checked + .toggle-switch::after {
                                 {% endif %}
                             </div>
                             {% if cmd.output %}
-                            <details class="terminal-output-toggle">
+                            <details class="terminal-output-toggle" open>
                                 <summary>
-                                    <span class="collapsible-icon" aria-hidden="true">▶</span>
+                                    <span class="collapsible-icon" aria-hidden="true">▼</span>
                                     Show output
                                 </summary>
                                 <div class="terminal-output-content">{{ cmd.output | strip_ansi }}</div>
@@ -3372,10 +3396,11 @@ input:checked + .toggle-switch::after {
                 </div>
             </div>
             {% elif message.role == 'system' %}
+            {% if not static or include_system_messages %}
             <div class="message system" id="msg-{{ loop.index }}">
-                <details class="system-message-details"{% if static and include_system_messages %} open{% endif %}>
+                <details class="message-details system-message-details" open>
                     <summary class="message-header">
-                        <span class="collapsible-icon" aria-hidden="true">▶</span>
+                        <span class="collapsible-icon" aria-hidden="true">▼</span>
                         <div class="message-role">{{ message.role }}</div>
                         {% if message.timestamp %}
                         <span class="message-timestamp">{{ message.timestamp | format_timestamp }}</span>
@@ -3394,16 +3419,19 @@ input:checked + .toggle-switch::after {
                     </div>
                 </details>
             </div>
+            {% endif %}
             {% else %}
             <div class="message {{ message.role }}" id="msg-{{ loop.index }}">
-                <div class="message-header">
+                <details class="message-details" open>
+                <summary class="message-header">
+                    <span class="collapsible-icon" aria-hidden="true">▼</span>
                     <div class="message-role">{{ message.role }}</div>
                     {% if message.timestamp %}
                     <span class="message-timestamp">{{ message.timestamp | format_timestamp }}</span>
                     {% endif %}
-                    <a href="#msg-{{ loop.index }}" class="message-anchor" title="Link to this message">#{{ loop.index }}</a>
+                    <a href="#msg-{{ loop.index }}" class="message-anchor" title="Link to this message" onclick="event.stopPropagation()">#{{ loop.index }}</a>
                     {% if not static %}
-                    <button type="button" class="message-copy-btn" data-message-index="{{ loop.index }}" data-session-id="{{ session.session_id }}" title="Copy this message as markdown" aria-label="Copy message as markdown">
+                    <button type="button" class="message-copy-btn" data-message-index="{{ loop.index }}" data-session-id="{{ session.session_id }}" title="Copy this message as markdown" aria-label="Copy message as markdown" onclick="event.stopPropagation()">
                         <i class="fa-regular fa-copy"></i>
                     </button>
                     {% endif %}
@@ -3428,7 +3456,7 @@ input:checked + .toggle-switch::after {
                       </div>
                     </span>
                     {% endif %}
-                </div>
+                </summary>
                 <div class="message-content">
                     {% if message.original_content is not none %}
                     <div class="message-original-content" data-msg-index="{{ loop.index0 }}">
@@ -3439,6 +3467,7 @@ input:checked + .toggle-switch::after {
                     {{ render_content_blocks(message.content_blocks, message.tool_invocations, message.file_changes, message.command_runs, msg_meta, message.content) }}
                     </div>
                 </div>
+                </details>
             </div>
             {% endif %}
             {% endfor %}
@@ -3467,21 +3496,31 @@ input:checked + .toggle-switch::after {
                 {% if turn.user_message %}
                 {% set ns2.msg_num = ns2.msg_num + 1 %}
                 <div class="message user basic-turn" id="msg-{{ ns2.msg_num }}">
-                    <div class="message-header">
+                    <details class="message-details" open>
+                    <summary class="message-header">
+                        <span class="collapsible-icon" aria-hidden="true">▼</span>
                         <div class="message-role">user</div>
-                        <a href="#msg-{{ ns2.msg_num }}" class="message-anchor" title="Link to this message">#{{ ns2.msg_num }}</a>
-                    </div>
+                        <a href="#msg-{{ ns2.msg_num }}" class="message-anchor" title="Link to this message" onclick="event.stopPropagation()">#{{ ns2.msg_num }}</a>
+                    </summary>
+                    <div class="message-content">
                     {{ turn.user_message | markdown | safe }}
+                    </div>
+                    </details>
                 </div>
                 {% endif %}
                 {% if turn.assistant_response %}
                 {% set ns2.msg_num = ns2.msg_num + 1 %}
                 <div class="message assistant basic-turn" id="msg-{{ ns2.msg_num }}">
-                    <div class="message-header">
+                    <details class="message-details" open>
+                    <summary class="message-header">
+                        <span class="collapsible-icon" aria-hidden="true">▼</span>
                         <div class="message-role">assistant</div>
-                        <a href="#msg-{{ ns2.msg_num }}" class="message-anchor" title="Link to this message">#{{ ns2.msg_num }}</a>
-                    </div>
+                        <a href="#msg-{{ ns2.msg_num }}" class="message-anchor" title="Link to this message" onclick="event.stopPropagation()">#{{ ns2.msg_num }}</a>
+                    </summary>
+                    <div class="message-content">
                     {{ turn.assistant_response | markdown | safe }}
+                    </div>
+                    </details>
                 </div>
                 {% endif %}
             {% endfor %}
@@ -3504,21 +3543,31 @@ input:checked + .toggle-switch::after {
                     {% if turn.user_message %}
                     {% set ns.msg_num = ns.msg_num + 1 %}
                     <div class="message user basic-turn" id="msg-{{ ns.msg_num }}">
-                        <div class="message-header">
+                        <details class="message-details" open>
+                        <summary class="message-header">
+                            <span class="collapsible-icon" aria-hidden="true">▼</span>
                             <div class="message-role">user</div>
-                            <a href="#msg-{{ ns.msg_num }}" class="message-anchor" title="Link to this message">#{{ ns.msg_num }}</a>
-                        </div>
+                            <a href="#msg-{{ ns.msg_num }}" class="message-anchor" title="Link to this message" onclick="event.stopPropagation()">#{{ ns.msg_num }}</a>
+                        </summary>
+                        <div class="message-content">
                         {{ turn.user_message | markdown | safe }}
+                        </div>
+                        </details>
                     </div>
                     {% endif %}
                     {% if turn.assistant_response %}
                     {% set ns.msg_num = ns.msg_num + 1 %}
                     <div class="message assistant basic-turn" id="msg-{{ ns.msg_num }}">
-                        <div class="message-header">
+                        <details class="message-details" open>
+                        <summary class="message-header">
+                            <span class="collapsible-icon" aria-hidden="true">▼</span>
                             <div class="message-role">assistant</div>
-                            <a href="#msg-{{ ns.msg_num }}" class="message-anchor" title="Link to this message">#{{ ns.msg_num }}</a>
-                        </div>
+                            <a href="#msg-{{ ns.msg_num }}" class="message-anchor" title="Link to this message" onclick="event.stopPropagation()">#{{ ns.msg_num }}</a>
+                        </summary>
+                        <div class="message-content">
                         {{ turn.assistant_response | markdown | safe }}
+                        </div>
+                        </details>
                     </div>
                     {% endif %}
                 {% endfor %}
@@ -3547,7 +3596,7 @@ input:checked + .toggle-switch::after {
                 }
             }
 
-            document.querySelectorAll('details.collapsible, details.tool-invocations-header, details.terminal-output-toggle, details.tool-invocation-wrapper, details.skill-block').forEach(details => {
+            document.querySelectorAll('details.collapsible, details.tool-invocations-header, details.terminal-output-toggle, details.tool-invocation-wrapper, details.skill-block, details.task-complete-block, details.subagent-block, details.subagent-prompt, details.thinking-block, details.system-message-details, details.message-details').forEach(details => {
                 details.addEventListener('toggle', function() {
                     const icon = this.querySelector(':scope > summary > .collapsible-icon');
                     if (icon) {
