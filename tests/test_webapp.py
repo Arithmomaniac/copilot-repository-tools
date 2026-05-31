@@ -264,6 +264,47 @@ class TestWebappRoutes:
         assert response.status_code == 200
         assert b"What is Python?" in response.data
 
+    def test_session_hides_system_messages_toggle(self, client):
+        """System messages are always present and not a user-toggle option."""
+        response = client.get("/session/webapp-test-session")
+        assert response.status_code == 200
+        html = response.data.decode("utf-8")
+        assert "System messages" not in html
+        assert 'x-model="systemMessages"' not in html
+
+    def test_session_content_set_always_includes_system_messages(self, client):
+        """Web-viewer exports always include system messages in content_set."""
+        response = client.get("/session/webapp-test-session")
+        assert response.status_code == 200
+        html = response.data.decode("utf-8")
+        assert "set.push('system-messages');" in html
+
+    def test_session_system_messages_collapsed_by_default(self, temp_db):
+        """System-message parent blocks render collapsed by default in web view."""
+        db = Database(temp_db)
+        session = ChatSession(
+            session_id="webapp-system-session",
+            workspace_name="test-workspace",
+            workspace_path="/home/user/test",
+            messages=[
+                ChatMessage(role="user", content="hello"),
+                ChatMessage(role="system", content="System instructions go here"),
+                ChatMessage(role="assistant", content="ok"),
+            ],
+            created_at="2025-01-15T10:00:00Z",
+            vscode_edition="stable",
+        )
+        db.add_session(session)
+
+        app = create_app(temp_db, title="Test Archive", storage_paths=[])
+        app.config["TESTING"] = True
+        response = app.test_client().get("/session/webapp-system-session")
+
+        assert response.status_code == 200
+        html = response.data.decode("utf-8")
+        assert '<details class="system-message-details">' in html
+        assert 'class="system-message-details" open' not in html
+
     def test_session_shows_root_agent_transition_pills(self, temp_db):
         """Root custom-agent intervals render as timeline transition pills."""
         db = Database(temp_db)

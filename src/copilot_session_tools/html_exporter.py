@@ -87,6 +87,7 @@ def session_to_html(session: ChatSession, content_set: set[str] | None = None) -
 
     include_agent_details = "agent-details" in content_set
     include_thinking = "thinking" in content_set
+    include_system_messages = "system-messages" in content_set
 
     # Compute CSS hide classes for static export (no Alpine.js)
     static_hide_classes_list: list[str] = []
@@ -104,6 +105,8 @@ def session_to_html(session: ChatSession, content_set: set[str] | None = None) -
         static_hide_classes_list.append("hide-commands")
     if "file-changes" not in content_set:
         static_hide_classes_list.append("hide-file-changes")
+    if include_system_messages:
+        static_hide_classes_list.append("expand-system-messages")
 
     first_user_prompt, message_metadata = _preprocess_messages(session)
     env = _get_jinja_env()
@@ -119,6 +122,7 @@ def session_to_html(session: ChatSession, content_set: set[str] | None = None) -
         is_enriched=True,
         include_agent_details=include_agent_details,
         include_thinking=include_thinking,
+        include_system_messages=include_system_messages,
         static_hide_classes=" ".join(static_hide_classes_list),
     )
 
