@@ -1,3 +1,5 @@
+> Created/edited by GitHub Copilot with human review/feedback by avilevin.
+
 # Changelog
 
 All notable changes to this project will be documented in this file.
@@ -5,12 +7,65 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] - 2026-06-02
+
+### Added
+
+- **Web Viewer / HTML Export**: Top-level User, Assistant, and included System messages now render as collapsible sections that are open by default.
+- **Web Viewer / HTML Export**: Auxiliary sections inside messages render as collapsible sections while preserving their existing default visibility.
+- **Content Types / Exporters**: `system-messages` is now an opt-in CONTENT flag that stays disabled by default in exports and search.
+
+### Changed
+
+- **Search**: Message searches exclude system-role messages by default unless an explicit role filter, such as `role=system`, is provided.
+
 ## [0.13.0] - 2026-05-29
 
 ### Added
 
 - **Web Viewer / HTML Export**: `role == "system"` messages now render as collapsible `<details>` blocks with a chevron, collapsed by default and expandable inline.
 - **Content Types / Exporters**: New `system-messages` content type for `--include/--exclude`. In markdown export, system messages are omitted unless included. In HTML export, system messages always render but are collapsed by default; including `system-messages` opens them by default.
+
+## [0.12.0] - 2026-05-26
+
+### Added
+
+- **Scanner**: Parse CLI `session.info` fork messages and render `Forked as` / `Forked from` status blocks with safe session links.
+- **Web Viewer / HTML Export**: Fork status badges can render sanitized Markdown links inline.
+- **Agent Workflow**: Replaced the old scanner-refresh skill with a project agent backed by configured `copilot-agent-runtime` or decompiled runtime paths.
+
+### Fixed
+
+- **Security**: Escaped fork links to prevent unsafe HTML injection in fork status rendering.
+
+## [0.11.1] - 2026-05-08
+
+### Fixed
+
+- **Scanner**: Accept non-dict/freeform tool arguments, preserving raw string input for tools such as `apply_patch`.
+- **Rendering Helpers**: Guard tool-display formatting against string arguments so parser/enrichment no longer crashes.
+
+## [0.11.0] - 2026-04-28
+
+### Added
+
+- **Scanner / Database**: Attribute root custom-agent sessions and persist their agent metadata through storage and retrieval.
+- **Web Viewer / HTML Export**: Surface root custom-agent attribution in rendered sessions.
+
+### Changed
+
+- **Scanner**: Improved custom-agent metadata extraction and utility normalization shared across CLI, HTML export, and web rendering.
+
+## [0.10.4] - 2026-04-14
+
+### Changed
+
+- **Transcript Cleanup**: Added structured output auto-dispatch across GPT chat completions, GPT Responses API text format, and Claude/Gemini tool-choice paths.
+- **Transcript Cleanup**: Updated the default cleanup model and LiteLLM minimum version for the structured output integration.
+
+### Fixed
+
+- **Transcript Cleanup**: Pass the system prompt through the correct model-specific parameter and raise a clear error on empty structured-output responses.
 
 ## [0.10.3] - 2026-04-05
 
@@ -40,7 +95,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Web Viewer**: "Syntax highlighting" toggle in View Settings → Display section (persisted in localStorage)
 - **Web Viewer / HTML Export**: Unified diff output from tools highlighted with red/green coloring
 - **Markdown Export**: Tool inputs with JSON content now use language-tagged code fences (` ```json `) with prettified content
-- **Dependencies**: Added `pygments>=2.17.0` as a core dependency for server-side syntax highlightingorigin/main
+- **Dependencies**: Added `pygments>=2.17.0` as a core dependency for server-side syntax highlighting
 
 ## [0.10.1] - 2026-04-02
 
@@ -338,28 +393,3 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **CI/CD**: PyPI publishing infrastructure
-
-## [0.1.0] - 2025-02-13
-
-### Added
-
-- **Scanner**: Scan VS Code workspace storage (Stable and Insiders editions) to find Copilot chat sessions
-- **Scanner**: GitHub Copilot CLI chat history support (JSONL format from `~/.copilot/session-state`)
-- **Scanner**: Support for VS Code JSONL append-log format (VS Code >=1.109)
-- **Database**: SQLite storage with FTS5 full-text search indexing
-- **Database**: Two-layer design with raw compressed JSON as source of truth and derived tables
-- **Database**: Incremental scan support (only imports new/changed sessions)
-- **CLI**: `scan` command to import sessions from VS Code and CLI
-- **CLI**: `search` command with advanced query syntax (field filters, exact phrases, boolean logic)
-- **CLI**: `stats` command for database statistics
-- **CLI**: `export` command for JSON export
-- **CLI**: `export-markdown` command for Markdown export
-- **CLI**: `export-html` command for self-contained HTML export
-- **CLI**: `import-json` command for JSON import
-- **CLI**: `rebuild` command to recreate derived tables from raw JSON
-- **Web**: Flask-based web interface for browsing chat sessions
-- **Web**: Full-text search with highlighting
-- **Web**: Dark mode support via CSS `prefers-color-scheme`
-- **Web**: Syntax highlighting for code blocks
-- **Web**: Incremental refresh without restarting
-- **Tracking**: Tool invocations, file changes, and command runs from chat sessions
