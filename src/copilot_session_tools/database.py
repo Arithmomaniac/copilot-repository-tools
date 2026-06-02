@@ -481,8 +481,8 @@ class Database:
             query: The search query (supports field prefixes and quoted phrases).
             limit: Maximum number of results to return (top).
             skip: Number of results to skip (for pagination).
-            role: Filter by message role ('user', 'assistant', or None for both).
-                  Can also be specified in query as 'role:user' or 'role:assistant'.
+            role: Filter by message role ('user', 'assistant', 'system', or None for non-system messages).
+                  Can also be specified in query as 'role:user', 'role:assistant', or 'role:system'.
             search_content_set: Set of content type tokens controlling which
                 data sources are searched.  See ``content_types.SEARCH_CONTENT_TYPES``.
             include_messages: Deprecated — use *search_content_set*.

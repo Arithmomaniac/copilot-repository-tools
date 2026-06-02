@@ -100,6 +100,7 @@ def session_with_thinking():
                         name="readFile",
                         input='{"path": "main.py"}',
                         result="def main(): pass",
+                        source_type="mcp",
                     ),
                 ],
             ),
@@ -147,6 +148,13 @@ class TestSessionToHtml:
         html = session_to_html(sample_session)
         assert "Hello, can you help me?" in html
         assert "Sure, I can help!" in html
+
+    def test_top_level_messages_are_collapsible_open_by_default(self, sample_session):
+        """User and assistant messages render as open-by-default details."""
+        html = session_to_html(sample_session)
+        assert html.count('<details class="message-details" open>') == 2
+        assert '<summary class="message-header">' in html
+        assert '<span class="collapsible-icon" aria-hidden="true">▼</span>' in html
 
     def test_fork_status_escaped_session_name_is_not_rendered_as_html(self):
         """Test that escaped fork link labels remain text when rendered as Markdown."""
@@ -245,7 +253,7 @@ class TestSessionToHtml:
         # Agent details should be included (full subagent content)
         assert "Found the root cause" in html
         # Thinking blocks should NOT be rendered (not in content_set)
-        assert '<details class="thinking-block">' not in html
+        assert '<details class="thinking-block" open>' not in html
 
     def test_session_to_html_content_set_none_uses_defaults(self, session_with_thinking):
         """content_set=None uses default includes."""
@@ -254,19 +262,19 @@ class TestSessionToHtml:
         # Default includes agent-details, so subagent content should be present
         assert "Found the root cause" in html
         # Default does NOT include 'thinking', so thinking elements not rendered
-        assert '<details class="thinking-block">' not in html
+        assert '<details class="thinking-block" open>' not in html
 
     def test_session_to_html_excludes_thinking(self, session_with_thinking):
         """Thinking blocks excluded when 'thinking' not in content_set."""
         html = session_to_html(session_with_thinking, content_set={"agent-details"})
-        assert '<details class="thinking-block">' not in html
+        assert '<details class="thinking-block" open>' not in html
         # But message text should still be present
         assert "investigate the issue" in html
 
     def test_session_to_html_includes_thinking_when_requested(self, session_with_thinking):
         """Thinking blocks included when 'thinking' IS in content_set."""
         html = session_to_html(session_with_thinking, content_set={"agent-details", "thinking"})
-        assert '<details class="thinking-block">' in html
+        assert '<details class="thinking-block" open>' in html
         assert "analyze the error" in html
 
     def test_session_to_html_excludes_agent_details(self, session_with_thinking):
@@ -284,20 +292,26 @@ class TestSessionToHtml:
         assert 'x-data="' not in html
         assert '<button class="settings-btn"' not in html
 
-    def test_system_messages_collapsed_by_default_in_static_export(self, session_with_system_message):
-        """System-role messages render as collapsed details by default."""
+    def test_system_messages_omitted_by_default_in_static_export(self, session_with_system_message):
+        """System-role messages are excluded from default static HTML exports."""
         html = session_to_html(session_with_system_message)
-        assert '<details class="system-message-details">' in html
-        assert '<span class="collapsible-icon" aria-hidden="true">▶</span>' in html
-        assert '<a href="#msg-2" class="message-anchor"' in html
-        assert "System instructions go here" in html
-        assert 'class="system-message-details" open' not in html
+        assert '<div class="message system"' not in html
+        assert "System instructions go here" not in html
 
-    def test_system_messages_expand_when_included(self, session_with_system_message):
-        """Including system-messages opens system details by default in static export."""
+    def test_system_messages_included_open_by_default(self, session_with_system_message):
+        """Including system-messages renders open collapsible details in static export."""
         html = session_to_html(session_with_system_message, content_set={"agent-details", "tools", "commands", "file-changes", "system-messages"})
-        assert 'class="system-message-details" open' in html
-        assert "expand-system-messages" in html
+        assert 'class="message-details system-message-details" open' in html
+        assert '<span class="collapsible-icon" aria-hidden="true">▼</span>' in html
+        assert "System instructions go here" in html
+        assert "expand-system-messages" not in html
+
+    def test_auxiliary_sections_are_collapsible_open_by_default(self, session_with_thinking):
+        """Representative auxiliary HTML sections render as open-by-default details."""
+        html = session_to_html(session_with_thinking, content_set={"agent-details", "thinking", "tools"})
+        assert '<details class="thinking-block" open>' in html
+        assert '<details class="subagent-block" open>' in html
+        assert '<details class="tool-invocation-wrapper" open>' in html
 
 
 class TestExportSessionToHtmlFile:

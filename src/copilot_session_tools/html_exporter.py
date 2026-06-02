@@ -105,9 +105,6 @@ def session_to_html(session: ChatSession, content_set: set[str] | None = None) -
         static_hide_classes_list.append("hide-commands")
     if "file-changes" not in content_set:
         static_hide_classes_list.append("hide-file-changes")
-    if include_system_messages:
-        static_hide_classes_list.append("expand-system-messages")
-
     first_user_prompt, message_metadata = _preprocess_messages(session)
     env = _get_jinja_env()
     template = env.get_template("session.html")

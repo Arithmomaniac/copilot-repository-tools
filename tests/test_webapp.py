@@ -264,23 +264,31 @@ class TestWebappRoutes:
         assert response.status_code == 200
         assert b"What is Python?" in response.data
 
-    def test_session_hides_system_messages_toggle(self, client):
-        """System messages are always present and not a user-toggle option."""
+    def test_session_top_level_messages_are_collapsible(self, client):
+        """User and assistant messages render as open-by-default details."""
         response = client.get("/session/webapp-test-session")
         assert response.status_code == 200
         html = response.data.decode("utf-8")
-        assert "System messages" not in html
-        assert 'x-model="systemMessages"' not in html
+        assert html.count('<details class="message-details" open>') == 2
+        assert '<summary class="message-header">' in html
 
-    def test_session_content_set_always_includes_system_messages(self, client):
-        """Web-viewer exports always include system messages in content_set."""
+    def test_session_exposes_system_messages_toggle(self, client):
+        """System messages are available as an explicit content option."""
         response = client.get("/session/webapp-test-session")
         assert response.status_code == 200
         html = response.data.decode("utf-8")
-        assert "set.push('system-messages');" in html
+        assert "System messages" in html
+        assert 'x-model="systemMessages"' in html
 
-    def test_session_system_messages_collapsed_by_default(self, temp_db):
-        """System-message parent blocks render collapsed by default in web view."""
+    def test_session_content_set_omits_system_messages_by_default(self, client):
+        """Web-viewer export content sets omit system messages unless toggled."""
+        response = client.get("/session/webapp-test-session")
+        assert response.status_code == 200
+        html = response.data.decode("utf-8")
+        assert "if (this.systemMessages) set.push('system-messages');" in html
+
+    def test_session_system_messages_open_by_default(self, temp_db):
+        """System-message parent blocks render open by default in web view."""
         db = Database(temp_db)
         session = ChatSession(
             session_id="webapp-system-session",
@@ -302,8 +310,7 @@ class TestWebappRoutes:
 
         assert response.status_code == 200
         html = response.data.decode("utf-8")
-        assert '<details class="system-message-details">' in html
-        assert 'class="system-message-details" open' not in html
+        assert '<details class="message-details system-message-details" open>' in html
 
     def test_session_shows_root_agent_transition_pills(self, temp_db):
         """Root custom-agent intervals render as timeline transition pills."""

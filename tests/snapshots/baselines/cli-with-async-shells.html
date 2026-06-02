@@ -438,6 +438,21 @@ header h1 {
     margin-bottom: 0;
 }
 
+.message-details > summary {
+    cursor: pointer;
+    list-style: none;
+}
+
+.message-details > summary::-webkit-details-marker {
+    display: none;
+}
+
+.message-details > summary .collapsible-icon {
+    color: var(--text-secondary);
+    font-size: 0.9em;
+    line-height: 1;
+}
+
 .message-anchor {
     color: var(--text-secondary);
     text-decoration: none;
@@ -961,14 +976,6 @@ header h1 {
 .system-message-details > summary .collapsible-icon {
     display: inline-block;
     color: var(--text-secondary);
-}
-
-.system-message-details[open] > summary .collapsible-icon {
-    transform: rotate(90deg);
-}
-
-.expand-system-messages .system-message-details {
-    opacity: 1;
 }
 
 /* Agent back-link */
@@ -1997,6 +2004,7 @@ footer a {
 
 /* Toggle hide rules — driven by Alpine settings panel */
 .hide-thinking .thinking-block { display: none !important; }
+.hide-system-messages .message.system { display: none !important; }
 .hide-diffs .file-change .diff { display: none !important; }
 .hide-tool-inputs .tool-section-input { display: none !important; }
 /* Tools OFF: hide collapsible wrappers + section header + summaries, show inline fallbacks */
@@ -2012,6 +2020,7 @@ footer a {
 
 /* Prevent hidden elements from being chosen as scroll anchors */
 .thinking-block,
+.message.system,
 .tool-invocation-wrapper,
 .tool-section-input,
 .subagent-content,
@@ -2207,15 +2216,17 @@ input:checked + .toggle-switch::after {
             
             
             <div class="message assistant" id="msg-1">
-                <div class="message-header">
+                <details class="message-details" open>
+                <summary class="message-header">
+                    <span class="collapsible-icon" aria-hidden="true">▼</span>
                     <div class="message-role">assistant</div>
                     
                     <span class="message-timestamp">2024-02-01 00:00:01</span>
                     
-                    <a href="#msg-1" class="message-anchor" title="Link to this message">#1</a>
+                    <a href="#msg-1" class="message-anchor" title="Link to this message" onclick="event.stopPropagation()">#1</a>
                     
                     
-                </div>
+                </summary>
                 <div class="message-content">
                     
                     <div class="message-content-inner">
@@ -2241,9 +2252,9 @@ input:checked + .toggle-switch::after {
                             
                             
                             <div class="content-block content-block-toolInvocation tool-invocation-inline">
-                                <details class="tool-invocation-wrapper">
+                                <details class="tool-invocation-wrapper" open>
                                     <summary>
-                                        <span class="collapsible-icon" aria-hidden="true">▶</span>
+                                       <span class="collapsible-icon" aria-hidden="true">▼</span>
                                         <span class="tool-invocation-message">
                                             
                                                 Check git status
@@ -2296,9 +2307,9 @@ M src/routes.ts</code></pre>
                             
                             
                             <div class="content-block content-block-toolInvocation tool-invocation-inline">
-                                <details class="tool-invocation-wrapper command-async" id="shell-dev-server">
+                                <details class="tool-invocation-wrapper command-async" id="shell-dev-server" open>
                                     <summary>
-                                        <span class="collapsible-icon" aria-hidden="true">▶</span>
+                                       <span class="collapsible-icon" aria-hidden="true">▼</span>
                                         <span class="tool-invocation-message">
                                             
                                                 Start dev server
@@ -2475,6 +2486,7 @@ M src/routes.ts</code></pre>
         
                     </div>
                 </div>
+                </details>
             </div>
             
             
@@ -2482,15 +2494,17 @@ M src/routes.ts</code></pre>
             
             
             <div class="message user" id="msg-2">
-                <div class="message-header">
+                <details class="message-details" open>
+                <summary class="message-header">
+                    <span class="collapsible-icon" aria-hidden="true">▼</span>
                     <div class="message-role">user</div>
                     
                     <span class="message-timestamp">2024-02-01 00:00:20</span>
                     
-                    <a href="#msg-2" class="message-anchor" title="Link to this message">#2</a>
+                    <a href="#msg-2" class="message-anchor" title="Link to this message" onclick="event.stopPropagation()">#2</a>
                     
                     
-                </div>
+                </summary>
                 <div class="message-content">
                     
                     <div class="message-content-inner">
@@ -2514,6 +2528,7 @@ M src/routes.ts</code></pre>
         
                     </div>
                 </div>
+                </details>
             </div>
             
             
@@ -2521,15 +2536,17 @@ M src/routes.ts</code></pre>
             
             
             <div class="message assistant" id="msg-3">
-                <div class="message-header">
+                <details class="message-details" open>
+                <summary class="message-header">
+                    <span class="collapsible-icon" aria-hidden="true">▼</span>
                     <div class="message-role">assistant</div>
                     
                     <span class="message-timestamp">2024-02-01 00:00:21</span>
                     
-                    <a href="#msg-3" class="message-anchor" title="Link to this message">#3</a>
+                    <a href="#msg-3" class="message-anchor" title="Link to this message" onclick="event.stopPropagation()">#3</a>
                     
                     
-                </div>
+                </summary>
                 <div class="message-content">
                     
                     <div class="message-content-inner">
@@ -2604,9 +2621,9 @@ M src/routes.ts</code></pre>
                             
                             
                             <div class="content-block content-block-toolInvocation tool-invocation-inline">
-                                <details class="tool-invocation-wrapper command-async" id="shell-tsc-watch">
+                                <details class="tool-invocation-wrapper command-async" id="shell-tsc-watch" open>
                                     <summary>
-                                        <span class="collapsible-icon" aria-hidden="true">▶</span>
+                                       <span class="collapsible-icon" aria-hidden="true">▼</span>
                                         <span class="tool-invocation-message">
                                             
                                                 TypeScript watcher
@@ -2729,6 +2746,7 @@ M src/routes.ts</code></pre>
         
                     </div>
                 </div>
+                </details>
             </div>
             
             
@@ -2754,7 +2772,7 @@ M src/routes.ts</code></pre>
                 }
             }
 
-            document.querySelectorAll('details.collapsible, details.tool-invocations-header, details.terminal-output-toggle, details.tool-invocation-wrapper, details.skill-block').forEach(details => {
+            document.querySelectorAll('details.collapsible, details.tool-invocations-header, details.terminal-output-toggle, details.tool-invocation-wrapper, details.skill-block, details.task-complete-block, details.subagent-block, details.subagent-prompt, details.thinking-block, details.system-message-details, details.message-details').forEach(details => {
                 details.addEventListener('toggle', function() {
                     const icon = this.querySelector(':scope > summary > .collapsible-icon');
                     if (icon) {
