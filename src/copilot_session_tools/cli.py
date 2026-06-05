@@ -71,6 +71,15 @@ def _ensure_db_exists(db: Path) -> None:
         raise typer.Exit(code=2)
 
 
+def _make_database_for_command(db: Path, *, allow_create: bool = False) -> "Database":
+    """Create a Database for a command, optionally bootstrapping the DB file."""
+    if allow_create:
+        db.parent.mkdir(parents=True, exist_ok=True)
+    else:
+        _ensure_db_exists(db)
+    return _make_database(db)
+
+
 app = typer.Typer(
     name="copilot-session-tools",
     help="Create a searchable archive of VS Code GitHub Copilot chats.",
@@ -86,6 +95,29 @@ _chronicle_db: Path | None = None
 def _make_database(db: str | Path) -> "Database":
     """Create a Database with the current global settings."""
     return Database(db, unenriched_only=_unenriched_only, chronicle_db_path=_chronicle_db)
+
+
+def _rescan_session_before_command(
+    database: "Database",
+    rescan_session_id: str | None,
+    *,
+    expected_session_id: str | None = None,
+) -> None:
+    """Run a targeted CLI session enrichment before a command proceeds."""
+    if rescan_session_id is None:
+        return
+
+    if expected_session_id is not None and rescan_session_id != expected_session_id:
+        typer.echo(
+            f"Error: --rescan-session ({rescan_session_id}) must match --session-id ({expected_session_id}).",
+            err=True,
+        )
+        raise typer.Exit(1)
+
+    error = enrich_single_session(database, rescan_session_id)
+    if error:
+        typer.echo(f"Error: {error}", err=True)
+        raise typer.Exit(1)
 
 
 def version_callback(value: bool):
@@ -413,6 +445,13 @@ def search(
             help="Output results as JSON for programmatic consumption.",
         ),
     ] = False,
+    rescan_session: Annotated[
+        str | None,
+        typer.Option(
+            "--rescan-session",
+            help="Parse and enrich one CLI session by ID before searching.",
+        ),
+    ] = None,
 ):
     """Search chat messages in the database.
 
@@ -434,6 +473,7 @@ def search(
       copilot-session-tools search "start_date:2024-01-01 end_date:2024-06-30"
       copilot-session-tools search '"exact phrase"'
       copilot-session-tools search "python function" --json
+      copilot-session-tools search "tool result" --rescan-session a1b2c3d4-...
 
     Use --role to filter by user requests or assistant responses.
     Use --title to filter by session/workspace name.
@@ -443,8 +483,8 @@ def search(
     Use --full to show complete content instead of truncated snippets.
     Use --sort to sort by relevance (default) or date.
     Use --json to output results as JSON for programmatic consumption.
+    Use --rescan-session to refresh one CLI session before searching.
     """
-    _ensure_db_exists(db)
     if role and role not in ("user", "assistant"):
         console.print("[red]Error: role must be 'user' or 'assistant'[/red]")
         console.print('[dim]  copilot-session-tools search "query" --role user[/dim]')
@@ -457,7 +497,8 @@ def search(
 
     search_content_set = resolve_search_content_set(include, exclude)
 
-    database = _make_database(db)
+    database = _make_database_for_command(db, allow_create=rescan_session is not None)
+    _rescan_session_before_command(database, rescan_session)
     results = database.search(
         query,
         limit=limit,
@@ -646,6 +687,13 @@ def export_markdown(
             help="Export only a specific session by ID.",
         ),
     ] = None,
+    rescan_session: Annotated[
+        str | None,
+        typer.Option(
+            "--rescan-session",
+            help="Parse and enrich one CLI session by ID before exporting.",
+        ),
+    ] = None,
     verbose: Annotated[
         bool,
         typer.Option(
@@ -687,10 +735,11 @@ def export_markdown(
     Examples:
       copilot-session-tools export-markdown -o ./exports
       copilot-session-tools export-markdown --session-id a1b2c3d4-... -o .
+      copilot-session-tools export-markdown --session-id a1b2c3d4-... --rescan-session a1b2c3d4-... -o .
       copilot-session-tools export-markdown --exclude tool-results,thinking
     """
-    _ensure_db_exists(db)
-    database = _make_database(db)
+    database = _make_database_for_command(db, allow_create=rescan_session is not None)
+    _rescan_session_before_command(database, rescan_session, expected_session_id=session_id)
 
     content_set = resolve_content_set(include, exclude)
 
@@ -750,6 +799,13 @@ def export_html(
             help="Export only a specific session by ID.",
         ),
     ] = None,
+    rescan_session: Annotated[
+        str | None,
+        typer.Option(
+            "--rescan-session",
+            help="Parse and enrich one CLI session by ID before exporting.",
+        ),
+    ] = None,
     verbose: Annotated[
         bool,
         typer.Option(
@@ -789,10 +845,11 @@ def export_html(
     Examples:
       copilot-session-tools export-html -o ./exports
       copilot-session-tools export-html --session-id a1b2c3d4-... -o .
+      copilot-session-tools export-html --session-id a1b2c3d4-... --rescan-session a1b2c3d4-... -o .
       copilot-session-tools export-html --exclude tool-results,thinking
     """
-    _ensure_db_exists(db)
-    database = _make_database(db)
+    database = _make_database_for_command(db, allow_create=rescan_session is not None)
+    _rescan_session_before_command(database, rescan_session, expected_session_id=session_id)
 
     content_set = resolve_content_set(include, exclude)
 

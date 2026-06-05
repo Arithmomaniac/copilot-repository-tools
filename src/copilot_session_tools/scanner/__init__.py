@@ -2,7 +2,7 @@
 
 Data structures are informed by:
 - Arbuzov/copilot-chat-history (https://github.com/Arbuzov/copilot-chat-history)
-- microsoft/vscode-copilot-chat (https://github.com/microsoft/vscode-copilot-chat)
+- microsoft/vscode (https://github.com/microsoft/vscode)
 """
 
 PARSER_VERSION = 4

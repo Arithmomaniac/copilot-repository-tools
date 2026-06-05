@@ -265,6 +265,89 @@ class TestCLI:
         assert result.exit_code == 1
         assert "not found" in result.output
 
+    def test_export_markdown_rescan_session_bootstraps_missing_db(self, runner, tmp_path):
+        """--rescan-session can create the CST DB and export a never-scanned session."""
+        db_path = tmp_path / "missing.db"
+        output_dir = tmp_path / "markdown_output"
+        session_id = "rescanned-session"
+
+        def fake_enrich(database, requested_session_id):
+            database.enrich_session(
+                ChatSession(
+                    session_id=requested_session_id,
+                    workspace_name="rescanned-workspace",
+                    workspace_path="/tmp/rescanned",
+                    messages=[ChatMessage(role="user", content="Fresh bootstrap content")],
+                    vscode_edition="cli",
+                    type="cli",
+                )
+            )
+            return None
+
+        with patch("copilot_session_tools.cli.enrich_single_session", side_effect=fake_enrich) as mock_enrich:
+            result = runner.invoke(
+                app,
+                [
+                    "export-markdown",
+                    "--db",
+                    str(db_path),
+                    "--output-dir",
+                    str(output_dir),
+                    "--session-id",
+                    session_id,
+                    "--rescan-session",
+                    session_id,
+                ],
+            )
+
+        assert result.exit_code == 0
+        mock_enrich.assert_called_once()
+        assert db_path.exists()
+        md_files = list(output_dir.glob("*.md"))
+        assert len(md_files) == 1
+        assert "Fresh bootstrap content" in md_files[0].read_text(encoding="utf-8")
+
+    def test_export_markdown_rescan_session_must_match_session_id(self, runner, temp_db_with_data, tmp_path):
+        """Session-scoped exports reject mismatched --rescan-session values."""
+        result = runner.invoke(
+            app,
+            [
+                "export-markdown",
+                "--db",
+                str(temp_db_with_data),
+                "--output-dir",
+                str(tmp_path / "markdown_output"),
+                "--session-id",
+                "cli-test-session",
+                "--rescan-session",
+                "other-session",
+            ],
+        )
+
+        assert result.exit_code == 1
+        assert "must match --session-id" in result.output
+
+    def test_export_markdown_rescan_session_surfaces_enrichment_error(self, runner, temp_db_with_data, tmp_path):
+        """Targeted rescan failures stop the command before export."""
+        with patch("copilot_session_tools.cli.enrich_single_session", return_value="events.jsonl not found for session missing-session"):
+            result = runner.invoke(
+                app,
+                [
+                    "export-markdown",
+                    "--db",
+                    str(temp_db_with_data),
+                    "--output-dir",
+                    str(tmp_path / "markdown_output"),
+                    "--session-id",
+                    "missing-session",
+                    "--rescan-session",
+                    "missing-session",
+                ],
+            )
+
+        assert result.exit_code == 1
+        assert "events.jsonl not found" in result.output
+
     def test_export_html_command(self, runner, temp_db_with_data, tmp_path):
         """Test export-html command exports sessions to HTML files."""
         output_dir = tmp_path / "html_output"
@@ -344,6 +427,44 @@ class TestCLI:
         assert "<!DOCTYPE html>" in content
         assert "message-content" in content
         assert "--container-max-width: none" in content
+
+    def test_search_rescan_session_bootstraps_missing_db_with_json_output(self, runner, tmp_path):
+        """--rescan-session runs before search without polluting --json stdout."""
+        db_path = tmp_path / "missing.db"
+        session_id = "search-rescanned-session"
+
+        def fake_enrich(database, requested_session_id):
+            database.enrich_session(
+                ChatSession(
+                    session_id=requested_session_id,
+                    workspace_name="search-rescanned-workspace",
+                    workspace_path="/tmp/search-rescanned",
+                    messages=[ChatMessage(role="user", content="uniqueSearchBootstrapToken")],
+                    vscode_edition="cli",
+                    type="cli",
+                )
+            )
+            return None
+
+        with patch("copilot_session_tools.cli.enrich_single_session", side_effect=fake_enrich) as mock_enrich:
+            result = runner.invoke(
+                app,
+                [
+                    "search",
+                    "--db",
+                    str(db_path),
+                    "uniqueSearchBootstrapToken",
+                    "--rescan-session",
+                    session_id,
+                    "--json",
+                ],
+            )
+
+        assert result.exit_code == 0
+        mock_enrich.assert_called_once()
+        data = json.loads(result.output)
+        assert len(data) == 1
+        assert data[0]["session_id"] == session_id
 
 
 class TestSearchIncludeExclude:
