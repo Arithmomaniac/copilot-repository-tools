@@ -12,7 +12,7 @@ This project borrows patterns from several open-source projects:
 - tad-hq/universal-session-viewer: FTS5 full-text search design
 """
 
-__version__ = "0.14.0"
+__version__ = "0.15.0"
 
 from .content_types import (
     CONTENT_TYPES,
@@ -41,6 +41,7 @@ from .scanner import (
     ContentBlock,
     FileChange,
     RootAgentInterval,
+    SessionContextEntry,
     ToolInvocation,
     detect_repository_url,
     find_copilot_chat_dirs,
@@ -64,6 +65,7 @@ __all__ = [
     "FileChange",
     "ParsedQuery",
     "RootAgentInterval",
+    "SessionContextEntry",
     "ToolInvocation",
     # Package
     "__version__",

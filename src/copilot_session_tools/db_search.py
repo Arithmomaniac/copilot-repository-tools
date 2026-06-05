@@ -20,8 +20,10 @@ class ParsedQuery:
     fts_query: str  # The FTS5 query string for content search
     role: str | None = None  # Extracted role filter (user/assistant)
     workspace: str | None = None  # Extracted workspace filter
+    workspaces: list[str] | None = None  # All extracted workspace filters
     title: str | None = None  # Extracted title filter
     repository: str | None = None  # Extracted repository filter
+    repositories: list[str] | None = None  # All extracted repository filters
     edition: str | None = None  # Extracted edition filter (stable/insider/cli)
     start_date: str | None = None  # Extracted start date filter (yyyy-mm-dd format, inclusive)
     end_date: str | None = None  # Extracted end date filter (yyyy-mm-dd format, inclusive)
@@ -113,9 +115,9 @@ def parse_search_query(query: str) -> ParsedQuery:
 
     # Extract field prefixes (role:, workspace:, title:, repository:, edition:, start_date:, end_date:)
     role = None
-    workspace = None
+    workspaces: list[str] = []
     title = None
-    repository = None
+    repositories: list[str] = []
     edition = None
     start_date = None
     end_date = None
@@ -124,7 +126,7 @@ def parse_search_query(query: str) -> ParsedQuery:
     field_pattern = r'\b(role|workspace|title|repository|repo|edition|start_date|end_date):(?:"([^"]*)"|(\S+))'
 
     def extract_field(match):
-        nonlocal role, workspace, title, repository, edition, start_date, end_date
+        nonlocal role, title, edition, start_date, end_date
         field_name = match.group(1).lower()
         # Value is either in group 2 (quoted) or group 3 (unquoted)
         value = match.group(2) if match.group(2) is not None else match.group(3)
@@ -132,11 +134,11 @@ def parse_search_query(query: str) -> ParsedQuery:
         if field_name == "role":
             role = value.lower()
         elif field_name == "workspace":
-            workspace = value
+            workspaces.append(value)
         elif field_name == "title":
             title = value
         elif field_name in ("repository", "repo"):
-            repository = value
+            repositories.append(value)
         elif field_name == "edition":
             edition = value.lower()
         elif field_name == "start_date":
@@ -182,9 +184,11 @@ def parse_search_query(query: str) -> ParsedQuery:
     return ParsedQuery(
         fts_query=fts_query,
         role=role,
-        workspace=workspace,
+        workspace=workspaces[0] if workspaces else None,
+        workspaces=workspaces or None,
         title=title,
-        repository=repository,
+        repository=repositories[0] if repositories else None,
+        repositories=repositories or None,
         edition=edition,
         start_date=start_date,
         end_date=end_date,
@@ -265,14 +269,37 @@ _SORT_ORDER_CLAUSES = {
 }
 
 
+def _active_context_index_subquery() -> str:
+    """Return SQL that selects the context active at the current message row."""
+    return """
+        COALESCE(
+            (
+                SELECT sc2.context_index
+                FROM cst_session_contexts sc2
+                WHERE sc2.session_id = s.session_id
+                  AND sc2.message_index <= COALESCE(m.message_index, 0)
+                ORDER BY sc2.message_index DESC, sc2.context_index DESC
+                LIMIT 1
+            ),
+            (
+                SELECT sc3.context_index
+                FROM cst_session_contexts sc3
+                WHERE sc3.session_id = s.session_id
+                ORDER BY sc3.message_index ASC, sc3.context_index ASC
+                LIMIT 1
+            )
+        )
+    """
+
+
 def _append_session_filters(
     query: str,
     params: list,
     *,
     include_agent_content: bool,
-    effective_workspace: str | None,
+    effective_workspaces: list[str],
     effective_title: str | None,
-    effective_repository: str | None,
+    effective_repositories: list[str],
     effective_edition: str | None,
     effective_start_date: str | None,
     effective_end_date: str | None,
@@ -285,9 +312,9 @@ def _append_session_filters(
         query: The SQL query string to append to.
         params: The parameter list (modified in-place).
         include_agent_content: Whether to include agent/subagent content.
-        effective_workspace: Workspace filter value.
+        effective_workspaces: Workspace filter values.
         effective_title: Title filter value.
-        effective_repository: Repository filter value.
+        effective_repositories: Repository filter values.
         effective_edition: Edition filter value.
         effective_start_date: Start date filter.
         effective_end_date: End date filter.
@@ -298,17 +325,59 @@ def _append_session_filters(
     if not include_agent_content:
         query += " AND m.agent_nesting_level = 0"
 
-    if effective_workspace:
-        query += " AND s.workspace_name LIKE ?"
-        params.append(f"%{effective_workspace}%")
+    if effective_workspaces:
+        clauses = []
+        active_context_index = _active_context_index_subquery()
+        for workspace in effective_workspaces:
+            clauses.append(
+                f"""(
+                    (
+                        NOT EXISTS (
+                            SELECT 1 FROM cst_session_contexts sc_any
+                            WHERE sc_any.session_id = s.session_id
+                        )
+                        AND (s.workspace_name LIKE ? OR s.workspace_path LIKE ?)
+                    )
+                    OR EXISTS (
+                        SELECT 1 FROM cst_session_contexts sc
+                        WHERE sc.session_id = s.session_id
+                          AND sc.context_index = ({active_context_index})
+                          AND (sc.workspace_name LIKE ? OR sc.workspace_path LIKE ?)
+                    )
+                )"""  # noqa: S608 -- interpolates static active-context SQL only
+            )
+            like_value = f"%{workspace}%"
+            params.extend([like_value, like_value, like_value, like_value])
+        query += " AND (" + " OR ".join(clauses) + ")"
 
     if effective_title:
         query += " AND (s.workspace_name LIKE ? OR s.custom_title LIKE ?)"
         params.extend([f"%{effective_title}%", f"%{effective_title}%"])
 
-    if effective_repository:
-        query += " AND s.repository_url LIKE ?"
-        params.append(f"%{effective_repository}%")
+    if effective_repositories:
+        clauses = []
+        active_context_index = _active_context_index_subquery()
+        for repository in effective_repositories:
+            clauses.append(
+                f"""(
+                    (
+                        NOT EXISTS (
+                            SELECT 1 FROM cst_session_contexts sc_any
+                            WHERE sc_any.session_id = s.session_id
+                        )
+                        AND s.repository_url LIKE ?
+                    )
+                    OR EXISTS (
+                        SELECT 1 FROM cst_session_contexts sc
+                        WHERE sc.session_id = s.session_id
+                          AND sc.context_index = ({active_context_index})
+                          AND sc.repository_url LIKE ?
+                    )
+                )"""  # noqa: S608 -- interpolates static active-context SQL only
+            )
+            like_value = f"%{repository}%"
+            params.extend([like_value, like_value])
+        query += " AND (" + " OR ".join(clauses) + ")"
 
     if effective_edition:
         query += " AND s.vscode_edition = ?"
@@ -355,6 +424,53 @@ def _search_builtin_index(conn: sqlite3.Connection, fts_query: str, limit: int) 
     except Exception:  # noqa: S110
         pass  # search_index might not exist or chronicle not attached
     return builtin_results
+
+
+def _attach_active_contexts(conn: sqlite3.Connection, results: list[dict]) -> None:
+    """Attach the session context active at each search hit's message index."""
+    session_ids = list({r["session_id"] for r in results if r.get("session_id")})
+    if not session_ids:
+        return
+    placeholders = ",".join("?" * len(session_ids))
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT session_id, context_index, message_index, timestamp, workspace_name,
+                   workspace_path, repository_url, branch, source
+            FROM cst_session_contexts
+            WHERE session_id IN ({placeholders})
+            ORDER BY session_id, message_index, context_index
+            """,  # noqa: S608
+            session_ids,
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return
+
+    contexts_by_session: dict[str, list[dict]] = {}
+    for row in rows:
+        contexts_by_session.setdefault(row["session_id"], []).append(dict(row))
+
+    for result in results:
+        session_id = result.get("session_id")
+        if not isinstance(session_id, str):
+            continue
+        contexts = contexts_by_session.get(session_id, [])
+        if not contexts:
+            continue
+        message_index = result.get("message_index")
+        if message_index is None:
+            active = contexts[0]
+        else:
+            active = contexts[0]
+            for context in contexts:
+                if context.get("message_index", 0) <= message_index:
+                    active = context
+                else:
+                    break
+        result["active_context"] = active
+        result["workspace_name"] = active.get("workspace_name") or result.get("workspace_name")
+        result["workspace_path"] = active.get("workspace_path")
+        result["repository_url"] = active.get("repository_url")
 
 
 def _search_messages(
@@ -632,7 +748,7 @@ def execute_search(
     search_content_set: set[str],
     session_title: str | None = None,
     sort_by: str = "relevance",
-    repository: str | None = None,
+    repository: str | list[str] | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
     has_chronicle: bool = False,
@@ -677,8 +793,13 @@ def execute_search(
     # Use parsed field filters, with explicit parameters taking precedence
     effective_role = role if role else parsed.role
     effective_title = session_title if session_title else parsed.title
-    effective_workspace = parsed.workspace
-    effective_repository = repository if repository else parsed.repository
+    effective_workspaces = parsed.workspaces or []
+    if isinstance(repository, list):
+        effective_repositories = [repo for repo in repository if repo]
+    elif repository:
+        effective_repositories = [repository]
+    else:
+        effective_repositories = parsed.repositories or []
     effective_edition = parsed.edition
     effective_start_date = start_date if start_date else parsed.start_date
     effective_end_date = end_date if end_date else parsed.end_date
@@ -688,9 +809,9 @@ def execute_search(
     # Common filter kwargs shared across all content-type search branches
     filter_kwargs = {
         "include_agent_content": include_agent_content,
-        "effective_workspace": effective_workspace,
+        "effective_workspaces": effective_workspaces,
         "effective_title": effective_title,
-        "effective_repository": effective_repository,
+        "effective_repositories": effective_repositories,
         "effective_edition": effective_edition,
         "effective_start_date": effective_start_date,
         "effective_end_date": effective_end_date,
@@ -701,7 +822,7 @@ def execute_search(
     if has_chronicle and fts_query and include_msgs:
         builtin_results = _search_builtin_index(conn, fts_query, limit)
 
-    has_filters = bool(effective_role or effective_title or effective_workspace or effective_repository or effective_edition or effective_start_date or effective_end_date)
+    has_filters = bool(effective_role or effective_title or effective_workspaces or effective_repositories or effective_edition or effective_start_date or effective_end_date)
 
     cursor = conn.cursor()
 
@@ -771,6 +892,8 @@ def execute_search(
     for sid, builtin_row in builtin_results.items():
         if sid not in cst_session_ids:
             results.append(builtin_row)
+
+    _attach_active_contexts(conn, results)
 
     # Apply skip/limit to merged results for correct pagination
     return results[skip : skip + limit]

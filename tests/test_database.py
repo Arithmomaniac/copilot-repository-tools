@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from copilot_session_tools import ChatMessage, ChatSession, CommandRun, ContentBlock, Database, FileChange, ToolInvocation, parse_search_query
-from copilot_session_tools.scanner import RootAgentInterval
+from copilot_session_tools.scanner import RootAgentInterval, SessionContextEntry
 
 
 @pytest.fixture
@@ -87,6 +87,50 @@ class TestDatabase:
         assert len(retrieved.messages) == len(sample_session.messages)
         assert retrieved.messages[0].role == "user"
         assert "Python function" in retrieved.messages[0].content
+
+    def test_session_context_entries_persist_and_retrieve(self, temp_db):
+        """Test workspace/repository context history persists with sessions."""
+        session = ChatSession(
+            session_id="context-session",
+            workspace_name="project-one",
+            workspace_path="/work/project-one",
+            repository_url="github.com/owner/one",
+            messages=[
+                ChatMessage(role="user", content="Initial repo question"),
+                ChatMessage(role="assistant", content="Switching context"),
+                ChatMessage(role="user", content="Later repo question"),
+            ],
+            context_entries=[
+                SessionContextEntry(
+                    workspace_name="project-one",
+                    workspace_path="/work/project-one",
+                    repository_url="github.com/owner/one",
+                    message_index=0,
+                ),
+                SessionContextEntry(
+                    workspace_name="project-two",
+                    workspace_path="/work/project-two",
+                    repository_url="github.com/owner/two",
+                    branch="main",
+                    message_index=2,
+                    source="context_changed",
+                ),
+            ],
+        )
+
+        temp_db.add_session(session)
+
+        retrieved = temp_db.get_session("context-session")
+        assert retrieved is not None
+        contexts = retrieved.effective_context_entries()
+        assert [c.workspace_name for c in contexts] == ["project-one", "project-two"]
+        assert contexts[1].repository_url == "github.com/owner/two"
+        assert contexts[1].message_index == 2
+
+        listed = temp_db.list_sessions(workspace_name="project-two")
+        assert [s["session_id"] for s in listed] == ["context-session"]
+        assert listed[0]["workspace_names"] == ["project-one", "project-two"]
+        assert listed[0]["repository_urls"] == ["github.com/owner/one", "github.com/owner/two"]
 
     def test_root_agent_intervals_persist_and_retrieve(self, temp_db):
         """Test root custom-agent intervals persist and hydrate with sessions."""
@@ -726,9 +770,10 @@ class TestParseSearchQuery:
             # Case insensitive field names
             ("Role:user WORKSPACE:test", "", "user", "test", None, None),
             ("EDITION:CLI", "", None, None, None, "cli"),
-            # Duplicate field values - last one wins
+            # Duplicate scalar field values - last one wins
             ("role:user role:assistant python", "python", "assistant", None, None, None),
-            ("workspace:first workspace:second", "", None, "second", None, None),
+            # Repeated workspace filters are preserved as alternatives; workspace keeps the first value for compatibility
+            ("workspace:first workspace:second", "", None, "first", None, None),
             # FTS5 special character escaping - dashes
             ("test-driven", '"test-driven"', None, None, None, None),
             ("e-commerce m-commerce", '"e-commerce" "m-commerce"', None, None, None, None),
@@ -753,6 +798,14 @@ class TestParseSearchQuery:
         assert result.workspace == expected_workspace
         assert result.title == expected_title
         assert result.edition == expected_edition
+
+    def test_parse_search_query_preserves_repeated_context_filters(self):
+        result = parse_search_query("workspace:first workspace:second repo:one repository:two")
+
+        assert result.workspace == "first"
+        assert result.workspaces == ["first", "second"]
+        assert result.repository == "one"
+        assert result.repositories == ["one", "two"]
 
 
 @pytest.fixture
@@ -1108,6 +1161,76 @@ class TestRepositoryUrlSupport:
         # Search with repository: prefix
         results = temp_db.search("repository:other Hello")
         assert len(results) == 1
+
+    def test_search_matches_later_context_and_reports_active_context(self, temp_db):
+        """Search filters match any session context and report context active at the hit."""
+        session = ChatSession(
+            session_id="multi-context-search",
+            workspace_name="project-one",
+            workspace_path="/work/project-one",
+            repository_url="github.com/owner/one",
+            messages=[
+                ChatMessage(role="user", content="Alpha only", timestamp="2025-01-01T00:00:00Z"),
+                ChatMessage(role="assistant", content="Changed context", timestamp="2025-01-01T00:01:00Z"),
+                ChatMessage(role="user", content="Need beta feature", timestamp="2025-01-01T00:02:00Z"),
+            ],
+            context_entries=[
+                SessionContextEntry(
+                    workspace_name="project-one",
+                    workspace_path="/work/project-one",
+                    repository_url="github.com/owner/one",
+                    message_index=0,
+                ),
+                SessionContextEntry(
+                    workspace_name="project-two",
+                    workspace_path="/work/project-two",
+                    repository_url="github.com/owner/two",
+                    message_index=2,
+                    source="context_changed",
+                ),
+            ],
+        )
+        temp_db.add_session(session)
+
+        results = temp_db.search("repo:two beta")
+
+        assert len(results) == 1
+        assert results[0]["session_id"] == "multi-context-search"
+        assert results[0]["active_context"]["workspace_name"] == "project-two"
+        assert results[0]["repository_url"] == "github.com/owner/two"
+
+        assert temp_db.search("repo:two Alpha") == []
+        assert temp_db.search("workspace:project-two Alpha") == []
+
+    def test_repeated_repository_prefixes_are_or_filters(self, temp_db):
+        session1 = ChatSession(
+            session_id="or-repo-1",
+            workspace_name="project1",
+            workspace_path="/path/to/project1",
+            messages=[ChatMessage(role="user", content="Repeated filter")],
+            repository_url="github.com/owner/repo1",
+        )
+        session2 = ChatSession(
+            session_id="or-repo-2",
+            workspace_name="project2",
+            workspace_path="/path/to/project2",
+            messages=[ChatMessage(role="user", content="Repeated filter")],
+            repository_url="github.com/owner/repo2",
+        )
+        session3 = ChatSession(
+            session_id="or-repo-3",
+            workspace_name="project3",
+            workspace_path="/path/to/project3",
+            messages=[ChatMessage(role="user", content="Repeated filter")],
+            repository_url="github.com/owner/repo3",
+        )
+        temp_db.add_session(session1)
+        temp_db.add_session(session2)
+        temp_db.add_session(session3)
+
+        results = temp_db.search("repo:repo1 repo:repo2 Repeated")
+
+        assert {r["session_id"] for r in results} == {"or-repo-1", "or-repo-2"}
 
 
 class TestDateFiltering:
@@ -2363,6 +2486,42 @@ class TestSchemaV6:
         msg_cols = {row[1] for row in conn.execute("PRAGMA table_info(cst_messages)")}
         assert "parent_message_id" in msg_cols
         assert "child_index" in msg_cols
+
+        conn.close()
+
+
+class TestChronicleSchemaVersion:
+    """Tests for Chronicle schema compatibility warnings."""
+
+    def test_known_chronicle_schema_version_does_not_warn(self):
+        """Chronicle schema v4 is currently supported by CST's read queries."""
+        import warnings
+
+        from copilot_session_tools.db_storage import CHRONICLE_SCHEMA_VERSION, check_builtin_schema_version
+
+        conn = sqlite3.connect(":memory:")
+        conn.execute("ATTACH DATABASE ':memory:' AS chronicle")
+        conn.execute("CREATE TABLE chronicle.schema_version (version INTEGER NOT NULL)")
+        conn.execute("INSERT INTO chronicle.schema_version VALUES (?)", (CHRONICLE_SCHEMA_VERSION,))
+
+        with warnings.catch_warnings(record=True) as recorded:
+            warnings.simplefilter("always")
+            check_builtin_schema_version(conn)
+
+        assert recorded == []
+        conn.close()
+
+    def test_future_chronicle_schema_version_warns(self):
+        """A future Chronicle schema still warns so parser compatibility is revisited."""
+        from copilot_session_tools.db_storage import CHRONICLE_SCHEMA_VERSION, check_builtin_schema_version
+
+        conn = sqlite3.connect(":memory:")
+        conn.execute("ATTACH DATABASE ':memory:' AS chronicle")
+        conn.execute("CREATE TABLE chronicle.schema_version (version INTEGER NOT NULL)")
+        conn.execute("INSERT INTO chronicle.schema_version VALUES (?)", (CHRONICLE_SCHEMA_VERSION + 1,))
+
+        with pytest.warns(UserWarning, match=f"newer than expected \\({CHRONICLE_SCHEMA_VERSION}\\)"):
+            check_builtin_schema_version(conn)
 
         conn.close()
 

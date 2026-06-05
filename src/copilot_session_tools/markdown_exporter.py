@@ -274,6 +274,9 @@ def session_to_markdown(
         decoded_path = _urldecode(session.workspace_path)
         lines.append(f"- **Path:** `{decoded_path}`")
 
+    if session.repository_url:
+        lines.append(f"- **Repository:** {session.repository_url}")
+
     if session.created_at:
         lines.append(f"- **Created:** {_format_timestamp(session.created_at)}")
 
