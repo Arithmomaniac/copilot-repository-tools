@@ -18,18 +18,21 @@ from .db_schema import (
     CST_MESSAGE_COLUMNS,
     CST_ROOT_AGENT_INTERVAL_COLUMNS,
     CST_SESSION_COLUMNS,
+    CST_SESSION_CONTEXT_COLUMNS,
     CST_TOOL_INVOCATION_COLUMNS,
     command_to_row,
     file_change_to_row,
     insert_sql,
     root_agent_interval_to_row,
+    session_context_to_row,
     session_to_row,
     tool_to_row,
 )
 from .markdown_exporter import message_to_markdown
 from .scanner import ChatSession
 
-CST_SCHEMA_VERSION = 9
+CST_SCHEMA_VERSION = 10
+CHRONICLE_SCHEMA_VERSION = 4
 
 
 CST_SCHEMA = """
@@ -146,6 +149,24 @@ CREATE TABLE IF NOT EXISTS cst_root_agent_intervals (
 );
 CREATE INDEX IF NOT EXISTS idx_cst_root_agent_intervals_session ON cst_root_agent_intervals(session_id, start_timestamp);
 CREATE INDEX IF NOT EXISTS idx_cst_root_agent_intervals_agent ON cst_root_agent_intervals(agent_name);
+
+CREATE TABLE IF NOT EXISTS cst_session_contexts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL REFERENCES cst_sessions(session_id) ON DELETE CASCADE,
+    context_index INTEGER NOT NULL,
+    message_index INTEGER NOT NULL DEFAULT 0,
+    timestamp TEXT,
+    workspace_name TEXT,
+    workspace_path TEXT,
+    repository_url TEXT,
+    branch TEXT,
+    source TEXT NOT NULL DEFAULT 'initial',
+    UNIQUE(session_id, context_index)
+);
+CREATE INDEX IF NOT EXISTS idx_cst_session_contexts_session ON cst_session_contexts(session_id, context_index);
+CREATE INDEX IF NOT EXISTS idx_cst_session_contexts_workspace_name ON cst_session_contexts(workspace_name);
+CREATE INDEX IF NOT EXISTS idx_cst_session_contexts_workspace_path ON cst_session_contexts(workspace_path);
+CREATE INDEX IF NOT EXISTS idx_cst_session_contexts_repo ON cst_session_contexts(repository_url);
 
 CREATE VIEW IF NOT EXISTS cst_messages_tree AS
 SELECT
@@ -291,6 +312,7 @@ def _drop_and_recreate_cst_tables(conn: sqlite3.Connection) -> None:
         "cst_file_changes",
         "cst_tool_invocations",
         "cst_root_agent_intervals",
+        "cst_session_contexts",
         "cst_messages",
         "cst_sessions",
         "cst_schema_version",
@@ -366,6 +388,9 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         # v8 → v9: Add root custom-agent interval storage and views.
         if current_version < 9:
             conn.executescript(CST_SCHEMA)
+        # v9 → v10: Add session context history storage.
+        if current_version < 10:
+            conn.executescript(CST_SCHEMA)
         cursor.execute(
             "UPDATE cst_schema_version SET version = ?",
             (CST_SCHEMA_VERSION,),
@@ -379,11 +404,12 @@ def check_builtin_schema_version(conn: sqlite3.Connection) -> None:
     """
     try:
         row = conn.execute("SELECT version FROM chronicle.schema_version LIMIT 1").fetchone()
-        if row and row[0] > 1:
+        if row and row[0] > CHRONICLE_SCHEMA_VERSION:
             import warnings
 
             warnings.warn(
-                f"Session store schema version {row[0]} is newer than expected (1). Some features may not work correctly. Consider updating copilot-session-tools.",
+                f"Session store schema version {row[0]} is newer than expected ({CHRONICLE_SCHEMA_VERSION}). "
+                "Some features may not work correctly. Consider updating copilot-session-tools.",
                 stacklevel=2,
             )
     except Exception:  # noqa: S110
@@ -491,6 +517,7 @@ def _delete_session_data(cursor: sqlite3.Cursor, session_id: str) -> None:
     )
     cursor.execute("DELETE FROM cst_messages_fts WHERE session_id = ?", (session_id,))
     cursor.execute("DELETE FROM cst_root_agent_intervals WHERE session_id = ?", (session_id,))
+    cursor.execute("DELETE FROM cst_session_contexts WHERE session_id = ?", (session_id,))
     cursor.execute("DELETE FROM cst_messages WHERE session_id = ?", (session_id,))
 
 
@@ -627,6 +654,12 @@ def add_session_impl(cursor: sqlite3.Cursor, session: ChatSession) -> None:
         cursor.execute(
             insert_sql("cst_root_agent_intervals", CST_ROOT_AGENT_INTERVAL_COLUMNS),
             root_agent_interval_to_row(session.session_id, interval),
+        )
+
+    for context_index, entry in enumerate(session.effective_context_entries()):
+        cursor.execute(
+            insert_sql("cst_session_contexts", CST_SESSION_CONTEXT_COLUMNS),
+            session_context_to_row(session.session_id, context_index, entry),
         )
 
     # Insert messages and related data
@@ -816,7 +849,9 @@ def update_enrichment_version(conn: sqlite3.Connection, session_id: str, version
 
 def delete_cst_session(conn: sqlite3.Connection, session_id: str) -> bool:
     """Delete all cst_* data for a session. Returns True if session existed."""
-    cursor = conn.execute("DELETE FROM cst_sessions WHERE session_id = ?", (session_id,))
+    db_cursor = conn.cursor()
+    _delete_session_data(db_cursor, session_id)
+    cursor = db_cursor.execute("DELETE FROM cst_sessions WHERE session_id = ?", (session_id,))
     return cursor.rowcount > 0
 
 
@@ -926,6 +961,12 @@ def enrich_session(conn: sqlite3.Connection, session: ChatSession) -> None:
             root_agent_interval_to_row(session.session_id, interval),
         )
 
+    for context_index, entry in enumerate(session.effective_context_entries()):
+        cursor.execute(
+            insert_sql("cst_session_contexts", CST_SESSION_CONTEXT_COLUMNS),
+            session_context_to_row(session.session_id, context_index, entry),
+        )
+
     # Insert messages and related data
     for idx, msg in enumerate(session.messages):
         cached_markdown = message_to_markdown(
@@ -1019,8 +1060,7 @@ def cleanup_orphaned_cst_sessions(conn: sqlite3.Connection, *, has_chronicle: bo
 
     # Delete orphaned sessions and all related data
     for session_id in orphaned_ids:
-        cursor.execute("DELETE FROM cst_messages_fts WHERE session_id = ?", (session_id,))
-        cursor.execute("DELETE FROM cst_messages WHERE session_id = ?", (session_id,))
+        _delete_session_data(cursor, session_id)
         cursor.execute("DELETE FROM cst_sessions WHERE session_id = ?", (session_id,))
 
     return orphaned_ids

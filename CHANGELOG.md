@@ -1,9 +1,28 @@
+> Created/edited by GitHub Copilot with human review/feedback by avilevin.
+
 # Changelog
 
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.15.0] - 2026-06-02
+
+### Added
+
+- **Scanner / Database**: Track context history for sessions that change working directory or repository over time, while preserving the original scalar workspace/repository fields as the primary context.
+- **Search**: Workspace and repository filters now match the context active at each search hit, with repeated `workspace:` and `repo:` filters treated as OR within the same filter kind.
+- **Web Viewer**: Search-result snippets show the active workspace/repository only when it differs from the session's root context.
+
+### Changed
+
+- **Web Viewer / HTML Export**: Working-directory changes render inline as transcript status pills instead of a session-level "context changed N times" summary.
+- **Markdown Export**: Metadata now includes the primary repository without adding a separate context-history summary.
+
+### Fixed
+
+- **Scanner**: Recognize the current Chronicle session-store schema version so scans no longer warn for schema v4 stores.
 
 ## [0.14.0] - 2026-06-02
 
@@ -17,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Search**: Message searches exclude system-role messages by default unless an explicit role filter, such as `role=system`, is provided.
 
-## [0.13.0] - 2026-05-29
+## [0.13.0] - 2026-05-31
 
 ### Added
 

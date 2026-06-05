@@ -2871,6 +2871,9 @@ input:checked + .toggle-switch::after {
             {% if session.workspace_path %}
             <span>📁 {{ session.workspace_path | urldecode }}</span>
             {% endif %}
+            {%- if session.repository_url %}
+            <span>Repository: {{ session.repository_url }}</span>
+            {%- endif %}
             {% if session.created_at %}
             <span>Created: {{ session.created_at | format_timestamp }}</span>
             {% endif %}
@@ -2920,6 +2923,8 @@ input:checked + .toggle-switch::after {
                             </details>
                             {% elif block.description == 'fork' %}
                             <span class="status-badge fork">{{ block.content | markdown | safe }}</span>
+                            {% elif block.description == 'context-change' %}
+                            <span class="status-badge model-change context-change">{{ block.content }}</span>
                             {% else %}
                             <span class="status-badge {{ block.description or '' }}">{{ block.content }}</span>
                             {% endif %}

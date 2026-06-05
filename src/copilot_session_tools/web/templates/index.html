@@ -668,6 +668,12 @@ footer a {
     margin-left: 4px;
 }
 
+.snippet-context {
+    color: var(--text-secondary);
+    font-size: 0.8em;
+    margin-top: 2px;
+}
+
 .refresh-actions {
     display: flex;
     gap: 10px;
@@ -1118,6 +1124,17 @@ footer a {
                             {{ snippet.text | safe }}
                             <span class="snippet-link">#{{ snippet.message_anchor }}</span>
                         </a>
+                        {% if snippet.active_context and (
+                            (snippet.active_context.workspace_name or '') != (session.workspace_name or '') or
+                            (snippet.active_context.workspace_path or '') != (session.workspace_path or '') or
+                            (snippet.active_context.repository_url or '') != (session.repository_url or '')
+                        ) %}
+                        <div class="snippet-context">
+                            Context:
+                            {% if snippet.active_context.workspace_name %}{{ snippet.active_context.workspace_name }}{% endif %}
+                            {% if snippet.active_context.repository_url %} · {{ snippet.active_context.repository_url }}{% endif %}
+                        </div>
+                        {% endif %}
                     </div>
                     {% endfor %}
                 </div>
