@@ -137,6 +137,19 @@ class RootAgentInterval:
 
 
 @dataclass
+class SessionContextEntry:
+    """Represents the workspace/repository context active during part of a session."""
+
+    workspace_name: str | None = None
+    workspace_path: str | None = None
+    repository_url: str | None = None
+    branch: str | None = None
+    timestamp: str | None = None
+    message_index: int = 0
+    source: str = "initial"
+
+
+@dataclass
 class ChatSession:
     """Represents a Copilot chat session.
 
@@ -161,6 +174,32 @@ class ChatSession:
     parser_version: int = 1
     source_format: str | None = None  # 'cli', 'json', 'jsonl', 'vscdb'
     root_agent_intervals: list[RootAgentInterval] = field(default_factory=list)
+    context_entries: list[SessionContextEntry] = field(default_factory=list)
+
+    def effective_context_entries(self) -> list[SessionContextEntry]:
+        """Return context entries, falling back to the legacy scalar metadata."""
+        entries = list(self.context_entries)
+        if not entries and (self.workspace_name or self.workspace_path or self.repository_url):
+            entries.append(
+                SessionContextEntry(
+                    workspace_name=self.workspace_name,
+                    workspace_path=self.workspace_path,
+                    repository_url=self.repository_url,
+                    message_index=0,
+                    source="initial",
+                )
+            )
+
+        deduped: list[SessionContextEntry] = []
+        for entry in entries:
+            key = (entry.workspace_name, entry.workspace_path, entry.repository_url, entry.branch)
+            if deduped:
+                previous = deduped[-1]
+                previous_key = (previous.workspace_name, previous.workspace_path, previous.repository_url, previous.branch)
+                if key == previous_key:
+                    continue
+            deduped.append(entry)
+        return deduped
 
 
 @dataclass

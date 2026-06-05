@@ -53,6 +53,7 @@ class Database:
         "cst_file_changes",
         "cst_tool_invocations",
         "cst_root_agent_intervals",
+        "cst_session_contexts",
         "cst_messages",
         "cst_sessions",
     ]
@@ -465,7 +466,7 @@ class Database:
         include_file_changes: bool | None = None,
         session_title: str | None = None,
         sort_by: str = "relevance",
-        repository: str | None = None,
+        repository: str | list[str] | None = None,
         start_date: str | None = None,
         end_date: str | None = None,
     ) -> list[dict]:

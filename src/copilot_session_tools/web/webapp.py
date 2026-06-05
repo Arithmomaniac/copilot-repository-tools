@@ -149,7 +149,15 @@ def create_app(
         if query:
             # Use FTS search with sort option
             # The db.search() returns results in the correct order based on sort_by
-            search_results = db.search(query, limit=100, sort_by=sort_by, search_content_set=search_content_set)
+            workspace_query = " ".join(f'workspace:"{workspace.replace(chr(34), chr(34) + chr(34))}"' for workspace in selected_workspaces)
+            search_query = f"{query} {workspace_query}".strip()
+            search_results = db.search(
+                search_query,
+                limit=100,
+                sort_by=sort_by,
+                search_content_set=search_content_set,
+                repository=selected_repositories or None,
+            )
 
             # Group results by session and collect snippets
             # session_ids preserves the order from search results (for relevance sorting)
@@ -167,6 +175,7 @@ def create_app(
                     snippet = {
                         "text": _create_snippet(r.get("highlighted", r.get("content", ""))),
                         "message_anchor": msg_index + 1,  # 1-based for #msg-N
+                        "active_context": r.get("active_context"),
                     }
                     search_snippets[sid].append(snippet)
 
@@ -181,11 +190,13 @@ def create_app(
 
         # Apply workspace filter if selected
         if selected_workspaces:
-            sessions = [s for s in sessions if s.get("workspace_name") in selected_workspaces]
+            selected_workspace_set = set(selected_workspaces)
+            sessions = [s for s in sessions if selected_workspace_set.intersection(set(s.get("workspace_names") or [s.get("workspace_name")]))]
 
         # Apply repository filter if selected
         if selected_repositories:
-            sessions = [s for s in sessions if s.get("repository_url") in selected_repositories]
+            selected_repository_set = set(selected_repositories)
+            sessions = [s for s in sessions if selected_repository_set.intersection(set(s.get("repository_urls") or [s.get("repository_url")]))]
 
         # Apply edition filter if selected
         if selected_editions:

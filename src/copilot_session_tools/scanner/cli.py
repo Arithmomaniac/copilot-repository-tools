@@ -11,13 +11,14 @@ import ssrjson
 from copilot_session_tools.scanner import PARSER_VERSION
 
 from .content import _format_tool_display_message, _get_file_metadata
-from .git import detect_repository_url
+from .git import _normalize_git_url, detect_repository_url
 from .models import (
     ChatMessage,
     ChatSession,
     CommandRun,
     ContentBlock,
     RootAgentInterval,
+    SessionContextEntry,
     ShellIOEntry,
     ToolInvocation,
 )
@@ -283,6 +284,38 @@ def _parse_workspace_yaml(session_dir: Path) -> dict[str, str]:
         return result
     except OSError:
         return {}
+
+
+def _workspace_name_from_path(workspace_path: str | None) -> str | None:
+    return Path(workspace_path).name if workspace_path else None
+
+
+def _append_context_entry(
+    entries: list[SessionContextEntry],
+    *,
+    workspace_path: str | None,
+    repository_url: str | None,
+    branch: str | None = None,
+    timestamp: str | None = None,
+    message_index: int = 0,
+    source: str,
+) -> None:
+    entry = SessionContextEntry(
+        workspace_name=_workspace_name_from_path(workspace_path),
+        workspace_path=workspace_path,
+        repository_url=repository_url,
+        branch=branch,
+        timestamp=timestamp,
+        message_index=max(0, message_index),
+        source=source,
+    )
+    key = (entry.workspace_name, entry.workspace_path, entry.repository_url, entry.branch)
+    if entries:
+        previous = entries[-1]
+        previous_key = (previous.workspace_name, previous.workspace_path, previous.repository_url, previous.branch)
+        if key == previous_key:
+            return
+    entries.append(entry)
 
 
 class _CliSessionBuilder:
@@ -644,7 +677,7 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
 
         # Extract workspace from session.start context or folder_trust event
         workspace_path = session_start_context.get("cwd") or session_start_context.get("gitRoot")
-        workspace_name = Path(workspace_path).name if workspace_path else None
+        workspace_name = _workspace_name_from_path(workspace_path)
         requester_username = None
         session_repository = session_start_context.get("repository")  # e.g. "owner/repo"
 
@@ -659,11 +692,29 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                     if message.startswith("Folder ") and " has been added" in message:
                         folder_path = message[7 : message.find(" has been added")]
                         workspace_path = folder_path
-                        workspace_name = Path(folder_path).name
+                        workspace_name = _workspace_name_from_path(folder_path)
 
                 elif info_type == "authentication" and not requester_username and "as user: " in message:
                     # Parse "Logged in with gh as user: Arithmomaniac"
                     requester_username = message.split("as user: ")[-1].strip()
+
+        host_type = session_start_context.get("hostType")  # "github" or "ado"
+        repository_url = None
+        if session_repository and host_type != "ado":
+            repository_url = _normalize_git_url(f"https://github.com/{session_repository}")
+        if not repository_url and host_type != "ado":
+            repository_url = detect_repository_url(workspace_path)
+
+        context_entries: list[SessionContextEntry] = []
+        _append_context_entry(
+            context_entries,
+            workspace_path=workspace_path,
+            repository_url=repository_url,
+            branch=session_start_context.get("branch"),
+            timestamp=created_at,
+            message_index=0,
+            source="initial",
+        )
 
         # Build tool execution map: toolCallId -> (start_data, complete_data, user_requested)
         tool_executions: dict = {}
@@ -1170,7 +1221,17 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                 cwd = event_data.get("cwd") or ""
                 branch = event_data.get("branch") or ""
                 branch_info = f" ({branch})" if branch else ""
-                builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=f"Context changed: {cwd}{branch_info}", description="context-change"))
+                changed_repository_url = detect_repository_url(cwd) if host_type != "ado" else None
+                _append_context_entry(
+                    context_entries,
+                    workspace_path=cwd or None,
+                    repository_url=changed_repository_url,
+                    branch=branch or None,
+                    timestamp=timestamp,
+                    message_index=len(builder.messages),
+                    source="context_changed",
+                )
+                builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=f"Working directory changed: {cwd}{branch_info}", description="context-change"))
 
             elif event_type == "session.remote_steerable_changed":
                 remote_steerable = event_data.get("remoteSteerable")
@@ -1380,16 +1441,6 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
         # Get updated_at from last event timestamp
         updated_at = events[-1].get("timestamp") if events else None
 
-        # Extract additional context fields from session.start
-        host_type = session_start_context.get("hostType")  # "github" or "ado"
-
-        # Detect repository URL from session.start context or workspace path
-        repository_url = None
-        if session_repository and host_type != "ado":
-            repository_url = f"https://github.com/{session_repository}"
-        if not repository_url and host_type != "ado":
-            repository_url = detect_repository_url(workspace_path)
-
         # Determine session title: prefer session.title_changed event, then workspace.yaml, then first intent
         custom_title = None
         if session_title_from_event:
@@ -1425,6 +1476,7 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
             type="cli",
             repository_url=repository_url,
             root_agent_intervals=root_agent_intervals,
+            context_entries=context_entries,
         )
         session.parser_version = PARSER_VERSION
         return session
