@@ -624,8 +624,8 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
     - tool.user_requested: User-requested tool executions
     - abort: Session/turn abort events
 
-    This function renders CLI sessions similarly to how vscode-copilot-chat renders
-    background chats:
+    This function renders CLI sessions similarly to how VS Code renders background
+    chats:
     - Consecutive assistant messages are combined into one
     - Tool calls are displayed inline within the assistant message content
 

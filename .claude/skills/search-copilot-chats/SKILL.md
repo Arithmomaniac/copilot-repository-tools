@@ -1,11 +1,11 @@
 ---
 name: search-copilot-chats
-description: Search across archived Copilot chat sessions (VS Code + CLI) using the copilot-session-tools CLI. Use when the user says "search my chats", "find in chat history", "what did we discuss about X", "look up past sessions", "scan chats", "session history", "recent session where", "earlier conversation", "previous session", "that session where", or references a session-state path or session GUID. Also covers exporting sessions as markdown or HTML and launching the web viewer.
+description: Search archived Copilot chat sessions using Chronicle/session_store SQL as the first hint layer, then copilot-session-tools for targeted lookup/export. Use when the user says "search my chats", "find in chat history", "what did we discuss about X", "look up past sessions", "scan chats", "session history", "recent session where", "earlier conversation", "previous session", "that session where", or references a session-state path or session GUID. Also covers exporting narrowed sessions as markdown/HTML and launching the web viewer.
 ---
 
 # Search Copilot Chats
 
-Search, browse, and export archived GitHub Copilot chat sessions from VS Code (Stable & Insiders) and the Copilot CLI. Uses the **copilot-session-tools** CLI backed by a local SQLite database with FTS5 full-text search. Requires Copilot CLI v0.0.412+ (`uv tool install copilot-session-tools[all]` if not on PATH).
+Search, browse, and export archived GitHub Copilot chat sessions from VS Code (Stable & Insiders) and the Copilot CLI. Use **Chronicle/session_store SQL** as the first hint/index layer when available, then use the **copilot-session-tools** CLI for targeted lookup, export, and web viewing. The CLI is backed by a local SQLite database with FTS5 full-text search. Requires Copilot CLI v0.0.412+ (`uv tool install copilot-session-tools[all]` if not on PATH).
 
 **Do not memorize flags.** Run `copilot-session-tools <command> --help` for flags and examples. This skill only documents **domain knowledge that `--help` cannot teach**.
 
@@ -17,9 +17,20 @@ Search, browse, and export archived GitHub Copilot chat sessions from VS Code (S
 - User wants to find prior decisions, code patterns, or troubleshooting steps from past sessions
 - User asks to export a session as markdown, HTML, or JSON
 
-## Favor CLI over Python
+## Default workflow: Chronicle first, CLI second
 
-**Always prefer CLI execution** over writing Python scripts. The CLI handles all common workflows. Only drop into Python/SQL when you need a custom join, aggregation, or programmatic processing the CLI doesn't support.
+For timeline, "find the session where...", prior-discussion, and session-reference tasks, **start with Chronicle/session_store SQL**. Treat it as the cheap hint/index layer that identifies likely sessions before running heavier CLI searches or exports.
+
+1. Query `session_store` first using the built-in SQL tool when available. Search `sessions`, `turns`, `checkpoints`, `session_files`, `session_refs`, and `search_index` for candidate session IDs, dates, branches, files, or PR/issue refs.
+2. Use query expansion yourself: search several related keywords in SQL (`bug OR fix OR error`, `auth OR login OR token`, etc.) rather than firing many broad CLI searches.
+3. Run `copilot-session-tools search` only after SQL hints identify likely terms, workspaces, date ranges, or session IDs. Keep it targeted.
+4. Export full markdown only after narrowing to a specific candidate session ID.
+
+**Do not** launch broad parallel bursts of `copilot-session-tools search --json` when Chronicle/session_store can first identify candidates. Broad CLI searches are a fallback, not the default.
+
+**Ask before running expensive refresh operations**: `scan`, `--full`, or broad rescans require user confirmation unless the user explicitly asked to refresh/rescan/reindex. If you already have a specific CLI session ID and need current enriched content, prefer the targeted `--rescan-session <session-id>` option on the relevant command; this is a single-session refresh, not a broad rescan.
+
+Prefer CLI execution over writing Python scripts once candidates are known. Only drop into Python or direct SQLite when you need a custom join, aggregation, or programmatic processing the CLI doesn't support.
 
 ## Search strategy (critical — not in `--help`)
 
@@ -56,13 +67,15 @@ The FTS5 search uses **AND semantics**: every keyword in the query MUST appear i
 **Iterative search workflow:**
 
 ```
-Step 1: copilot-session-tools search "resource graph" --full --limit 20
+Step 0: Query Chronicle/session_store SQL for candidate sessions, dates, branches, or refs
+  → Found likely session IDs? Export the best candidate directly.
+Step 1: copilot-session-tools search "resource graph" --limit 20
   → Too many results? Add ONE keyword:
-Step 2: copilot-session-tools search "resource graph" auth --full --limit 20
+Step 2: copilot-session-tools search "resource graph" auth --limit 20
   → Still too many? Add a workspace filter:
-Step 3: copilot-session-tools search 'workspace:ZTS "resource graph" auth' --full --limit 10
+Step 3: copilot-session-tools search 'workspace:ZTS "resource graph" auth' --limit 10
   → No results? Back up and try different keyword:
-Step 4: copilot-session-tools search 'workspace:ZTS "resource graph" permission' --full --limit 10
+Step 4: copilot-session-tools search 'workspace:ZTS "resource graph" permission' --limit 10
 ```
 
 ## Extract session references from user input
@@ -74,9 +87,53 @@ Users reference past sessions in several ways. Recognize and extract the session
 | `C:\Users\...\session-state\{uuid}` or `~\.copilot\session-state\{uuid}` | The `{uuid}` portion |
 | `http://127.0.0.1:5000/session/{uuid}` | The `{uuid}` portion |
 | A bare GUID like `67894303-8571-...` | Use directly as session ID |
-| A short prefix like `67894303` | Search: `copilot-session-tools search "67894303"` |
+| A short prefix like `67894303` | Query `session_store.sessions` / `session_store.search_index` for matching IDs first; then targeted CLI search if needed |
 
-Then use `export-markdown --session-id` to retrieve the full session content.
+Then use `export-markdown --session-id` to retrieve the full session content only after the session ID is specific enough.
+
+## Chronicle/session_store hint queries
+
+Use these patterns with the built-in SQL tool (`database: "session_store"`) before CLI search:
+
+```sql
+-- Recent timeline / "what was I doing?"
+SELECT id, cwd, repository, branch, summary, created_at
+FROM sessions
+ORDER BY created_at DESC
+LIMIT 20;
+
+-- Prior discussion with expanded keywords
+SELECT content, session_id, source_type
+FROM search_index
+WHERE search_index MATCH 'auth OR login OR token OR JWT OR session'
+ORDER BY rank
+LIMIT 20;
+
+-- Sessions that touched or mentioned a file/path
+SELECT s.id, s.summary, sf.file_path, sf.tool_name
+FROM session_files sf
+JOIN sessions s ON s.id = sf.session_id
+WHERE sf.file_path LIKE '%auth%'
+ORDER BY sf.first_seen_at DESC
+LIMIT 20;
+
+-- Session linked to a PR/issue/commit
+SELECT s.id, s.summary, sr.ref_type, sr.ref_value, sr.created_at
+FROM session_refs sr
+JOIN sessions s ON s.id = sr.session_id
+WHERE sr.ref_value = '42'
+ORDER BY sr.created_at DESC;
+```
+
+After SQL returns candidates, use targeted CLI commands such as:
+
+```powershell
+copilot-session-tools search 'workspace:ZTS "resource graph" auth' --limit 10 --json
+copilot-session-tools export-markdown --session-id <candidate-session-id> -o .
+copilot-session-tools export-markdown --session-id <candidate-session-id> --rescan-session <candidate-session-id> -o .
+```
+
+Use `--rescan-session` when Chronicle found the target session but `cst_*` enrichment may be stale or missing. This can bootstrap a CLI session that has never been enriched by `copilot-session-tools` yet, as long as `~/.copilot/session-state/<session-id>/events.jsonl` still exists.
 
 ## Direct SQL for advanced queries
 
@@ -126,16 +183,18 @@ The tool extends `~/.copilot/copilot-session-tools.db` with `cst_*` enrichment t
 ## Workflow: "Continue where we left off"
 
 1. Extract the session GUID from the user's input (see table above)
-2. Export: `copilot-session-tools export-markdown --session-id <guid> -o .`
-3. Read the exported file and continue the work
+2. If the user provided only a prefix or indirect reference, query Chronicle/session_store to resolve the likely full session ID
+3. Export fresh content: `copilot-session-tools export-markdown --session-id <guid> --rescan-session <guid> -o .`
+4. Read the exported file and continue the work
 
 ## Workflow: "Find how we solved X before"
 
-1. Search: `copilot-session-tools search "<topic>" --full --limit 30`
-2. Identify the most relevant session from results
-3. Export: `copilot-session-tools export-markdown --session-id <guid> -o .`
+1. Query Chronicle/session_store SQL with expanded keywords to find candidate sessions
+2. Use targeted `copilot-session-tools search "<topic>" --limit 10 --json` only for the most promising candidates/terms
+3. Identify the most relevant session from results
+4. Export fresh content: `copilot-session-tools export-markdown --session-id <guid> --rescan-session <guid> -o .`
 
 ## Known issues
 
 - **Use `--json` for piped output.** The default Rich console output garbles Unicode box-drawing characters on Windows when piped. `--json` bypasses Rich entirely and is the preferred format for programmatic consumption.
-- **Missing sessions**: If a session doesn't appear after scanning, check that the source file exists and wasn't cleaned up by VS Code. Use `--full` scan to force reimport.
+- **Missing sessions**: If Chronicle identifies a CLI session but `copilot-session-tools` lacks enriched details, use `--rescan-session <session-id>` on the targeted search/export command. If a session still doesn't appear, check that the source file exists and wasn't cleaned up by VS Code. Ask before using `scan`, `--full`, or any broad rescan unless the user explicitly requested refresh/rescan.

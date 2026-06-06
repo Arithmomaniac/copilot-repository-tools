@@ -7,6 +7,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.1] - 2026-06-05
+
+### Added
+
+- **CLI**: Added `--rescan-session <session-id>` to `search`, `export-markdown`, and `export-html` so a single CLI session can be parsed/enriched immediately before the command runs.
+- **CLI**: Targeted rescans can bootstrap a missing CST enrichment database for never-scanned sessions when explicitly requested.
+- **Agent Workflow**: Updated Copilot chat search guidance to use targeted rescans after Chronicle identifies a specific candidate session.
+
+### Fixed
+
+- **CLI**: Session-specific exports now reject mismatched `--session-id` and `--rescan-session` values instead of silently refreshing one session and exporting another.
+
 ## [0.15.0] - 2026-06-02
 
 ### Added
