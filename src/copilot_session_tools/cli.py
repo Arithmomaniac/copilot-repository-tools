@@ -31,6 +31,7 @@ from copilot_session_tools.content_types import (
 from copilot_session_tools.refresh import (
     DEFAULT_PARSE_WORKERS,
     enrich_single_session,
+    parse_single_cli_session,
     run_enrichment,
     run_refresh,
 )
@@ -97,15 +98,14 @@ def _make_database(db: str | Path) -> "Database":
     return Database(db, unenriched_only=_unenriched_only, chronicle_db_path=_chronicle_db)
 
 
-def _rescan_session_before_command(
-    database: "Database",
+def _validate_rescan_session(
     rescan_session_id: str | None,
     *,
     expected_session_id: str | None = None,
-) -> None:
-    """Run a targeted CLI session enrichment before a command proceeds."""
+) -> ChatSession | None:
+    """Validate and parse a targeted CLI session before DB creation."""
     if rescan_session_id is None:
-        return
+        return None
 
     if expected_session_id is not None and rescan_session_id != expected_session_id:
         typer.echo(
@@ -114,10 +114,26 @@ def _rescan_session_before_command(
         )
         raise typer.Exit(1)
 
-    error = enrich_single_session(database, rescan_session_id)
-    if error:
-        typer.echo(f"Error: {error}", err=True)
+    parsed = parse_single_cli_session(rescan_session_id)
+    if isinstance(parsed, str):
+        typer.echo(f"Error: {parsed}", err=True)
         raise typer.Exit(1)
+
+    return parsed
+
+
+def _prepare_database_for_command(
+    db: Path,
+    *,
+    rescan_session_id: str | None = None,
+    expected_session_id: str | None = None,
+) -> "Database":
+    """Create a Database and apply a targeted rescan when requested."""
+    parsed_rescan = _validate_rescan_session(rescan_session_id, expected_session_id=expected_session_id)
+    database = _make_database_for_command(db, allow_create=parsed_rescan is not None)
+    if parsed_rescan is not None:
+        database.enrich_session(parsed_rescan)
+    return database
 
 
 def version_callback(value: bool):
@@ -497,8 +513,7 @@ def search(
 
     search_content_set = resolve_search_content_set(include, exclude)
 
-    database = _make_database_for_command(db, allow_create=rescan_session is not None)
-    _rescan_session_before_command(database, rescan_session)
+    database = _prepare_database_for_command(db, rescan_session_id=rescan_session)
     results = database.search(
         query,
         limit=limit,
@@ -738,8 +753,7 @@ def export_markdown(
       copilot-session-tools export-markdown --session-id a1b2c3d4-... --rescan-session a1b2c3d4-... -o .
       copilot-session-tools export-markdown --exclude tool-results,thinking
     """
-    database = _make_database_for_command(db, allow_create=rescan_session is not None)
-    _rescan_session_before_command(database, rescan_session, expected_session_id=session_id)
+    database = _prepare_database_for_command(db, rescan_session_id=rescan_session, expected_session_id=session_id)
 
     content_set = resolve_content_set(include, exclude)
 
@@ -848,8 +862,7 @@ def export_html(
       copilot-session-tools export-html --session-id a1b2c3d4-... --rescan-session a1b2c3d4-... -o .
       copilot-session-tools export-html --exclude tool-results,thinking
     """
-    database = _make_database_for_command(db, allow_create=rescan_session is not None)
-    _rescan_session_before_command(database, rescan_session, expected_session_id=session_id)
+    database = _prepare_database_for_command(db, rescan_session_id=rescan_session, expected_session_id=session_id)
 
     content_set = resolve_content_set(include, exclude)
 

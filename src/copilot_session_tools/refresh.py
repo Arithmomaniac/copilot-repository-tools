@@ -435,6 +435,23 @@ def enrich_single_session(
     Returns:
         ``None`` on success, or an error message string on failure.
     """
+    parsed = parse_single_cli_session(session_id, validate=validate)
+    if isinstance(parsed, str):
+        return parsed
+
+    database.enrich_session(parsed)
+    return None
+
+
+def parse_single_cli_session(
+    session_id: str,
+    *,
+    validate: bool = True,
+) -> ChatSession | str:
+    """Parse a CLI session's ``events.jsonl`` without writing to the database.
+
+    Returns a :class:`ChatSession` on success, or an error message string on failure.
+    """
     if validate and not _SESSION_ID_RE.match(session_id):
         return f"Invalid session ID format: {session_id}"
 
@@ -446,5 +463,4 @@ def enrich_single_session(
     if parsed is None:
         return f"Failed to parse events.jsonl for session {session_id}"
 
-    database.enrich_session(parsed)
-    return None
+    return parsed
