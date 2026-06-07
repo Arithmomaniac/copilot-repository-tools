@@ -350,7 +350,13 @@ class _CliSessionBuilder:
         self.current_assistant_tool_invocations: list[ToolInvocation] = []
         self.current_assistant_command_runs: list[CommandRun] = []
         self.current_assistant_timestamp: str | None = None
+        self.current_assistant_source_event_id: str | None = None
         self.pending_tool_requests: dict[str, dict] = {}
+
+    def note_assistant_event(self, event_id: object) -> None:
+        """Remember the first source event id that contributes to the current assistant message."""
+        if self.current_assistant_source_event_id is None and isinstance(event_id, str) and event_id:
+            self.current_assistant_source_event_id = event_id
 
     def flush_assistant_message(self) -> None:
         """Flush accumulated assistant content blocks into a single message."""
@@ -379,6 +385,7 @@ class _CliSessionBuilder:
                 role="assistant",
                 content=flat_content,
                 timestamp=self.current_assistant_timestamp,
+                source_event_id=self.current_assistant_source_event_id,
                 tool_invocations=self.current_assistant_tool_invocations.copy(),
                 command_runs=self.current_assistant_command_runs.copy(),
                 content_blocks=self.current_assistant_content_blocks.copy(),
@@ -391,6 +398,7 @@ class _CliSessionBuilder:
         self.current_assistant_tool_invocations = []
         self.current_assistant_command_runs = []
         self.current_assistant_timestamp = None
+        self.current_assistant_source_event_id = None
 
     def build_tool_invocation(self, tool_call_id: str, tool_name: str, arguments: object) -> tuple[ToolInvocation | None, CommandRun | None]:
         """Build a ToolInvocation or CommandRun from tool request data."""
@@ -890,6 +898,7 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                         role="user",
                         content=content,
                         timestamp=timestamp,
+                        source_event_id=event.get("id"),
                     )
                 )
 
@@ -905,6 +914,7 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                             role="system",
                             content=content,
                             timestamp=timestamp,
+                            source_event_id=event.get("id"),
                         )
                     )
 
@@ -919,6 +929,7 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                 # Set timestamp from first assistant message in the sequence
                 if builder.current_assistant_timestamp is None:
                     builder.current_assistant_timestamp = timestamp
+                builder.note_assistant_event(event.get("id"))
 
                 content = event_data.get("content", "")
                 tool_requests = event_data.get("toolRequests", [])
@@ -950,6 +961,7 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                         builder.pending_tool_requests[tool_call_id] = req
 
             elif event_type == "tool.execution_start":
+                builder.note_assistant_event(event.get("id"))
                 # Add the tool invocation inline when execution starts
                 tool_call_id = event_data.get("toolCallId")
                 tool_name = event_data.get("toolName", "unknown")
@@ -969,6 +981,7 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                 builder.add_tool_inline(tool_call_id, tool_name, arguments, intention_summary=intention_summary, tool_title=tool_title)
 
             elif event_type == "abort":
+                builder.note_assistant_event(event.get("id"))
                 # Session or turn was aborted - add as status block
                 abort_reason = event_data.get("reason", "unknown")
                 builder.current_assistant_content_blocks.append(
@@ -980,6 +993,7 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                 )
 
             elif event_type == "session.error":
+                builder.note_assistant_event(event.get("id"))
                 # Session encountered an error - add as status block
                 error_type = event_data.get("errorType", "unknown")
                 error_message = event_data.get("message", "")
@@ -992,6 +1006,7 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                 )
 
             elif event_type == "session.model_change":
+                builder.note_assistant_event(event.get("id"))
                 # Model was changed during session
                 new_model = event_data.get("newModel", "unknown")
                 builder.current_assistant_content_blocks.append(
@@ -1003,6 +1018,7 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                 )
 
             elif event_type == "assistant.reasoning":
+                builder.note_assistant_event(event.get("id"))
                 # Reasoning content - similar to VS Code thinking blocks
                 reasoning_content = event_data.get("content", "")
                 if reasoning_content and reasoning_content.strip():
@@ -1015,6 +1031,7 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                     )
 
             elif event_type == "assistant.intent":
+                builder.note_assistant_event(event.get("id"))
                 intent_text = (event_data.get("intent") or "").strip()
                 if intent_text:
                     builder.current_assistant_content_blocks.append(
@@ -1025,6 +1042,7 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                     )
 
             elif event_type == "skill.invoked":
+                builder.note_assistant_event(event.get("id"))
                 # Skill was loaded - show name and content summary
                 skill_name = event_data.get("name", "unknown")
                 skill_content = event_data.get("content", "")
@@ -1044,6 +1062,7 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                 )
 
             elif event_type == "session.compaction_complete":
+                builder.note_assistant_event(event.get("id"))
                 # Session was compacted - show checkpoint info
                 checkpoint_num = event_data.get("checkpointNumber", 0)
                 summary = event_data.get("summaryContent", "")
@@ -1065,6 +1084,7 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
 
             # --- Subagent lifecycle events ---
             elif event_type == "subagent.started":
+                builder.note_assistant_event(event.get("id"))
                 display_name = event_data.get("agentDisplayName") or event_data.get("agentName", "unknown")
                 tool_call_id = event_data.get("toolCallId", "")
                 req = builder.pending_tool_requests.get(tool_call_id, {})
@@ -1150,6 +1170,7 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                     agent_display_name=title,
                     # TODO: For multi-level nesting, derive from parent's nesting level
                     agent_nesting_level=1,
+                    source_event_id=builder.current_assistant_source_event_id,
                     tool_invocations=nested_tool_invocations,
                     command_runs=nested_command_runs,
                     content_blocks=nested_blocks,
@@ -1171,6 +1192,7 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                 builder.current_assistant_content_blocks.append(block)
 
             elif event_type == "subagent.completed":
+                builder.note_assistant_event(event.get("id"))
                 display_name = event_data.get("agentDisplayName") or event_data.get("agentName", "unknown")
                 tool_call_id = event_data.get("toolCallId", "")
                 req = builder.pending_tool_requests.get(tool_call_id, {})
@@ -1180,6 +1202,7 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                 builder.current_assistant_content_blocks.append(ContentBlock(kind="status", content=label, description="subagent"))
 
             elif event_type == "subagent.failed":
+                builder.note_assistant_event(event.get("id"))
                 display_name = event_data.get("agentDisplayName") or event_data.get("agentName", "unknown")
                 tool_call_id = event_data.get("toolCallId", "")
                 req = builder.pending_tool_requests.get(tool_call_id, {})

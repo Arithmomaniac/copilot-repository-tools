@@ -43,9 +43,12 @@ CST_MESSAGE_COLUMNS = (
     "content",
     "timestamp",
     "cached_markdown",
+    "source_event_id",
     "agent_id",
     "agent_display_name",
     "agent_nesting_level",
+    "original_content",
+    "cleanup_model",
     "parent_message_id",
     "child_index",
 )
