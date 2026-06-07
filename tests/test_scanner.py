@@ -478,6 +478,42 @@ class TestCLIParsing:
         # This is expected - the simple format was for testing only
         assert session is None
 
+    def test_parse_cli_jsonl_captures_source_event_ids(self, tmp_path):
+        """Test CLI event ids are retained for fork-aware search de-duplication."""
+        from copilot_session_tools.scanner import _parse_cli_jsonl_file
+
+        events = [
+            {
+                "type": "session.start",
+                "data": {"sessionId": "source-id-test", "startTime": "2026-01-01T00:00:00Z"},
+            },
+            {
+                "id": "evt-user-1",
+                "type": "user.message",
+                "timestamp": "2026-01-01T00:00:01Z",
+                "data": {"content": "Hello provenance"},
+            },
+            {
+                "id": "evt-assistant-1",
+                "type": "assistant.message",
+                "timestamp": "2026-01-01T00:00:02Z",
+                "data": {"content": "Hi with provenance"},
+            },
+            {
+                "id": "evt-user-2",
+                "type": "user.message",
+                "timestamp": "2026-01-01T00:00:03Z",
+                "data": {"content": "Next turn"},
+            },
+        ]
+        events_file = tmp_path / "events.jsonl"
+        events_file.write_text("\n".join(json.dumps(event) for event in events), encoding="utf-8")
+
+        session = _parse_cli_jsonl_file(events_file)
+
+        assert session is not None
+        assert [msg.source_event_id for msg in session.messages] == ["evt-user-1", "evt-assistant-1", "evt-user-2"]
+
     def test_get_cli_storage_paths(self):
         """Test getting CLI storage paths."""
         from copilot_session_tools import get_cli_storage_paths

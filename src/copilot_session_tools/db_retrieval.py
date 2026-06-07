@@ -170,6 +170,7 @@ def reconstruct_message(
         command_runs=command_runs,
         content_blocks=content_blocks,
         cached_markdown=cached_md,
+        source_event_id=msg_row["source_event_id"] if "source_event_id" in msg_row.keys() else None,  # noqa: SIM118
         agent_id=msg_row["agent_id"] if "agent_id" in msg_row.keys() else None,  # noqa: SIM118
         agent_display_name=msg_row["agent_display_name"] if "agent_display_name" in msg_row.keys() else None,  # noqa: SIM118
         agent_nesting_level=msg_row["agent_nesting_level"] if "agent_nesting_level" in msg_row.keys() else 0,  # noqa: SIM118
@@ -282,6 +283,7 @@ def get_cst_session(conn: sqlite3.Connection, session_id: str) -> ChatSession | 
             command_runs=cmds_by_msg.get(msg_id, []),
             content_blocks=content_blocks,
             cached_markdown=cached_md,
+            source_event_id=msg_row["source_event_id"] if "source_event_id" in msg_row.keys() else None,  # noqa: SIM118
             agent_id=msg_row["agent_id"] if "agent_id" in msg_row.keys() else None,  # noqa: SIM118
             agent_display_name=msg_row["agent_display_name"] if "agent_display_name" in msg_row.keys() else None,  # noqa: SIM118
             agent_nesting_level=msg_row["agent_nesting_level"] if "agent_nesting_level" in msg_row.keys() else 0,  # noqa: SIM118

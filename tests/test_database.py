@@ -364,6 +364,186 @@ class TestDatabase:
         assert len(results) > 0
         assert any("Python" in r["content"] for r in results)
 
+    def test_search_deduplicates_copied_fork_history_by_source_event_id(self, temp_db):
+        """Test search suppresses copied fork history while keeping new fork content."""
+        original = ChatSession(
+            session_id="original-session",
+            workspace_name="project",
+            workspace_path="/tmp/project",
+            created_at="2026-01-01T00:00:00Z",
+            messages=[
+                ChatMessage(
+                    role="user",
+                    content="shared fork setup unique text",
+                    source_event_id="evt-shared-user",
+                ),
+                ChatMessage(
+                    role="assistant",
+                    content="original continuation unique text",
+                    source_event_id="evt-original-continuation",
+                ),
+            ],
+        )
+        fork = ChatSession(
+            session_id="fork-session",
+            workspace_name="project-fork",
+            workspace_path="/tmp/project-fork",
+            created_at="2026-01-01T00:10:00Z",
+            messages=[
+                ChatMessage(
+                    role="user",
+                    content="shared fork setup unique text",
+                    source_event_id="evt-shared-user",
+                ),
+                ChatMessage(
+                    role="assistant",
+                    content="fork continuation unique text",
+                    source_event_id="evt-fork-continuation",
+                ),
+            ],
+        )
+        temp_db.add_session(original)
+        temp_db.add_session(fork)
+
+        shared_results = temp_db.search('"shared fork setup unique text"', search_content_set={"messages"})
+        assert [result["session_id"] for result in shared_results] == ["original-session"]
+
+        fork_results = temp_db.search('"fork continuation unique text"', search_content_set={"messages"})
+        assert [result["session_id"] for result in fork_results] == ["fork-session"]
+
+        original_results = temp_db.search('"original continuation unique text"', search_content_set={"messages"})
+        assert [result["session_id"] for result in original_results] == ["original-session"]
+
+    def test_search_keeps_independent_duplicate_content_with_distinct_event_ids(self, temp_db):
+        """Test identical text remains searchable when it is not copied fork history."""
+        first = ChatSession(
+            session_id="first-independent-session",
+            workspace_name="project-a",
+            workspace_path="/tmp/project-a",
+            created_at="2026-01-01T00:00:00Z",
+            messages=[
+                ChatMessage(
+                    role="user",
+                    content="independent duplicate text",
+                    source_event_id="evt-first-independent",
+                )
+            ],
+        )
+        second = ChatSession(
+            session_id="second-independent-session",
+            workspace_name="project-b",
+            workspace_path="/tmp/project-b",
+            created_at="2026-01-01T00:10:00Z",
+            messages=[
+                ChatMessage(
+                    role="user",
+                    content="independent duplicate text",
+                    source_event_id="evt-second-independent",
+                )
+            ],
+        )
+        temp_db.add_session(first)
+        temp_db.add_session(second)
+
+        results = temp_db.search('"independent duplicate text"', search_content_set={"messages"}, sort_by="date")
+
+        assert {result["session_id"] for result in results} == {
+            "first-independent-session",
+            "second-independent-session",
+        }
+
+    def test_search_keeps_divergent_content_with_shared_source_event_id(self, temp_db):
+        """Test a fork continuation is searchable when only part of an assistant row diverged."""
+        original = ChatSession(
+            session_id="original-divergent-session",
+            workspace_name="project",
+            workspace_path="/tmp/project",
+            created_at="2026-01-01T00:00:00Z",
+            messages=[
+                ChatMessage(
+                    role="assistant",
+                    content="shared assistant content",
+                    source_event_id="evt-shared-assistant",
+                )
+            ],
+        )
+        fork = ChatSession(
+            session_id="fork-divergent-session",
+            workspace_name="project-fork",
+            workspace_path="/tmp/project-fork",
+            created_at="2026-01-01T00:10:00Z",
+            messages=[
+                ChatMessage(
+                    role="assistant",
+                    content="shared assistant content plus fork-only divergent text",
+                    source_event_id="evt-shared-assistant",
+                )
+            ],
+        )
+        temp_db.add_session(original)
+        temp_db.add_session(fork)
+
+        results = temp_db.search('"fork-only divergent text"', search_content_set={"messages"})
+
+        assert [result["session_id"] for result in results] == ["fork-divergent-session"]
+
+    def test_search_deduplicates_copied_fork_artifacts_by_source_event_id(self, temp_db):
+        """Test copied pre-fork tools, files, commands, and thinking blocks are de-duplicated."""
+        shared_message = "shared assistant artifact holder"
+        original = ChatSession(
+            session_id="original-artifact-session",
+            workspace_name="project",
+            workspace_path="/tmp/project",
+            created_at="2026-01-01T00:00:00Z",
+            messages=[
+                ChatMessage(
+                    role="assistant",
+                    content=shared_message,
+                    source_event_id="evt-shared-artifacts",
+                    tool_invocations=[ToolInvocation(name="search_tool", input="tool duplicate target", result="found copied result")],
+                    file_changes=[FileChange(path="src/copied_target.py", explanation="file duplicate target", diff="+ copied diff target")],
+                    command_runs=[CommandRun(command="run copied command target", output="command duplicate target")],
+                    content_blocks=[
+                        ContentBlock(kind="thinking", content="thinking duplicate target"),
+                        ContentBlock(kind="text", content=shared_message),
+                    ],
+                )
+            ],
+        )
+        fork = ChatSession(
+            session_id="fork-artifact-session",
+            workspace_name="project-fork",
+            workspace_path="/tmp/project-fork",
+            created_at="2026-01-01T00:10:00Z",
+            messages=[
+                ChatMessage(
+                    role="assistant",
+                    content=shared_message,
+                    source_event_id="evt-shared-artifacts",
+                    tool_invocations=[ToolInvocation(name="search_tool", input="tool duplicate target", result="found copied result")],
+                    file_changes=[FileChange(path="src/copied_target.py", explanation="file duplicate target", diff="+ copied diff target")],
+                    command_runs=[CommandRun(command="run copied command target", output="command duplicate target")],
+                    content_blocks=[
+                        ContentBlock(kind="thinking", content="thinking duplicate target"),
+                        ContentBlock(kind="text", content=shared_message),
+                    ],
+                )
+            ],
+        )
+        temp_db.add_session(original)
+        temp_db.add_session(fork)
+
+        cases = [
+            ("tool duplicate target", {"tools", "tool-inputs"}),
+            ("file duplicate target", {"file-changes"}),
+            ("copied diff target", {"file-changes", "diffs"}),
+            ("command duplicate target", {"commands"}),
+            ("thinking duplicate target", {"thinking"}),
+        ]
+        for query, search_content_set in cases:
+            results = temp_db.search(query, search_content_set=search_content_set)
+            assert [result["session_id"] for result in results] == ["original-artifact-session"]
+
     def test_search_no_results(self, temp_db, sample_session):
         """Test search with no matching results."""
         temp_db.add_session(sample_session)
@@ -2486,6 +2666,27 @@ class TestSchemaV6:
         msg_cols = {row[1] for row in conn.execute("PRAGMA table_info(cst_messages)")}
         assert "parent_message_id" in msg_cols
         assert "child_index" in msg_cols
+
+        conn.close()
+
+    def test_v10_to_v11_migration_adds_source_event_id_before_index(self):
+        """Simulating a v10 DB adds source_event_id before replaying current indexes."""
+        from copilot_session_tools.db_storage import CST_SCHEMA_VERSION, ensure_schema
+
+        conn = sqlite3.connect(":memory:")
+        ensure_schema(conn)
+        conn.execute("DROP INDEX IF EXISTS idx_cst_messages_source_event")
+        conn.execute("ALTER TABLE cst_messages DROP COLUMN source_event_id")
+        conn.execute("UPDATE cst_schema_version SET version = 10")
+
+        ensure_schema(conn)
+
+        msg_cols = {row[1] for row in conn.execute("PRAGMA table_info(cst_messages)")}
+        indexes = {row[1] for row in conn.execute("PRAGMA index_list(cst_messages)")}
+        version = conn.execute("SELECT version FROM cst_schema_version").fetchone()[0]
+        assert "source_event_id" in msg_cols
+        assert "idx_cst_messages_source_event" in indexes
+        assert version == CST_SCHEMA_VERSION
 
         conn.close()
 

@@ -391,6 +391,30 @@ def _append_session_filters(
     return query
 
 
+def _fork_duplicate_filter_clause(duplicate_content_clause: str = "COALESCE(dm.content, '') = COALESCE(m.content, '')") -> str:
+    """Return SQL that keeps only the canonical session row for copied fork events."""
+    return f"""
+        AND (
+            m.source_event_id IS NULL
+            OR NOT EXISTS (
+                SELECT 1
+                FROM cst_messages dm
+                JOIN cst_sessions ds ON dm.session_id = ds.session_id
+                WHERE dm.source_event_id = m.source_event_id
+                  AND dm.session_id != m.session_id
+                  AND ({duplicate_content_clause})
+                  AND (
+                      COALESCE(ds.created_at, '') < COALESCE(s.created_at, '')
+                      OR (
+                          COALESCE(ds.created_at, '') = COALESCE(s.created_at, '')
+                          AND ds.session_id < s.session_id
+                      )
+                  )
+            )
+        )
+    """  # noqa: S608 — duplicate_content_clause is built from hardcoded column names
+
+
 def _search_builtin_index(conn: sqlite3.Connection, fts_query: str, limit: int) -> dict[str, dict]:
     """Search the Chronicle search_index FTS table for unenriched results.
 
@@ -530,6 +554,7 @@ def _search_messages(
             message_query += " AND m.role != 'system'"
 
         message_query = _append_session_filters(message_query, params, **filter_kwargs)
+        message_query += _fork_duplicate_filter_clause()
 
         order_clause = _SORT_ORDER_CLAUSES.get(sort_by, _SORT_ORDER_CLAUSES["relevance"])
         message_query += f" {order_clause} LIMIT ?"
@@ -566,6 +591,7 @@ def _search_messages(
             message_query += " AND m.role != 'system'"
 
         message_query = _append_session_filters(message_query, params, **filter_kwargs)
+        message_query += _fork_duplicate_filter_clause()
 
         message_query += " ORDER BY s.created_at DESC LIMIT ?"
         params.append(limit + skip)
@@ -613,6 +639,18 @@ def _search_tool_invocations(
     params: list = list(tool_params)
 
     tool_query = _append_session_filters(tool_query, params, **filter_kwargs)
+    tool_query += _fork_duplicate_filter_clause(
+        """
+        EXISTS (
+            SELECT 1
+            FROM cst_tool_invocations dt
+            WHERE dt.message_id = dm.id
+              AND COALESCE(dt.name, '') = COALESCE(t.name, '')
+              AND COALESCE(dt.input, '') = COALESCE(t.input, '')
+              AND COALESCE(dt.result, '') = COALESCE(t.result, '')
+        )
+        """
+    )
 
     tool_query += " LIMIT ?"
     params.append(remaining)
@@ -658,6 +696,18 @@ def _search_file_changes(
     params: list = list(file_params)
 
     file_query = _append_session_filters(file_query, params, **filter_kwargs)
+    file_query += _fork_duplicate_filter_clause(
+        """
+        EXISTS (
+            SELECT 1
+            FROM cst_file_changes df
+            WHERE df.message_id = dm.id
+              AND COALESCE(df.path, '') = COALESCE(f.path, '')
+              AND COALESCE(df.explanation, '') = COALESCE(f.explanation, '')
+              AND COALESCE(df.diff, '') = COALESCE(f.diff, '')
+        )
+        """
+    )
 
     file_query += " LIMIT ?"
     params.append(remaining)
@@ -694,6 +744,17 @@ def _search_command_runs(
     params: list = [like_pattern, like_pattern]
 
     cmd_query = _append_session_filters(cmd_query, params, **filter_kwargs)
+    cmd_query += _fork_duplicate_filter_clause(
+        """
+        EXISTS (
+            SELECT 1
+            FROM cst_command_runs dc
+            WHERE dc.message_id = dm.id
+              AND COALESCE(dc.command, '') = COALESCE(c.command, '')
+              AND COALESCE(dc.output, '') = COALESCE(c.output, '')
+        )
+        """
+    )
 
     cmd_query += " LIMIT ?"
     params.append(remaining)
@@ -730,6 +791,17 @@ def _search_thinking_blocks(
     params: list = [like_pattern]
 
     think_query = _append_session_filters(think_query, params, **filter_kwargs)
+    think_query += _fork_duplicate_filter_clause(
+        """
+        EXISTS (
+            SELECT 1
+            FROM cst_content_blocks dcb
+            WHERE dcb.message_id = dm.id
+              AND dcb.kind = 'thinking'
+              AND COALESCE(dcb.content, '') = COALESCE(cb.content, '')
+        )
+        """
+    )
 
     think_query += " LIMIT ?"
     params.append(remaining)

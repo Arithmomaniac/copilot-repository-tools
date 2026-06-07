@@ -116,6 +116,7 @@ class ChatMessage:
     command_runs: list[CommandRun] = field(default_factory=list)
     content_blocks: list[ContentBlock] = field(default_factory=list)  # Structured content with kind
     cached_markdown: str | None = None  # Pre-computed markdown for this message
+    source_event_id: str | None = None  # CLI event id used to identify copied fork history
     agent_id: str | None = None  # toolCallId linking to parent task tool invocation
     agent_display_name: str | None = None  # "General Purpose Agent", "Explore Agent", etc.
     agent_nesting_level: int = 0  # 0=top-level, 1=inside agent, 2=nested agent, etc.

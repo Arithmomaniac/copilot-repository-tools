@@ -31,7 +31,7 @@ from .db_schema import (
 from .markdown_exporter import message_to_markdown
 from .scanner import ChatSession
 
-CST_SCHEMA_VERSION = 10
+CST_SCHEMA_VERSION = 11
 CHRONICLE_SCHEMA_VERSION = 4
 
 
@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS cst_messages (
     content TEXT,
     timestamp TEXT,
     cached_markdown TEXT,
+    source_event_id TEXT,
     agent_id TEXT,
     agent_display_name TEXT,
     agent_nesting_level INTEGER DEFAULT 0,
@@ -78,6 +79,7 @@ CREATE TABLE IF NOT EXISTS cst_messages (
 );
 CREATE INDEX IF NOT EXISTS idx_cst_messages_session ON cst_messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_cst_messages_parent ON cst_messages(parent_message_id);
+CREATE INDEX IF NOT EXISTS idx_cst_messages_source_event ON cst_messages(source_event_id);
 
 CREATE TABLE IF NOT EXISTS cst_tool_invocations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -355,6 +357,12 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     except sqlite3.OperationalError:
         has_schema = False
 
+    if has_schema and current_version < 11:
+        # CST_SCHEMA creates an index on this column, so the column must exist
+        # before replaying the idempotent schema script against upgraded DBs.
+        with contextlib.suppress(sqlite3.OperationalError):
+            cursor.execute("ALTER TABLE cst_messages ADD COLUMN source_event_id TEXT")
+
     # Create cst_* tables (safe: either fresh DB or already at v6+)
     conn.executescript(CST_SCHEMA)
     # Create FTS table and triggers
@@ -391,6 +399,9 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         # v9 → v10: Add session context history storage.
         if current_version < 10:
             conn.executescript(CST_SCHEMA)
+        # v10 → v11: Add CLI source event ids for fork-aware search de-duplication.
+        if current_version < 11:
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_cst_messages_source_event ON cst_messages(source_event_id)")
         cursor.execute(
             "UPDATE cst_schema_version SET version = ?",
             (CST_SCHEMA_VERSION,),
@@ -595,9 +606,12 @@ def _insert_content_blocks_recursive(
                     child.content,
                     child.timestamp,
                     child_cached_md,
+                    child.source_event_id,
                     child.agent_id,
                     child.agent_display_name,
                     child.agent_nesting_level,
+                    child.original_content,
+                    child.cleanup_model,
                     parent_message_id,  # parent_message_id = parent's ID
                     block_idx,  # child_index = block position for ordering
                 ),
@@ -680,9 +694,12 @@ def add_session_impl(cursor: sqlite3.Cursor, session: ChatSession) -> None:
                 msg.content,
                 msg.timestamp,
                 cached_markdown,
+                msg.source_event_id,
                 msg.agent_id,
                 msg.agent_display_name,
                 msg.agent_nesting_level,
+                msg.original_content,
+                msg.cleanup_model,
                 None,  # parent_message_id — set by db-insertion todo
                 msg.child_index,
             ),
@@ -985,9 +1002,12 @@ def enrich_session(conn: sqlite3.Connection, session: ChatSession) -> None:
                 msg.content,
                 msg.timestamp,
                 cached_markdown,
+                msg.source_event_id,
                 msg.agent_id,
                 msg.agent_display_name,
                 msg.agent_nesting_level,
+                msg.original_content,
+                msg.cleanup_model,
                 None,  # parent_message_id — set by db-insertion todo
                 msg.child_index,
             ),

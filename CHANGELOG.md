@@ -7,6 +7,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] - 2026-06-06
+
+### Added
+
+- **Search / Forks**: CLI event IDs are now persisted as message provenance so copied pre-fork history can be identified across forked sessions.
+
+### Changed
+
+- **Search / Forks**: Search now suppresses duplicate hits from copied fork history while keeping fork-specific continuations searchable. Opening or exporting a forked session still shows the full copied conversation.
+
 ## [0.15.1] - 2026-06-05
 
 ### Added
