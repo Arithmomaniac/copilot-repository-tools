@@ -34,6 +34,7 @@ CST_SESSION_COLUMNS = (
     "parser_version",
     "source_format",
     "enrichment_version",
+    "builtin_turns",
 )
 
 CST_MESSAGE_COLUMNS = (
@@ -147,11 +148,16 @@ def session_to_row(
     *,
     enrichment_version: str | None = None,
     updated_at_fallback: str | None = None,
+    builtin_turns: int | None = None,
 ) -> tuple:
     """Map a ChatSession to a parameter tuple matching CST_SESSION_COLUMNS.
 
     *updated_at_fallback* is used when ``session.updated_at`` is falsy
     (e.g. the enrichment path fills it with a timestamp).
+
+    *builtin_turns* records the Chronicle turn count at enrichment time so
+    incremental scans can detect "this CLI session grew" with a like-for-like
+    comparison (mirrors how VS Code sessions compare ``source_file_mtime``).
     """
     return (
         session.session_id,
@@ -171,6 +177,7 @@ def session_to_row(
         session.parser_version,
         session.source_format,
         enrichment_version,
+        builtin_turns,
     )
 
 
