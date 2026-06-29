@@ -14,7 +14,7 @@ from __future__ import annotations
 import contextlib
 import sqlite3
 
-from .db_schema import row_to_command, row_to_file_change, row_to_root_agent_interval, row_to_tool
+from .db_schema import row_to_command, row_to_file_change, row_to_root_agent_interval, row_to_session_context, row_to_tool
 from .markdown_exporter import message_to_markdown
 from .scanner import (
     ChatMessage,
@@ -65,6 +65,53 @@ def _link_child_messages(
             parent_msg.content_blocks[block_idx].file_changes = child_msg.file_changes
             parent_msg.content_blocks[block_idx].command_runs = child_msg.command_runs
             parent_msg.children.append(child_msg)
+
+
+def _session_contexts_for_ids(conn: sqlite3.Connection, session_ids: list[str]) -> dict[str, list[dict]]:
+    """Return context-history dictionaries keyed by session id."""
+    if not session_ids:
+        return {}
+    placeholders = ",".join("?" * len(session_ids))
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT session_id, context_index, message_index, timestamp, workspace_name,
+                   workspace_path, repository_url, branch, source
+            FROM cst_session_contexts
+            WHERE session_id IN ({placeholders})
+            ORDER BY session_id, context_index
+            """,  # noqa: S608
+            session_ids,
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return {}
+
+    contexts: dict[str, list[dict]] = {}
+    for row in rows:
+        contexts.setdefault(row["session_id"], []).append(dict(row))
+    return contexts
+
+
+def _apply_context_lists(session: dict, contexts: list[dict] | None) -> None:
+    """Attach context history and aggregate workspace/repository lists to a session dict."""
+    context_entries = contexts or []
+    if not context_entries and (session.get("workspace_name") or session.get("workspace_path") or session.get("repository_url")):
+        context_entries = [
+            {
+                "context_index": 0,
+                "message_index": 0,
+                "timestamp": session.get("created_at"),
+                "workspace_name": session.get("workspace_name"),
+                "workspace_path": session.get("workspace_path"),
+                "repository_url": session.get("repository_url"),
+                "branch": None,
+                "source": "initial",
+            }
+        ]
+    session["context_entries"] = context_entries
+    session["workspace_names"] = list(dict.fromkeys(c["workspace_name"] for c in context_entries if c.get("workspace_name")))
+    session["workspace_paths"] = list(dict.fromkeys(c["workspace_path"] for c in context_entries if c.get("workspace_path")))
+    session["repository_urls"] = list(dict.fromkeys(c["repository_url"] for c in context_entries if c.get("repository_url")))
 
 
 def reconstruct_message(
@@ -123,6 +170,7 @@ def reconstruct_message(
         command_runs=command_runs,
         content_blocks=content_blocks,
         cached_markdown=cached_md,
+        source_event_id=msg_row["source_event_id"] if "source_event_id" in msg_row.keys() else None,  # noqa: SIM118
         agent_id=msg_row["agent_id"] if "agent_id" in msg_row.keys() else None,  # noqa: SIM118
         agent_display_name=msg_row["agent_display_name"] if "agent_display_name" in msg_row.keys() else None,  # noqa: SIM118
         agent_nesting_level=msg_row["agent_nesting_level"] if "agent_nesting_level" in msg_row.keys() else 0,  # noqa: SIM118
@@ -203,6 +251,14 @@ def get_cst_session(conn: sqlite3.Connection, session_id: str) -> ChatSession | 
         )
         root_agent_intervals = [row_to_root_agent_interval(r) for r in cursor.fetchall()]
 
+    context_entries = []
+    with contextlib.suppress(sqlite3.OperationalError):
+        cursor.execute(
+            "SELECT * FROM cst_session_contexts WHERE session_id = ? ORDER BY context_index",
+            (session_id,),
+        )
+        context_entries = [row_to_session_context(r) for r in cursor.fetchall()]
+
     # --- Reconstruct messages from pre-fetched data ---
     messages_by_id: dict[int, ChatMessage] = {}
     content_block_child_ids: dict[int, dict[int, int]] = {}
@@ -227,6 +283,7 @@ def get_cst_session(conn: sqlite3.Connection, session_id: str) -> ChatSession | 
             command_runs=cmds_by_msg.get(msg_id, []),
             content_blocks=content_blocks,
             cached_markdown=cached_md,
+            source_event_id=msg_row["source_event_id"] if "source_event_id" in msg_row.keys() else None,  # noqa: SIM118
             agent_id=msg_row["agent_id"] if "agent_id" in msg_row.keys() else None,  # noqa: SIM118
             agent_display_name=msg_row["agent_display_name"] if "agent_display_name" in msg_row.keys() else None,  # noqa: SIM118
             agent_nesting_level=msg_row["agent_nesting_level"] if "agent_nesting_level" in msg_row.keys() else 0,  # noqa: SIM118
@@ -293,6 +350,7 @@ def get_cst_session(conn: sqlite3.Connection, session_id: str) -> ChatSession | 
         type=safe_get("type") or "vscode",
         repository_url=safe_get("repository_url"),
         root_agent_intervals=root_agent_intervals,
+        context_entries=context_entries,
     )
 
 
@@ -630,8 +688,16 @@ def list_sessions(
         params: list = []
 
         if workspace_name:
-            conditions.append("s.workspace_name = ?")
-            params.append(workspace_name)
+            conditions.append(
+                """(
+                    s.workspace_name = ?
+                    OR EXISTS (
+                        SELECT 1 FROM cst_session_contexts sc
+                        WHERE sc.session_id = s.session_id AND sc.workspace_name = ?
+                    )
+                )"""
+            )
+            params.extend([workspace_name, workspace_name])
         if session_type:
             conditions.append("s.type = ?")
             params.append(session_type)
@@ -642,8 +708,11 @@ def list_sessions(
         query += " GROUP BY s.session_id HAVING COUNT(CASE WHEN m.parent_message_id IS NULL THEN 1 END) > 0 ORDER BY last_message_at DESC, s.created_at DESC"
 
         cursor.execute(query, params)
-        for row in cursor.fetchall():
+        rows = cursor.fetchall()
+        contexts_by_session = _session_contexts_for_ids(conn, [row["session_id"] for row in rows])
+        for row in rows:
             d = dict(row)
+            _apply_context_lists(d, contexts_by_session.get(d["session_id"]))
             d["title"] = d.get("custom_title") or d.get("workspace_name")
             d["start_time"] = d.get("created_at")
             d["is_enriched"] = True
@@ -694,6 +763,7 @@ def list_sessions(
                     "last_message_at": row.get("updated_at"),
                     "first_user_prompt": None,
                 }
+                _apply_context_lists(results[sid], None)
 
     # Sort by updated_at desc, apply limit/offset
     sorted_results = sorted(results.values(), key=lambda x: x.get("updated_at") or "", reverse=True)
@@ -716,9 +786,22 @@ def get_workspaces(conn: sqlite3.Connection) -> list[dict]:
         SELECT
             workspace_name,
             workspace_path,
-            COUNT(*) as session_count,
+            COUNT(DISTINCT session_id) as session_count,
             MAX(created_at) as last_activity
-        FROM cst_sessions
+        FROM (
+            SELECT sc.session_id, sc.workspace_name, sc.workspace_path, s.created_at
+            FROM cst_session_contexts sc
+            JOIN cst_sessions s ON s.session_id = sc.session_id
+            WHERE sc.workspace_name IS NOT NULL
+            UNION ALL
+            SELECT session_id, workspace_name, workspace_path, created_at
+            FROM cst_sessions
+            WHERE workspace_name IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM cst_session_contexts sc
+                  WHERE sc.session_id = cst_sessions.session_id
+              )
+        )
         WHERE workspace_name IS NOT NULL
         GROUP BY workspace_name, workspace_path
         ORDER BY session_count DESC, workspace_name ASC
@@ -741,9 +824,22 @@ def get_repositories(conn: sqlite3.Connection) -> list[dict]:
         """
         SELECT
             repository_url,
-            COUNT(*) as session_count,
+            COUNT(DISTINCT session_id) as session_count,
             MAX(created_at) as last_activity
-        FROM cst_sessions
+        FROM (
+            SELECT sc.session_id, sc.repository_url, s.created_at
+            FROM cst_session_contexts sc
+            JOIN cst_sessions s ON s.session_id = sc.session_id
+            WHERE sc.repository_url IS NOT NULL
+            UNION ALL
+            SELECT session_id, repository_url, created_at
+            FROM cst_sessions
+            WHERE repository_url IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM cst_session_contexts sc
+                  WHERE sc.session_id = cst_sessions.session_id
+              )
+        )
         WHERE repository_url IS NOT NULL
         GROUP BY repository_url
         ORDER BY session_count DESC, repository_url ASC

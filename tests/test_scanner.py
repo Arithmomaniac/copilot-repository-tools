@@ -478,6 +478,42 @@ class TestCLIParsing:
         # This is expected - the simple format was for testing only
         assert session is None
 
+    def test_parse_cli_jsonl_captures_source_event_ids(self, tmp_path):
+        """Test CLI event ids are retained for fork-aware search de-duplication."""
+        from copilot_session_tools.scanner import _parse_cli_jsonl_file
+
+        events = [
+            {
+                "type": "session.start",
+                "data": {"sessionId": "source-id-test", "startTime": "2026-01-01T00:00:00Z"},
+            },
+            {
+                "id": "evt-user-1",
+                "type": "user.message",
+                "timestamp": "2026-01-01T00:00:01Z",
+                "data": {"content": "Hello provenance"},
+            },
+            {
+                "id": "evt-assistant-1",
+                "type": "assistant.message",
+                "timestamp": "2026-01-01T00:00:02Z",
+                "data": {"content": "Hi with provenance"},
+            },
+            {
+                "id": "evt-user-2",
+                "type": "user.message",
+                "timestamp": "2026-01-01T00:00:03Z",
+                "data": {"content": "Next turn"},
+            },
+        ]
+        events_file = tmp_path / "events.jsonl"
+        events_file.write_text("\n".join(json.dumps(event) for event in events), encoding="utf-8")
+
+        session = _parse_cli_jsonl_file(events_file)
+
+        assert session is not None
+        assert [msg.source_event_id for msg in session.messages] == ["evt-user-1", "evt-assistant-1", "evt-user-2"]
+
     def test_get_cli_storage_paths(self):
         """Test getting CLI storage paths."""
         from copilot_session_tools import get_cli_storage_paths
@@ -1947,7 +1983,7 @@ class TestCLINewEventHandlers:
         )
         blocks = self._find_status_blocks(session, "context-change")
         assert len(blocks) == 1
-        assert blocks[0].content == "Context changed: /home/user/project (feature/x)"
+        assert blocks[0].content == "Working directory changed: /home/user/project (feature/x)"
 
     def test_session_context_changed_no_branch(self, tmp_path):
         session = self._parse(
@@ -1956,7 +1992,7 @@ class TestCLINewEventHandlers:
         )
         blocks = self._find_status_blocks(session, "context-change")
         assert len(blocks) == 1
-        assert blocks[0].content == "Context changed: /home/user/project"
+        assert blocks[0].content == "Working directory changed: /home/user/project"
 
     # --- session.plan_changed ---
 
@@ -3438,7 +3474,8 @@ class TestCLIv105EventHandlers:
             },
         )
         assert session is not None
-        assert session.repository_url == "https://github.com/owner/repo"
+        assert session.repository_url == "github.com/owner/repo"
+        assert session.context_entries[0].repository_url == "github.com/owner/repo"
 
     def test_session_start_host_type_ado(self, tmp_path):
         """session.start with hostType=ado should NOT generate any repository URL."""
@@ -3465,7 +3502,38 @@ class TestCLIv105EventHandlers:
             },
         )
         assert session is not None
-        assert session.repository_url == "https://github.com/owner/repo"
+        assert session.repository_url == "github.com/owner/repo"
+
+    def test_session_start_repository_matches_detected_context_format(self, tmp_path):
+        """Initial GitHub metadata uses the same normalized form as detected context changes."""
+        import subprocess
+
+        workspace = tmp_path / "repo"
+        workspace.mkdir()
+        subprocess.run(["git", "init"], cwd=workspace, capture_output=True, check=True)  # noqa: S607
+        subprocess.run(
+            ["git", "remote", "add", "origin", "https://github.com/owner/repo.git"],  # noqa: S607
+            cwd=workspace,
+            capture_output=True,
+            check=True,
+        )
+
+        session = self._parse(
+            tmp_path,
+            {"type": "user.message", "data": {"content": "Hello"}},
+            {"type": "session.context_changed", "data": {"cwd": str(workspace), "branch": "main"}},
+            {"type": "assistant.message", "data": {"content": "Hi"}},
+            start_data={
+                "context": {"cwd": "/home/user/project", "hostType": "github", "repository": "owner/repo"},
+            },
+        )
+
+        assert session is not None
+        assert session.repository_url == "github.com/owner/repo"
+        assert [entry.repository_url for entry in session.context_entries] == [
+            "github.com/owner/repo",
+            "github.com/owner/repo",
+        ]
 
     # ---- T5: intentionSummary and toolTitle on toolRequests ----
 

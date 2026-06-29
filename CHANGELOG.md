@@ -1,3 +1,5 @@
+> Created/edited by GitHub Copilot with human review/feedback by avilevin.
+
 # Changelog
 
 All notable changes to this project will be documented in this file.
@@ -5,12 +7,51 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.15.0] - 2026-06-29
+## [0.17.0] - 2026-06-29
 
 ### Added
 
 - **CLI File Changes**: CLI `edit`/`create` tool calls now render as per-message file-change diffs, matching the VS Code view across the web viewer, Markdown export, and HTML export.
 - **Per-turn consolidation**: Multiple edits to the same file within a turn collapse into one card — a true net diff when the file is created in-turn, or reconstructed from a prior full-file `view` (including subagent views), with a stacked-hunks fallback when no base is available.
+
+## [0.16.0] - 2026-06-06
+
+### Added
+
+- **Search / Forks**: CLI event IDs are now persisted as message provenance so copied pre-fork history can be identified across forked sessions.
+
+### Changed
+
+- **Search / Forks**: Search now suppresses duplicate hits from copied fork history while keeping fork-specific continuations searchable. Opening or exporting a forked session still shows the full copied conversation.
+
+## [0.15.1] - 2026-06-05
+
+### Added
+
+- **CLI**: Added `--rescan-session <session-id>` to `search`, `export-markdown`, and `export-html` so a single CLI session can be parsed/enriched immediately before the command runs.
+- **CLI**: Targeted rescans can bootstrap a missing CST enrichment database for never-scanned sessions when explicitly requested.
+- **Agent Workflow**: Updated Copilot chat search guidance to use targeted rescans after Chronicle identifies a specific candidate session.
+
+### Fixed
+
+- **CLI**: Session-specific exports now reject mismatched `--session-id` and `--rescan-session` values instead of silently refreshing one session and exporting another.
+
+## [0.15.0] - 2026-06-02
+
+### Added
+
+- **Scanner / Database**: Track context history for sessions that change working directory or repository over time, while preserving the original scalar workspace/repository fields as the primary context.
+- **Search**: Workspace and repository filters now match the context active at each search hit, with repeated `workspace:` and `repo:` filters treated as OR within the same filter kind.
+- **Web Viewer**: Search-result snippets show the active workspace/repository only when it differs from the session's root context.
+
+### Changed
+
+- **Web Viewer / HTML Export**: Working-directory changes render inline as transcript status pills instead of a session-level "context changed N times" summary.
+- **Markdown Export**: Metadata now includes the primary repository without adding a separate context-history summary.
+
+### Fixed
+
+- **Scanner**: Recognize the current Chronicle session-store schema version so scans no longer warn for schema v4 stores.
 
 ## [0.14.0] - 2026-06-02
 
@@ -24,7 +65,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Search**: Message searches exclude system-role messages by default unless an explicit role filter, such as `role=system`, is provided.
 
-## [0.13.0] - 2026-05-29
+## [0.13.0] - 2026-05-31
 
 ### Added
 

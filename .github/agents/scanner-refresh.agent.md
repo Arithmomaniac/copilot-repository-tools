@@ -109,8 +109,7 @@ Check recent commits and PRs since `$lastScannerChange` in:
 | `github/copilot-agent-runtime` | New CLI event types, payloads, rendering behavior, changelog entries, runtime definitions |
 | `github/copilot-cli` | Session JSONL structure or public CLI changes |
 | `github/copilot-sdk` | SDK schema/data-structure changes |
-| `microsoft/vscode-copilot-chat` | Response item kinds, background/cloud session storage |
-| `microsoft/vscode` | Chat serialization, storage, locations, copy-all behavior |
+| `microsoft/vscode` | Chat serialization, response item kinds, background/cloud session storage, locations, copy-all behavior |
 
 Use available GitHub tools or `gh`/web research. Save findings to `temp_export\upstream-research.md`.
 
@@ -291,8 +290,7 @@ If full-repo Ruff output is dominated by unrelated pre-existing files, do not ch
 1. Find a real session containing the new event/response kind.
 2. Enrich and export it:
    ```powershell
-   uv run copilot-session-tools enrich <session-id>
-   uv run copilot-session-tools export-markdown --session-id <session-id> --output-dir temp_export
+   uv run copilot-session-tools export-markdown --session-id <session-id> --rescan-session <session-id> --output-dir temp_export
    ```
 3. Start the web viewer:
    ```powershell

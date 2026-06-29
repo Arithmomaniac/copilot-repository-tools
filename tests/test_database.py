@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from copilot_session_tools import ChatMessage, ChatSession, CommandRun, ContentBlock, Database, FileChange, ToolInvocation, parse_search_query
-from copilot_session_tools.scanner import RootAgentInterval
+from copilot_session_tools.scanner import RootAgentInterval, SessionContextEntry
 
 
 @pytest.fixture
@@ -87,6 +87,50 @@ class TestDatabase:
         assert len(retrieved.messages) == len(sample_session.messages)
         assert retrieved.messages[0].role == "user"
         assert "Python function" in retrieved.messages[0].content
+
+    def test_session_context_entries_persist_and_retrieve(self, temp_db):
+        """Test workspace/repository context history persists with sessions."""
+        session = ChatSession(
+            session_id="context-session",
+            workspace_name="project-one",
+            workspace_path="/work/project-one",
+            repository_url="github.com/owner/one",
+            messages=[
+                ChatMessage(role="user", content="Initial repo question"),
+                ChatMessage(role="assistant", content="Switching context"),
+                ChatMessage(role="user", content="Later repo question"),
+            ],
+            context_entries=[
+                SessionContextEntry(
+                    workspace_name="project-one",
+                    workspace_path="/work/project-one",
+                    repository_url="github.com/owner/one",
+                    message_index=0,
+                ),
+                SessionContextEntry(
+                    workspace_name="project-two",
+                    workspace_path="/work/project-two",
+                    repository_url="github.com/owner/two",
+                    branch="main",
+                    message_index=2,
+                    source="context_changed",
+                ),
+            ],
+        )
+
+        temp_db.add_session(session)
+
+        retrieved = temp_db.get_session("context-session")
+        assert retrieved is not None
+        contexts = retrieved.effective_context_entries()
+        assert [c.workspace_name for c in contexts] == ["project-one", "project-two"]
+        assert contexts[1].repository_url == "github.com/owner/two"
+        assert contexts[1].message_index == 2
+
+        listed = temp_db.list_sessions(workspace_name="project-two")
+        assert [s["session_id"] for s in listed] == ["context-session"]
+        assert listed[0]["workspace_names"] == ["project-one", "project-two"]
+        assert listed[0]["repository_urls"] == ["github.com/owner/one", "github.com/owner/two"]
 
     def test_root_agent_intervals_persist_and_retrieve(self, temp_db):
         """Test root custom-agent intervals persist and hydrate with sessions."""
@@ -319,6 +363,186 @@ class TestDatabase:
         results = temp_db.search("Python function")
         assert len(results) > 0
         assert any("Python" in r["content"] for r in results)
+
+    def test_search_deduplicates_copied_fork_history_by_source_event_id(self, temp_db):
+        """Test search suppresses copied fork history while keeping new fork content."""
+        original = ChatSession(
+            session_id="original-session",
+            workspace_name="project",
+            workspace_path="/tmp/project",
+            created_at="2026-01-01T00:00:00Z",
+            messages=[
+                ChatMessage(
+                    role="user",
+                    content="shared fork setup unique text",
+                    source_event_id="evt-shared-user",
+                ),
+                ChatMessage(
+                    role="assistant",
+                    content="original continuation unique text",
+                    source_event_id="evt-original-continuation",
+                ),
+            ],
+        )
+        fork = ChatSession(
+            session_id="fork-session",
+            workspace_name="project-fork",
+            workspace_path="/tmp/project-fork",
+            created_at="2026-01-01T00:10:00Z",
+            messages=[
+                ChatMessage(
+                    role="user",
+                    content="shared fork setup unique text",
+                    source_event_id="evt-shared-user",
+                ),
+                ChatMessage(
+                    role="assistant",
+                    content="fork continuation unique text",
+                    source_event_id="evt-fork-continuation",
+                ),
+            ],
+        )
+        temp_db.add_session(original)
+        temp_db.add_session(fork)
+
+        shared_results = temp_db.search('"shared fork setup unique text"', search_content_set={"messages"})
+        assert [result["session_id"] for result in shared_results] == ["original-session"]
+
+        fork_results = temp_db.search('"fork continuation unique text"', search_content_set={"messages"})
+        assert [result["session_id"] for result in fork_results] == ["fork-session"]
+
+        original_results = temp_db.search('"original continuation unique text"', search_content_set={"messages"})
+        assert [result["session_id"] for result in original_results] == ["original-session"]
+
+    def test_search_keeps_independent_duplicate_content_with_distinct_event_ids(self, temp_db):
+        """Test identical text remains searchable when it is not copied fork history."""
+        first = ChatSession(
+            session_id="first-independent-session",
+            workspace_name="project-a",
+            workspace_path="/tmp/project-a",
+            created_at="2026-01-01T00:00:00Z",
+            messages=[
+                ChatMessage(
+                    role="user",
+                    content="independent duplicate text",
+                    source_event_id="evt-first-independent",
+                )
+            ],
+        )
+        second = ChatSession(
+            session_id="second-independent-session",
+            workspace_name="project-b",
+            workspace_path="/tmp/project-b",
+            created_at="2026-01-01T00:10:00Z",
+            messages=[
+                ChatMessage(
+                    role="user",
+                    content="independent duplicate text",
+                    source_event_id="evt-second-independent",
+                )
+            ],
+        )
+        temp_db.add_session(first)
+        temp_db.add_session(second)
+
+        results = temp_db.search('"independent duplicate text"', search_content_set={"messages"}, sort_by="date")
+
+        assert {result["session_id"] for result in results} == {
+            "first-independent-session",
+            "second-independent-session",
+        }
+
+    def test_search_keeps_divergent_content_with_shared_source_event_id(self, temp_db):
+        """Test a fork continuation is searchable when only part of an assistant row diverged."""
+        original = ChatSession(
+            session_id="original-divergent-session",
+            workspace_name="project",
+            workspace_path="/tmp/project",
+            created_at="2026-01-01T00:00:00Z",
+            messages=[
+                ChatMessage(
+                    role="assistant",
+                    content="shared assistant content",
+                    source_event_id="evt-shared-assistant",
+                )
+            ],
+        )
+        fork = ChatSession(
+            session_id="fork-divergent-session",
+            workspace_name="project-fork",
+            workspace_path="/tmp/project-fork",
+            created_at="2026-01-01T00:10:00Z",
+            messages=[
+                ChatMessage(
+                    role="assistant",
+                    content="shared assistant content plus fork-only divergent text",
+                    source_event_id="evt-shared-assistant",
+                )
+            ],
+        )
+        temp_db.add_session(original)
+        temp_db.add_session(fork)
+
+        results = temp_db.search('"fork-only divergent text"', search_content_set={"messages"})
+
+        assert [result["session_id"] for result in results] == ["fork-divergent-session"]
+
+    def test_search_deduplicates_copied_fork_artifacts_by_source_event_id(self, temp_db):
+        """Test copied pre-fork tools, files, commands, and thinking blocks are de-duplicated."""
+        shared_message = "shared assistant artifact holder"
+        original = ChatSession(
+            session_id="original-artifact-session",
+            workspace_name="project",
+            workspace_path="/tmp/project",
+            created_at="2026-01-01T00:00:00Z",
+            messages=[
+                ChatMessage(
+                    role="assistant",
+                    content=shared_message,
+                    source_event_id="evt-shared-artifacts",
+                    tool_invocations=[ToolInvocation(name="search_tool", input="tool duplicate target", result="found copied result")],
+                    file_changes=[FileChange(path="src/copied_target.py", explanation="file duplicate target", diff="+ copied diff target")],
+                    command_runs=[CommandRun(command="run copied command target", output="command duplicate target")],
+                    content_blocks=[
+                        ContentBlock(kind="thinking", content="thinking duplicate target"),
+                        ContentBlock(kind="text", content=shared_message),
+                    ],
+                )
+            ],
+        )
+        fork = ChatSession(
+            session_id="fork-artifact-session",
+            workspace_name="project-fork",
+            workspace_path="/tmp/project-fork",
+            created_at="2026-01-01T00:10:00Z",
+            messages=[
+                ChatMessage(
+                    role="assistant",
+                    content=shared_message,
+                    source_event_id="evt-shared-artifacts",
+                    tool_invocations=[ToolInvocation(name="search_tool", input="tool duplicate target", result="found copied result")],
+                    file_changes=[FileChange(path="src/copied_target.py", explanation="file duplicate target", diff="+ copied diff target")],
+                    command_runs=[CommandRun(command="run copied command target", output="command duplicate target")],
+                    content_blocks=[
+                        ContentBlock(kind="thinking", content="thinking duplicate target"),
+                        ContentBlock(kind="text", content=shared_message),
+                    ],
+                )
+            ],
+        )
+        temp_db.add_session(original)
+        temp_db.add_session(fork)
+
+        cases = [
+            ("tool duplicate target", {"tools", "tool-inputs"}),
+            ("file duplicate target", {"file-changes"}),
+            ("copied diff target", {"file-changes", "diffs"}),
+            ("command duplicate target", {"commands"}),
+            ("thinking duplicate target", {"thinking"}),
+        ]
+        for query, search_content_set in cases:
+            results = temp_db.search(query, search_content_set=search_content_set)
+            assert [result["session_id"] for result in results] == ["original-artifact-session"]
 
     def test_search_no_results(self, temp_db, sample_session):
         """Test search with no matching results."""
@@ -726,9 +950,10 @@ class TestParseSearchQuery:
             # Case insensitive field names
             ("Role:user WORKSPACE:test", "", "user", "test", None, None),
             ("EDITION:CLI", "", None, None, None, "cli"),
-            # Duplicate field values - last one wins
+            # Duplicate scalar field values - last one wins
             ("role:user role:assistant python", "python", "assistant", None, None, None),
-            ("workspace:first workspace:second", "", None, "second", None, None),
+            # Repeated workspace filters are preserved as alternatives; workspace keeps the first value for compatibility
+            ("workspace:first workspace:second", "", None, "first", None, None),
             # FTS5 special character escaping - dashes
             ("test-driven", '"test-driven"', None, None, None, None),
             ("e-commerce m-commerce", '"e-commerce" "m-commerce"', None, None, None, None),
@@ -753,6 +978,14 @@ class TestParseSearchQuery:
         assert result.workspace == expected_workspace
         assert result.title == expected_title
         assert result.edition == expected_edition
+
+    def test_parse_search_query_preserves_repeated_context_filters(self):
+        result = parse_search_query("workspace:first workspace:second repo:one repository:two")
+
+        assert result.workspace == "first"
+        assert result.workspaces == ["first", "second"]
+        assert result.repository == "one"
+        assert result.repositories == ["one", "two"]
 
 
 @pytest.fixture
@@ -1108,6 +1341,76 @@ class TestRepositoryUrlSupport:
         # Search with repository: prefix
         results = temp_db.search("repository:other Hello")
         assert len(results) == 1
+
+    def test_search_matches_later_context_and_reports_active_context(self, temp_db):
+        """Search filters match any session context and report context active at the hit."""
+        session = ChatSession(
+            session_id="multi-context-search",
+            workspace_name="project-one",
+            workspace_path="/work/project-one",
+            repository_url="github.com/owner/one",
+            messages=[
+                ChatMessage(role="user", content="Alpha only", timestamp="2025-01-01T00:00:00Z"),
+                ChatMessage(role="assistant", content="Changed context", timestamp="2025-01-01T00:01:00Z"),
+                ChatMessage(role="user", content="Need beta feature", timestamp="2025-01-01T00:02:00Z"),
+            ],
+            context_entries=[
+                SessionContextEntry(
+                    workspace_name="project-one",
+                    workspace_path="/work/project-one",
+                    repository_url="github.com/owner/one",
+                    message_index=0,
+                ),
+                SessionContextEntry(
+                    workspace_name="project-two",
+                    workspace_path="/work/project-two",
+                    repository_url="github.com/owner/two",
+                    message_index=2,
+                    source="context_changed",
+                ),
+            ],
+        )
+        temp_db.add_session(session)
+
+        results = temp_db.search("repo:two beta")
+
+        assert len(results) == 1
+        assert results[0]["session_id"] == "multi-context-search"
+        assert results[0]["active_context"]["workspace_name"] == "project-two"
+        assert results[0]["repository_url"] == "github.com/owner/two"
+
+        assert temp_db.search("repo:two Alpha") == []
+        assert temp_db.search("workspace:project-two Alpha") == []
+
+    def test_repeated_repository_prefixes_are_or_filters(self, temp_db):
+        session1 = ChatSession(
+            session_id="or-repo-1",
+            workspace_name="project1",
+            workspace_path="/path/to/project1",
+            messages=[ChatMessage(role="user", content="Repeated filter")],
+            repository_url="github.com/owner/repo1",
+        )
+        session2 = ChatSession(
+            session_id="or-repo-2",
+            workspace_name="project2",
+            workspace_path="/path/to/project2",
+            messages=[ChatMessage(role="user", content="Repeated filter")],
+            repository_url="github.com/owner/repo2",
+        )
+        session3 = ChatSession(
+            session_id="or-repo-3",
+            workspace_name="project3",
+            workspace_path="/path/to/project3",
+            messages=[ChatMessage(role="user", content="Repeated filter")],
+            repository_url="github.com/owner/repo3",
+        )
+        temp_db.add_session(session1)
+        temp_db.add_session(session2)
+        temp_db.add_session(session3)
+
+        results = temp_db.search("repo:repo1 repo:repo2 Repeated")
+
+        assert {r["session_id"] for r in results} == {"or-repo-1", "or-repo-2"}
 
 
 class TestDateFiltering:
@@ -2363,6 +2666,63 @@ class TestSchemaV6:
         msg_cols = {row[1] for row in conn.execute("PRAGMA table_info(cst_messages)")}
         assert "parent_message_id" in msg_cols
         assert "child_index" in msg_cols
+
+        conn.close()
+
+    def test_v10_to_v11_migration_adds_source_event_id_before_index(self):
+        """Simulating a v10 DB adds source_event_id before replaying current indexes."""
+        from copilot_session_tools.db_storage import CST_SCHEMA_VERSION, ensure_schema
+
+        conn = sqlite3.connect(":memory:")
+        ensure_schema(conn)
+        conn.execute("DROP INDEX IF EXISTS idx_cst_messages_source_event")
+        conn.execute("ALTER TABLE cst_messages DROP COLUMN source_event_id")
+        conn.execute("UPDATE cst_schema_version SET version = 10")
+
+        ensure_schema(conn)
+
+        msg_cols = {row[1] for row in conn.execute("PRAGMA table_info(cst_messages)")}
+        indexes = {row[1] for row in conn.execute("PRAGMA index_list(cst_messages)")}
+        version = conn.execute("SELECT version FROM cst_schema_version").fetchone()[0]
+        assert "source_event_id" in msg_cols
+        assert "idx_cst_messages_source_event" in indexes
+        assert version == CST_SCHEMA_VERSION
+
+        conn.close()
+
+
+class TestChronicleSchemaVersion:
+    """Tests for Chronicle schema compatibility warnings."""
+
+    def test_known_chronicle_schema_version_does_not_warn(self):
+        """Chronicle schema v4 is currently supported by CST's read queries."""
+        import warnings
+
+        from copilot_session_tools.db_storage import CHRONICLE_SCHEMA_VERSION, check_builtin_schema_version
+
+        conn = sqlite3.connect(":memory:")
+        conn.execute("ATTACH DATABASE ':memory:' AS chronicle")
+        conn.execute("CREATE TABLE chronicle.schema_version (version INTEGER NOT NULL)")
+        conn.execute("INSERT INTO chronicle.schema_version VALUES (?)", (CHRONICLE_SCHEMA_VERSION,))
+
+        with warnings.catch_warnings(record=True) as recorded:
+            warnings.simplefilter("always")
+            check_builtin_schema_version(conn)
+
+        assert recorded == []
+        conn.close()
+
+    def test_future_chronicle_schema_version_warns(self):
+        """A future Chronicle schema still warns so parser compatibility is revisited."""
+        from copilot_session_tools.db_storage import CHRONICLE_SCHEMA_VERSION, check_builtin_schema_version
+
+        conn = sqlite3.connect(":memory:")
+        conn.execute("ATTACH DATABASE ':memory:' AS chronicle")
+        conn.execute("CREATE TABLE chronicle.schema_version (version INTEGER NOT NULL)")
+        conn.execute("INSERT INTO chronicle.schema_version VALUES (?)", (CHRONICLE_SCHEMA_VERSION + 1,))
+
+        with pytest.warns(UserWarning, match=f"newer than expected \\({CHRONICLE_SCHEMA_VERSION}\\)"):
+            check_builtin_schema_version(conn)
 
         conn.close()
 

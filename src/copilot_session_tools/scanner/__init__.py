@@ -33,6 +33,7 @@ from .models import (
     ContentBlock,
     FileChange,
     RootAgentInterval,
+    SessionContextEntry,
     SessionFileInfo,
     ToolInvocation,
 )
@@ -60,6 +61,7 @@ __all__ = [
     "ContentBlock",
     "FileChange",
     "RootAgentInterval",
+    "SessionContextEntry",
     "SessionFileInfo",
     "ToolInvocation",
     "_apply_jsonl_operations",

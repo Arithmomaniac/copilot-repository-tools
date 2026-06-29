@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import sqlite3
 
-from .scanner import ChatSession, CommandRun, FileChange, RootAgentInterval, ToolInvocation
+from .scanner import ChatSession, CommandRun, FileChange, RootAgentInterval, SessionContextEntry, ToolInvocation
 
 # ---------------------------------------------------------------------------
 # Column tuples used in INSERT statements (order matters for parameterized queries)
@@ -43,9 +43,12 @@ CST_MESSAGE_COLUMNS = (
     "content",
     "timestamp",
     "cached_markdown",
+    "source_event_id",
     "agent_id",
     "agent_display_name",
     "agent_nesting_level",
+    "original_content",
+    "cleanup_model",
     "parent_message_id",
     "child_index",
 )
@@ -108,6 +111,18 @@ CST_ROOT_AGENT_INTERVAL_COLUMNS = (
     "start_timestamp",
     "end_timestamp",
     "tools_json",
+)
+
+CST_SESSION_CONTEXT_COLUMNS = (
+    "session_id",
+    "context_index",
+    "message_index",
+    "timestamp",
+    "workspace_name",
+    "workspace_path",
+    "repository_url",
+    "branch",
+    "source",
 )
 
 # ---------------------------------------------------------------------------
@@ -220,6 +235,21 @@ def root_agent_interval_to_row(session_id: str, interval: RootAgentInterval) -> 
     )
 
 
+def session_context_to_row(session_id: str, context_index: int, entry: SessionContextEntry) -> tuple:
+    """Map a SessionContextEntry to a parameter tuple matching CST_SESSION_CONTEXT_COLUMNS."""
+    return (
+        session_id,
+        context_index,
+        entry.message_index,
+        entry.timestamp,
+        entry.workspace_name,
+        entry.workspace_path,
+        entry.repository_url,
+        entry.branch,
+        entry.source,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Row → dataclass helpers  (read path)
 # ---------------------------------------------------------------------------
@@ -259,6 +289,19 @@ def row_to_root_agent_interval(row: sqlite3.Row) -> RootAgentInterval:
         start_timestamp=row["start_timestamp"],
         end_timestamp=row["end_timestamp"],
         tools=tools,
+    )
+
+
+def row_to_session_context(row: sqlite3.Row) -> SessionContextEntry:
+    """Map a cst_session_contexts row to a SessionContextEntry."""
+    return SessionContextEntry(
+        workspace_name=row["workspace_name"],
+        workspace_path=row["workspace_path"],
+        repository_url=row["repository_url"],
+        branch=row["branch"],
+        timestamp=row["timestamp"],
+        message_index=row["message_index"],
+        source=row["source"],
     )
 
 

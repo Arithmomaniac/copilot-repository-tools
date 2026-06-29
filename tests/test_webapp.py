@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from copilot_session_tools import ChatMessage, ChatSession, ContentBlock, Database, RootAgentInterval
+from copilot_session_tools import ChatMessage, ChatSession, ContentBlock, Database, RootAgentInterval, SessionContextEntry
 from copilot_session_tools.utils import (
     extract_filename as _extract_filename,
 )
@@ -342,6 +342,88 @@ class TestWebappRoutes:
         assert response.status_code == 200
         assert b"Entered smart-merge" in response.data
         assert b"Back to default" in response.data
+
+    def test_session_uses_inline_context_change_message(self, temp_db):
+        """Context changes render as inline status messages, not a session summary."""
+        db = Database(temp_db)
+        session = ChatSession(
+            session_id="context-inline-session",
+            workspace_name="project-one",
+            workspace_path="/workspace/one",
+            repository_url="github.com/example/one",
+            messages=[
+                ChatMessage(role="user", content="start"),
+                ChatMessage(
+                    role="assistant",
+                    content="Working directory changed: /workspace/two (feature/x)",
+                    content_blocks=[
+                        ContentBlock(
+                            kind="status",
+                            content="Working directory changed: /workspace/two (feature/x)",
+                            description="context-change",
+                        )
+                    ],
+                ),
+            ],
+            context_entries=[
+                SessionContextEntry(message_index=0, workspace_name="project-one", workspace_path="/workspace/one", repository_url="github.com/example/one", source="initial"),
+                SessionContextEntry(
+                    message_index=1,
+                    workspace_name="project-two",
+                    workspace_path="/workspace/two",
+                    repository_url="github.com/example/two",
+                    branch="feature/x",
+                    source="context_changed",
+                ),
+            ],
+        )
+        db.add_session(session)
+
+        app = create_app(temp_db, title="Test Archive", storage_paths=[])
+        app.config["TESTING"] = True
+        response = app.test_client().get("/session/context-inline-session")
+
+        assert response.status_code == 200
+        html = response.data.decode("utf-8")
+        assert "Context changed 1 time" not in html
+        assert "Working directory changed: /workspace/two (feature/x)" in html
+        assert "status-badge model-change context-change" in html
+
+    def test_search_snippet_context_only_when_different_from_root(self, temp_db):
+        """Search snippets omit root context but show later active context."""
+        db = Database(temp_db)
+        session = ChatSession(
+            session_id="context-snippet-session",
+            workspace_name="project-one",
+            workspace_path="/workspace/one",
+            repository_url="github.com/example/one",
+            messages=[
+                ChatMessage(role="user", content="alpha in the first project"),
+                ChatMessage(role="assistant", content="beta in the second project"),
+            ],
+            context_entries=[
+                SessionContextEntry(message_index=0, workspace_name="project-one", workspace_path="/workspace/one", repository_url="github.com/example/one", source="initial"),
+                SessionContextEntry(
+                    message_index=1, workspace_name="project-two", workspace_path="/workspace/two", repository_url="github.com/example/two", source="context_changed"
+                ),
+            ],
+        )
+        db.add_session(session)
+
+        app = create_app(temp_db, title="Test Archive", storage_paths=[])
+        app.config["TESTING"] = True
+        client = app.test_client()
+
+        root_response = client.get("/?q=alpha")
+        assert root_response.status_code == 200
+        assert '<div class="snippet-context">' not in root_response.data.decode("utf-8")
+
+        changed_response = client.get("/?q=beta")
+        assert changed_response.status_code == 200
+        changed_html = changed_response.data.decode("utf-8")
+        assert '<div class="snippet-context">' in changed_html
+        assert "project-two" in changed_html
+        assert "github.com/example/two" in changed_html
 
     def test_session_not_found(self, client):
         """Test 404 for non-existent session."""

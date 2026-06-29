@@ -18,18 +18,21 @@ from .db_schema import (
     CST_MESSAGE_COLUMNS,
     CST_ROOT_AGENT_INTERVAL_COLUMNS,
     CST_SESSION_COLUMNS,
+    CST_SESSION_CONTEXT_COLUMNS,
     CST_TOOL_INVOCATION_COLUMNS,
     command_to_row,
     file_change_to_row,
     insert_sql,
     root_agent_interval_to_row,
+    session_context_to_row,
     session_to_row,
     tool_to_row,
 )
 from .markdown_exporter import message_to_markdown
 from .scanner import ChatSession
 
-CST_SCHEMA_VERSION = 9
+CST_SCHEMA_VERSION = 11
+CHRONICLE_SCHEMA_VERSION = 4
 
 
 CST_SCHEMA = """
@@ -65,6 +68,7 @@ CREATE TABLE IF NOT EXISTS cst_messages (
     content TEXT,
     timestamp TEXT,
     cached_markdown TEXT,
+    source_event_id TEXT,
     agent_id TEXT,
     agent_display_name TEXT,
     agent_nesting_level INTEGER DEFAULT 0,
@@ -75,6 +79,7 @@ CREATE TABLE IF NOT EXISTS cst_messages (
 );
 CREATE INDEX IF NOT EXISTS idx_cst_messages_session ON cst_messages(session_id);
 CREATE INDEX IF NOT EXISTS idx_cst_messages_parent ON cst_messages(parent_message_id);
+CREATE INDEX IF NOT EXISTS idx_cst_messages_source_event ON cst_messages(source_event_id);
 
 CREATE TABLE IF NOT EXISTS cst_tool_invocations (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -146,6 +151,24 @@ CREATE TABLE IF NOT EXISTS cst_root_agent_intervals (
 );
 CREATE INDEX IF NOT EXISTS idx_cst_root_agent_intervals_session ON cst_root_agent_intervals(session_id, start_timestamp);
 CREATE INDEX IF NOT EXISTS idx_cst_root_agent_intervals_agent ON cst_root_agent_intervals(agent_name);
+
+CREATE TABLE IF NOT EXISTS cst_session_contexts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL REFERENCES cst_sessions(session_id) ON DELETE CASCADE,
+    context_index INTEGER NOT NULL,
+    message_index INTEGER NOT NULL DEFAULT 0,
+    timestamp TEXT,
+    workspace_name TEXT,
+    workspace_path TEXT,
+    repository_url TEXT,
+    branch TEXT,
+    source TEXT NOT NULL DEFAULT 'initial',
+    UNIQUE(session_id, context_index)
+);
+CREATE INDEX IF NOT EXISTS idx_cst_session_contexts_session ON cst_session_contexts(session_id, context_index);
+CREATE INDEX IF NOT EXISTS idx_cst_session_contexts_workspace_name ON cst_session_contexts(workspace_name);
+CREATE INDEX IF NOT EXISTS idx_cst_session_contexts_workspace_path ON cst_session_contexts(workspace_path);
+CREATE INDEX IF NOT EXISTS idx_cst_session_contexts_repo ON cst_session_contexts(repository_url);
 
 CREATE VIEW IF NOT EXISTS cst_messages_tree AS
 SELECT
@@ -291,6 +314,7 @@ def _drop_and_recreate_cst_tables(conn: sqlite3.Connection) -> None:
         "cst_file_changes",
         "cst_tool_invocations",
         "cst_root_agent_intervals",
+        "cst_session_contexts",
         "cst_messages",
         "cst_sessions",
         "cst_schema_version",
@@ -333,6 +357,12 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     except sqlite3.OperationalError:
         has_schema = False
 
+    if has_schema and current_version < 11:
+        # CST_SCHEMA creates an index on this column, so the column must exist
+        # before replaying the idempotent schema script against upgraded DBs.
+        with contextlib.suppress(sqlite3.OperationalError):
+            cursor.execute("ALTER TABLE cst_messages ADD COLUMN source_event_id TEXT")
+
     # Create cst_* tables (safe: either fresh DB or already at v6+)
     conn.executescript(CST_SCHEMA)
     # Create FTS table and triggers
@@ -366,6 +396,12 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         # v8 → v9: Add root custom-agent interval storage and views.
         if current_version < 9:
             conn.executescript(CST_SCHEMA)
+        # v9 → v10: Add session context history storage.
+        if current_version < 10:
+            conn.executescript(CST_SCHEMA)
+        # v10 → v11: Add CLI source event ids for fork-aware search de-duplication.
+        if current_version < 11:
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_cst_messages_source_event ON cst_messages(source_event_id)")
         cursor.execute(
             "UPDATE cst_schema_version SET version = ?",
             (CST_SCHEMA_VERSION,),
@@ -379,11 +415,12 @@ def check_builtin_schema_version(conn: sqlite3.Connection) -> None:
     """
     try:
         row = conn.execute("SELECT version FROM chronicle.schema_version LIMIT 1").fetchone()
-        if row and row[0] > 1:
+        if row and row[0] > CHRONICLE_SCHEMA_VERSION:
             import warnings
 
             warnings.warn(
-                f"Session store schema version {row[0]} is newer than expected (1). Some features may not work correctly. Consider updating copilot-session-tools.",
+                f"Session store schema version {row[0]} is newer than expected ({CHRONICLE_SCHEMA_VERSION}). "
+                "Some features may not work correctly. Consider updating copilot-session-tools.",
                 stacklevel=2,
             )
     except Exception:  # noqa: S110
@@ -491,6 +528,7 @@ def _delete_session_data(cursor: sqlite3.Cursor, session_id: str) -> None:
     )
     cursor.execute("DELETE FROM cst_messages_fts WHERE session_id = ?", (session_id,))
     cursor.execute("DELETE FROM cst_root_agent_intervals WHERE session_id = ?", (session_id,))
+    cursor.execute("DELETE FROM cst_session_contexts WHERE session_id = ?", (session_id,))
     cursor.execute("DELETE FROM cst_messages WHERE session_id = ?", (session_id,))
 
 
@@ -568,9 +606,12 @@ def _insert_content_blocks_recursive(
                     child.content,
                     child.timestamp,
                     child_cached_md,
+                    child.source_event_id,
                     child.agent_id,
                     child.agent_display_name,
                     child.agent_nesting_level,
+                    child.original_content,
+                    child.cleanup_model,
                     parent_message_id,  # parent_message_id = parent's ID
                     block_idx,  # child_index = block position for ordering
                 ),
@@ -629,6 +670,12 @@ def add_session_impl(cursor: sqlite3.Cursor, session: ChatSession) -> None:
             root_agent_interval_to_row(session.session_id, interval),
         )
 
+    for context_index, entry in enumerate(session.effective_context_entries()):
+        cursor.execute(
+            insert_sql("cst_session_contexts", CST_SESSION_CONTEXT_COLUMNS),
+            session_context_to_row(session.session_id, context_index, entry),
+        )
+
     # Insert messages and related data
     for idx, msg in enumerate(session.messages):
         cached_markdown = message_to_markdown(
@@ -647,9 +694,12 @@ def add_session_impl(cursor: sqlite3.Cursor, session: ChatSession) -> None:
                 msg.content,
                 msg.timestamp,
                 cached_markdown,
+                msg.source_event_id,
                 msg.agent_id,
                 msg.agent_display_name,
                 msg.agent_nesting_level,
+                msg.original_content,
+                msg.cleanup_model,
                 None,  # parent_message_id — set by db-insertion todo
                 msg.child_index,
             ),
@@ -816,7 +866,9 @@ def update_enrichment_version(conn: sqlite3.Connection, session_id: str, version
 
 def delete_cst_session(conn: sqlite3.Connection, session_id: str) -> bool:
     """Delete all cst_* data for a session. Returns True if session existed."""
-    cursor = conn.execute("DELETE FROM cst_sessions WHERE session_id = ?", (session_id,))
+    db_cursor = conn.cursor()
+    _delete_session_data(db_cursor, session_id)
+    cursor = db_cursor.execute("DELETE FROM cst_sessions WHERE session_id = ?", (session_id,))
     return cursor.rowcount > 0
 
 
@@ -926,6 +978,12 @@ def enrich_session(conn: sqlite3.Connection, session: ChatSession) -> None:
             root_agent_interval_to_row(session.session_id, interval),
         )
 
+    for context_index, entry in enumerate(session.effective_context_entries()):
+        cursor.execute(
+            insert_sql("cst_session_contexts", CST_SESSION_CONTEXT_COLUMNS),
+            session_context_to_row(session.session_id, context_index, entry),
+        )
+
     # Insert messages and related data
     for idx, msg in enumerate(session.messages):
         cached_markdown = message_to_markdown(
@@ -944,9 +1002,12 @@ def enrich_session(conn: sqlite3.Connection, session: ChatSession) -> None:
                 msg.content,
                 msg.timestamp,
                 cached_markdown,
+                msg.source_event_id,
                 msg.agent_id,
                 msg.agent_display_name,
                 msg.agent_nesting_level,
+                msg.original_content,
+                msg.cleanup_model,
                 None,  # parent_message_id — set by db-insertion todo
                 msg.child_index,
             ),
@@ -1019,8 +1080,7 @@ def cleanup_orphaned_cst_sessions(conn: sqlite3.Connection, *, has_chronicle: bo
 
     # Delete orphaned sessions and all related data
     for session_id in orphaned_ids:
-        cursor.execute("DELETE FROM cst_messages_fts WHERE session_id = ?", (session_id,))
-        cursor.execute("DELETE FROM cst_messages WHERE session_id = ?", (session_id,))
+        _delete_session_data(cursor, session_id)
         cursor.execute("DELETE FROM cst_sessions WHERE session_id = ?", (session_id,))
 
     return orphaned_ids

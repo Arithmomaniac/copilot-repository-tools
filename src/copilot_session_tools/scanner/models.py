@@ -116,6 +116,7 @@ class ChatMessage:
     command_runs: list[CommandRun] = field(default_factory=list)
     content_blocks: list[ContentBlock] = field(default_factory=list)  # Structured content with kind
     cached_markdown: str | None = None  # Pre-computed markdown for this message
+    source_event_id: str | None = None  # CLI event id used to identify copied fork history
     agent_id: str | None = None  # toolCallId linking to parent task tool invocation
     agent_display_name: str | None = None  # "General Purpose Agent", "Explore Agent", etc.
     agent_nesting_level: int = 0  # 0=top-level, 1=inside agent, 2=nested agent, etc.
@@ -134,6 +135,19 @@ class RootAgentInterval:
     start_timestamp: str
     end_timestamp: str | None = None
     tools: list[str] | None = None
+
+
+@dataclass
+class SessionContextEntry:
+    """Represents the workspace/repository context active during part of a session."""
+
+    workspace_name: str | None = None
+    workspace_path: str | None = None
+    repository_url: str | None = None
+    branch: str | None = None
+    timestamp: str | None = None
+    message_index: int = 0
+    source: str = "initial"
 
 
 @dataclass
@@ -161,6 +175,32 @@ class ChatSession:
     parser_version: int = 1
     source_format: str | None = None  # 'cli', 'json', 'jsonl', 'vscdb'
     root_agent_intervals: list[RootAgentInterval] = field(default_factory=list)
+    context_entries: list[SessionContextEntry] = field(default_factory=list)
+
+    def effective_context_entries(self) -> list[SessionContextEntry]:
+        """Return context entries, falling back to the legacy scalar metadata."""
+        entries = list(self.context_entries)
+        if not entries and (self.workspace_name or self.workspace_path or self.repository_url):
+            entries.append(
+                SessionContextEntry(
+                    workspace_name=self.workspace_name,
+                    workspace_path=self.workspace_path,
+                    repository_url=self.repository_url,
+                    message_index=0,
+                    source="initial",
+                )
+            )
+
+        deduped: list[SessionContextEntry] = []
+        for entry in entries:
+            key = (entry.workspace_name, entry.workspace_path, entry.repository_url, entry.branch)
+            if deduped:
+                previous = deduped[-1]
+                previous_key = (previous.workspace_name, previous.workspace_path, previous.repository_url, previous.branch)
+                if key == previous_key:
+                    continue
+            deduped.append(entry)
+        return deduped
 
 
 @dataclass
