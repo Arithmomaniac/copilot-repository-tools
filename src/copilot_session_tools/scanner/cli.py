@@ -11,6 +11,7 @@ import ssrjson
 from copilot_session_tools.scanner import PARSER_VERSION
 
 from .content import _format_tool_display_message, _get_file_metadata
+from .diff import CliFileOp, cli_file_op_from_tool, consolidate_cli_file_ops, strip_view_line_numbers
 from .git import _normalize_git_url, detect_repository_url
 from .models import (
     ChatMessage,
@@ -188,6 +189,9 @@ def _format_session_event_status(event_type: str, event_data: dict) -> tuple[str
         error = _stringify_event_value(event_data.get("error"))
         label = f"Hook failed: {hook_type}" if hook_type else "Hook failed"
         return f"{label} - {error}" if error else label, "hook-error"
+    if event_type == "hook.progress":
+        message = _stringify_event_value(event_data.get("message"))
+        return f"Hook progress: {message}" if message else "Hook progress", "hook-progress"
     if event_type == "mcp_app.tool_call_complete":
         server = _stringify_event_value(event_data.get("serverName"))
         tool = _stringify_event_value(event_data.get("toolName"))
@@ -345,10 +349,12 @@ class _CliSessionBuilder:
         self.subagent_child_structured = subagent_child_structured or {}
         self.agent_display_names = agent_display_names or {}
         self.shell_title_map: dict[str, str] = {}  # shellId → title for async shell backlinks
+        self.view_base: dict[str, str] = {}  # path → last full-file view content (reconstruction base)
         self.messages: list[ChatMessage] = []
         self.current_assistant_content_blocks: list[ContentBlock] = []
         self.current_assistant_tool_invocations: list[ToolInvocation] = []
         self.current_assistant_command_runs: list[CommandRun] = []
+        self.current_assistant_file_ops: list[CliFileOp] = []
         self.current_assistant_timestamp: str | None = None
         self.current_assistant_source_event_id: str | None = None
         self.pending_tool_requests: dict[str, dict] = {}
@@ -360,7 +366,7 @@ class _CliSessionBuilder:
 
     def flush_assistant_message(self) -> None:
         """Flush accumulated assistant content blocks into a single message."""
-        has_content = self.current_assistant_content_blocks or self.current_assistant_tool_invocations or self.current_assistant_command_runs
+        has_content = self.current_assistant_content_blocks or self.current_assistant_tool_invocations or self.current_assistant_command_runs or self.current_assistant_file_ops
         if not has_content:
             return
 
@@ -389,6 +395,7 @@ class _CliSessionBuilder:
                 tool_invocations=self.current_assistant_tool_invocations.copy(),
                 command_runs=self.current_assistant_command_runs.copy(),
                 content_blocks=self.current_assistant_content_blocks.copy(),
+                file_changes=consolidate_cli_file_ops(self.current_assistant_file_ops, self.view_base),
                 children=children,
             )
         )
@@ -397,6 +404,7 @@ class _CliSessionBuilder:
         self.current_assistant_content_blocks = []
         self.current_assistant_tool_invocations = []
         self.current_assistant_command_runs = []
+        self.current_assistant_file_ops = []
         self.current_assistant_timestamp = None
         self.current_assistant_source_event_id = None
 
@@ -573,6 +581,20 @@ class _CliSessionBuilder:
                 self.current_assistant_tool_invocations.append(tool_inv)
             return
 
+        # Capture full-file view results as reconstruction bases for later
+        # edit-only sequences. Only whole-file reads (no view_range) are trusted;
+        # the result is line-number-prefixed, so strip those to recover content.
+        if tool_name == "view" and not argument_dict.get("view_range"):
+            view_path = _get_tool_arg_str(argument_dict, "path")
+            if view_path:
+                execution = self.tool_executions.get(tool_call_id, {})
+                complete = execution.get("complete")
+                if complete and complete.get("data", {}).get("success"):
+                    result_obj = complete["data"].get("result", {})
+                    text = result_obj.get("content", "") if isinstance(result_obj, dict) else ""
+                    if text:
+                        self.view_base[view_path] = strip_view_line_numbers(text)
+
         tool_inv, cmd_run = self.build_tool_invocation(tool_call_id, tool_name, arguments)
 
         if cmd_run:
@@ -600,6 +622,13 @@ class _CliSessionBuilder:
                 # Don't render task tool inline — the subagent block replaces it
                 self.current_assistant_tool_invocations.append(tool_inv)
                 return
+            # Reshape successful edit/create into a CLI file op; multiple ops on
+            # the same file in this turn are consolidated into one FileChange at
+            # flush (VS Code parity). Gated on success like the runtime hook.
+            if tool_name in ("edit", "create") and tool_inv.status == "success":
+                file_op = cli_file_op_from_tool(tool_name, argument_dict)
+                if file_op is not None:
+                    self.current_assistant_file_ops.append(file_op)
             # Add tool invocation inline as a content block
             display_text = tool_inv.invocation_message or tool_inv.name
             # Use intentionSummary or toolTitle as enhanced description
@@ -1139,12 +1168,29 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                 nested_blocks: list[ContentBlock] = []
                 nested_tool_invocations: list[ToolInvocation] = []
                 nested_command_runs: list[CommandRun] = []
+                nested_file_ops: list[CliFileOp] = []
                 for child_tcid, child_tool_name, child_args in builder.subagent_child_structured.get(tool_call_id, []):
+                    child_args_dict = _as_tool_argument_dict(child_args)
+                    # Capture subagent full-file views so its own edit-only sequences can
+                    # reconstruct a net diff (parity with the main-pass capture).
+                    if child_tool_name == "view" and not child_args_dict.get("view_range"):
+                        vp = _get_tool_arg_str(child_args_dict, "path")
+                        complete = builder.tool_executions.get(child_tcid, {}).get("complete")
+                        if vp and complete and complete.get("data", {}).get("success"):
+                            r = complete["data"].get("result", {})
+                            vt = r.get("content", "") if isinstance(r, dict) else ""
+                            if vt:
+                                builder.view_base[vp] = strip_view_line_numbers(vt)
                     tool_inv, cmd_run = builder.build_tool_invocation(child_tcid, child_tool_name, child_args)
                     display = _format_tool_display_message(child_tool_name, child_args)
                     if tool_inv:
                         nested_tool_invocations.append(tool_inv)
                         nested_blocks.append(ContentBlock(kind="toolInvocation", content=display or child_tool_name))
+                        # Reshape successful child edit/create into a file op (VS Code parity)
+                        if child_tool_name in ("edit", "create") and tool_inv.status == "success":
+                            child_op = cli_file_op_from_tool(child_tool_name, child_args_dict)
+                            if child_op is not None:
+                                nested_file_ops.append(child_op)
                     elif cmd_run:
                         nested_command_runs.append(cmd_run)
                         # Use "$ command" format so metadata matching connects them inline
@@ -1164,6 +1210,7 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                     nested_blocks.append(ContentBlock(kind="text", content=f"**Error:** {error}" if error else "**Error:** Unknown error"))
 
                 # Create child ChatMessage for the subagent
+                nested_consolidated_changes = consolidate_cli_file_ops(nested_file_ops, builder.view_base)
                 child_msg = ChatMessage(
                     role="assistant",
                     content=content,
@@ -1174,6 +1221,7 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                     tool_invocations=nested_tool_invocations,
                     command_runs=nested_command_runs,
                     content_blocks=nested_blocks,
+                    file_changes=nested_consolidated_changes,
                 )
 
                 block = ContentBlock(
@@ -1189,6 +1237,7 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                 block.content_blocks = nested_blocks
                 block.tool_invocations = nested_tool_invocations
                 block.command_runs = nested_command_runs
+                block.file_changes = nested_consolidated_changes
                 builder.current_assistant_content_blocks.append(block)
 
             elif event_type == "subagent.completed":
@@ -1383,16 +1432,22 @@ def _parse_cli_jsonl_file(file_path: Path) -> ChatSession | None:
                 "sampling.requested",
                 "session.background_tasks_changed",
                 "session.canvas.opened",
+                "session.canvas.closed",
                 "session.canvas.registry_changed",
                 "session.custom_notification",
                 "session.custom_agents_updated",
                 "session.extensions_loaded",
+                "session.extensions.attachments_pushed",
                 "session.idle",
                 "session.import_legacy",
                 "session.mcp_server_status_changed",
                 "session.mcp_servers_loaded",
+                "session.autopilot_objective_changed",
+                "session.binary_asset",
+                "session.permissions_changed",
                 "session.skills_loaded",
                 "session.snapshot_rewind",
+                "session.todos_changed",
                 "session.tools_updated",
                 "session.usage_info",
             ):

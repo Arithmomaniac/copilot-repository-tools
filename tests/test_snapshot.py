@@ -191,6 +191,54 @@ class TestCLIAsyncShellsSnapshot:
         assert "STOP" in html
 
 
+# --- CLI Session with File Changes Snapshots ---
+
+_cli_file_changes_events = FIXTURES_DIR / "cli-file-changes" / "events.jsonl"
+_cli_file_changes_fixture_exists = _cli_file_changes_events.exists() if FIXTURES_DIR.exists() else False
+
+
+@pytest.mark.skipif(not _cli_file_changes_fixture_exists, reason="CLI file-changes fixture not populated")
+class TestCLIFileChangesSnapshot:
+    """Snapshot tests for CLI edit/create reshaped into FileChange diffs (VS Code parity)."""
+
+    session: ChatSession
+
+    @pytest.fixture(autouse=True)
+    def parse_session(self):
+        parsed = _parse_cli_jsonl_file(_cli_file_changes_events)
+        assert parsed is not None, f"Failed to parse CLI file-changes fixture: {_cli_file_changes_events}"
+        self.session = parsed
+        self.session.source_file = "cli-file-changes"
+
+    def test_markdown_export(self, file_regression):
+        md = session_to_markdown(
+            self.session,
+            content_set={"diffs", "tool-inputs", "thinking", "agent-details", "tools", "commands", "file-changes"},
+        )
+        file_regression.check(md, fullpath=BASELINES_DIR / "cli-file-changes.md", encoding="utf-8")
+
+    def test_html_export(self, file_regression):
+        html = session_to_html(self.session)
+        file_regression.check(html, fullpath=BASELINES_DIR / "cli-file-changes.html", encoding="utf-8")
+
+    def test_successful_edits_become_file_changes(self):
+        """create + successful edit on the same file consolidate to ONE diff; failed edit gated out."""
+        changes = [fc for m in self.session.messages for fc in m.file_changes]
+        assert len(changes) == 1
+        fc = changes[0]
+        assert fc.path.endswith("utils.py")
+        assert "missing.py" not in fc.path
+        assert fc.language_id == "python"
+        assert fc.diff and "+def add(a, b):" in fc.diff and "+def mul(a, b):" in fc.diff
+
+    def test_html_renders_file_changes_section(self):
+        """The web/HTML renderer surfaces the File Changes section with a diff."""
+        html = session_to_html(self.session)
+        assert "File Changes" in html
+        assert "file-change" in html
+        assert "+def mul(a, b):" in html
+
+
 _SESSION_STORE_DB = Path.home() / ".copilot" / "session-store.db"
 # Same session as the CLI fixture so enriched/unenriched snapshots are directly comparable
 _UNENRICHED_SESSION_ID = "01488532-ff4e-41c6-b137-5f75a48742d3"

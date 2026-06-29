@@ -1,6 +1,8 @@
 """Diff generation and text edit parsing for scanner."""
 
 import difflib
+import re
+from dataclasses import dataclass
 from pathlib import Path
 
 from .content import _extract_uri_filename, _extract_uri_path
@@ -89,6 +91,165 @@ def _generate_unified_diff(original: str, modified: str, filename: str = "file")
     )
 
     return "".join(diff)
+
+
+# File extension → language id, mirroring VS Code's languageId values so CLI
+# file changes render with the same language badge as VS Code sessions.
+_EXTENSION_LANGUAGE_MAP: dict[str, str] = {
+    ".py": "python",
+    ".ts": "typescript",
+    ".tsx": "typescriptreact",
+    ".js": "javascript",
+    ".jsx": "javascriptreact",
+    ".mjs": "javascript",
+    ".cjs": "javascript",
+    ".json": "json",
+    ".jsonc": "jsonc",
+    ".html": "html",
+    ".htm": "html",
+    ".css": "css",
+    ".scss": "scss",
+    ".less": "less",
+    ".md": "markdown",
+    ".markdown": "markdown",
+    ".rs": "rust",
+    ".go": "go",
+    ".java": "java",
+    ".kt": "kotlin",
+    ".c": "c",
+    ".h": "c",
+    ".cpp": "cpp",
+    ".cc": "cpp",
+    ".hpp": "cpp",
+    ".cs": "csharp",
+    ".rb": "ruby",
+    ".php": "php",
+    ".sh": "shellscript",
+    ".bash": "shellscript",
+    ".ps1": "powershell",
+    ".psm1": "powershell",
+    ".yaml": "yaml",
+    ".yml": "yaml",
+    ".toml": "toml",
+    ".xml": "xml",
+    ".sql": "sql",
+    ".swift": "swift",
+    ".lua": "lua",
+    ".r": "r",
+    ".dart": "dart",
+    ".vue": "vue",
+    ".svelte": "svelte",
+}
+
+
+def language_id_from_path(path: str) -> str | None:
+    """Infer a VS Code-style ``languageId`` from a file path's extension."""
+    if not path:
+        return None
+    return _EXTENSION_LANGUAGE_MAP.get(Path(path).suffix.lower())
+
+
+@dataclass
+class CliFileOp:
+    """A single CLI ``edit``/``create`` operation captured from tool arguments."""
+
+    tool_name: str
+    path: str
+    old_str: str | None = None
+    new_str: str | None = None
+    file_text: str | None = None
+
+
+def cli_file_op_from_tool(tool_name: str, arguments: dict) -> CliFileOp | None:
+    """Extract a :class:`CliFileOp` from a successful ``edit``/``create`` call."""
+    path = arguments.get("path")
+    if not isinstance(path, str) or not path:
+        return None
+    if tool_name == "create":
+        file_text = arguments.get("file_text")
+        if not isinstance(file_text, str):
+            return None
+        return CliFileOp("create", path, file_text=file_text)
+    if tool_name == "edit":
+        old_str = arguments.get("old_str")
+        new_str = arguments.get("new_str")
+        if not isinstance(old_str, str) or not isinstance(new_str, str):
+            return None
+        return CliFileOp("edit", path, old_str=old_str, new_str=new_str)
+    return None
+
+
+def strip_view_line_numbers(text: str) -> str:
+    """Strip the CLI ``view`` tool's ``N. `` prefixes, preserving blank lines and EOL."""
+    return "".join(re.sub(r"^[ \t]*\d+\.[ \t]?", "", line) for line in text.splitlines(keepends=True))
+
+
+def _diff_body(original: str, modified: str) -> str:
+    """Unified-diff hunks without the ``---``/``+++`` file header lines."""
+    full = _generate_unified_diff(original, modified, "file")
+    return "".join(line for line in full.splitlines(keepends=True) if not line.startswith(("--- ", "+++ ")))
+
+
+def _consolidate_one(path: str, ops: list[CliFileOp], base: str | None = None) -> tuple[FileChange, str | None]:
+    """Collapse one file's ops within a turn into a single :class:`FileChange`.
+
+    Returns ``(change, net_content)`` where *net_content* is the reconstructed
+    final file content (or ``None`` when not reconstructable) so callers can
+    advance the base for subsequent turns.
+    """
+    filename = Path(path).name or "file"
+    language_id = language_id_from_path(path)
+
+    if len(ops) == 1 and ops[0].tool_name == "create":
+        op = ops[0]
+        diff = _generate_unified_diff("", op.file_text or "", filename)
+        return FileChange(path=path, diff=diff or None, content=op.file_text, language_id=language_id), op.file_text
+
+    current: str | None = base
+    base_content: str | None = base
+    reconstructable = base is not None
+    for op in ops:
+        if op.tool_name == "create":
+            current = op.file_text or ""
+            if base_content is None:
+                base_content = ""
+            reconstructable = True
+        elif current is not None and (op.old_str or "") in current:
+            current = current.replace(op.old_str or "", op.new_str or "", 1)
+        else:
+            reconstructable = False
+            break
+    if reconstructable and base_content is not None and current is not None:
+        diff = _generate_unified_diff(base_content, current, filename)
+        content = current if base_content == "" else None
+        return FileChange(path=path, diff=diff or None, content=content, language_id=language_id), current
+
+    # Fallback: stack each op's hunks (create as all-additions) under one header.
+    header = f"--- a/{filename}\n+++ b/{filename}\n"
+    bodies = [_diff_body("", op.file_text or "") if op.tool_name == "create" else _diff_body(op.old_str or "", op.new_str or "") for op in ops]
+    diff = header + "".join(b for b in bodies if b)
+    return FileChange(path=path, diff=diff or None, content=None, language_id=language_id), None
+
+
+def consolidate_cli_file_ops(ops: list[CliFileOp], bases: dict[str, str] | None = None) -> list[FileChange]:
+    """Group CLI file ops by path (first-occurrence order) into one card each.
+
+    Multiple edits to the same file within a turn collapse into a single
+    :class:`FileChange`. *bases* maps a path to a prior full-file read; on a
+    successful reconstruction the entry is advanced in place so later turns
+    diff against current content instead of stale views.
+    """
+    bases = bases if bases is not None else {}
+    grouped: dict[str, list[CliFileOp]] = {}
+    for op in ops:
+        grouped.setdefault(op.path, []).append(op)
+    out = []
+    for path, group in grouped.items():
+        change, net_content = _consolidate_one(path, group, bases.get(path))
+        if net_content is not None:
+            bases[path] = net_content
+        out.append(change)
+    return out
 
 
 def _format_edits_as_diff(edits: list[list[dict]], original_content: str | None = None, filename: str = "file") -> str | None:
