@@ -507,6 +507,298 @@ class TestCLIParsing:
         assert isinstance(sessions, list)
 
 
+class TestCLIFileChanges:
+    """Tests for reshaping CLI edit/create tool calls into FileChange diffs."""
+
+    @staticmethod
+    def _write_events(tmp_path: Path, tool_events: list[dict]) -> Path:
+        """Write a minimal CLI events.jsonl with a session.start, a user message,
+        and the supplied tool start/complete events, then return its path."""
+        sid = "00000000-0000-4000-8000-000000000001"
+        lines = [
+            {"type": "session.start", "data": {"sessionId": sid, "startTime": "2026-01-01T00:00:00Z", "context": {"cwd": "C:\\proj"}}},
+            {"type": "user.message", "data": {"content": "do it"}},
+        ]
+        lines.extend(tool_events)
+        events_file = tmp_path / "events.jsonl"
+        events_file.write_text("\n".join(json.dumps(line) for line in lines), encoding="utf-8")
+        return events_file
+
+    @staticmethod
+    def _tool_pair(tool_call_id: str, tool_name: str, arguments: dict, *, success: bool = True) -> list[dict]:
+        return [
+            {"type": "tool.execution_start", "data": {"toolCallId": tool_call_id, "toolName": tool_name, "arguments": arguments}},
+            {"type": "tool.execution_complete", "data": {"toolCallId": tool_call_id, "success": success, "result": {"content": "ok"}}},
+        ]
+
+    @staticmethod
+    def _all_file_changes(session) -> list:
+        return [fc for m in session.messages for fc in m.file_changes]
+
+    @staticmethod
+    def _view(tool_call_id: str, path: str, lines: list[str], view_range: list[int] | None = None) -> list[dict]:
+        """A view tool pair whose result is numbered like the real CLI ('N. text')."""
+        args = {"path": path}
+        if view_range is not None:
+            args["view_range"] = view_range
+        numbered = "\n".join(f"{i + 1}. {ln}" for i, ln in enumerate(lines))
+        return [
+            {"type": "tool.execution_start", "data": {"toolCallId": tool_call_id, "toolName": "view", "arguments": args}},
+            {"type": "tool.execution_complete", "data": {"toolCallId": tool_call_id, "success": True, "result": {"content": numbered}}},
+        ]
+
+    def test_subagent_view_then_edit_reconstructs(self, tmp_path):
+        """A subagent's own full-file view seeds reconstruction for its edits (review #1)."""
+        from copilot_session_tools.scanner import _parse_cli_jsonl_file
+
+        events = [
+            {"type": "assistant.message", "data": {"content": "delegating", "toolRequests": [{"toolCallId": "tc1", "name": "task", "arguments": {"agent_type": "explore"}}]}},
+            {"type": "tool.execution_start", "data": {"toolCallId": "tc1", "toolName": "task", "arguments": {}}},
+            {"type": "tool.execution_start", "data": {"toolCallId": "c1", "toolName": "view", "parentToolCallId": "tc1", "arguments": {"path": "/p/k.py"}}},
+            {"type": "tool.execution_complete", "data": {"toolCallId": "c1", "success": True, "result": {"content": "1. a = 1\n2. b = 2"}}},
+            {
+                "type": "tool.execution_start",
+                "data": {"toolCallId": "c2", "toolName": "edit", "parentToolCallId": "tc1", "arguments": {"path": "/p/k.py", "old_str": "a = 1\n", "new_str": "a = 9\n"}},
+            },
+            {"type": "tool.execution_complete", "data": {"toolCallId": "c2", "success": True, "result": {"content": "ok"}}},
+            {"type": "subagent.started", "data": {"toolCallId": "tc1", "agentDisplayName": "Explore"}},
+            {"type": "subagent.completed", "data": {"toolCallId": "tc1", "agentDisplayName": "Explore"}},
+            {"type": "tool.execution_complete", "data": {"toolCallId": "tc1", "success": True, "result": {"content": "done"}}},
+        ]
+        session = _parse_cli_jsonl_file(self._write_events(tmp_path, events))
+        assert session is not None
+        nested = [fc for m in session.messages for c in m.children for fc in c.file_changes]
+        assert len(nested) == 1
+        diff = nested[0].diff
+        assert diff is not None
+        assert "-a = 1" in diff and "+a = 9" in diff
+        assert "b = 2" in diff  # context from the subagent's own view base
+
+    def test_create_produces_all_additions_diff(self, tmp_path):
+        from copilot_session_tools.scanner import _parse_cli_jsonl_file
+
+        events = self._tool_pair("t1", "create", {"path": "C:\\proj\\new.py", "file_text": "a = 1\nb = 2\n"})
+        session = _parse_cli_jsonl_file(self._write_events(tmp_path, events))
+
+        changes = self._all_file_changes(session)
+        assert len(changes) == 1
+        fc = changes[0]
+        assert fc.path == "C:\\proj\\new.py"
+        assert fc.language_id == "python"
+        assert fc.content == "a = 1\nb = 2\n"
+        assert fc.diff is not None
+        assert "+a = 1" in fc.diff
+        assert "+b = 2" in fc.diff
+        # All-additions: no deletion lines (other than the --- header)
+        assert not any(line.startswith("-") and not line.startswith("---") for line in fc.diff.splitlines())
+
+    def test_edit_produces_before_after_diff(self, tmp_path):
+        from copilot_session_tools.scanner import _parse_cli_jsonl_file
+
+        events = self._tool_pair("t1", "edit", {"path": "C:\\proj\\mod.ts", "old_str": "let x = 1;\n", "new_str": "let x = 2;\n"})
+        session = _parse_cli_jsonl_file(self._write_events(tmp_path, events))
+
+        changes = self._all_file_changes(session)
+        assert len(changes) == 1
+        fc = changes[0]
+        assert fc.language_id == "typescript"
+        assert fc.content is None
+        assert fc.diff is not None
+        assert "-let x = 1;" in fc.diff
+        assert "+let x = 2;" in fc.diff
+
+    def test_failed_edit_is_gated_out(self, tmp_path):
+        from copilot_session_tools.scanner import _parse_cli_jsonl_file
+
+        events = self._tool_pair("t1", "edit", {"path": "C:\\proj\\mod.py", "old_str": "x\n", "new_str": "y\n"}, success=False)
+        session = _parse_cli_jsonl_file(self._write_events(tmp_path, events))
+
+        assert self._all_file_changes(session) == []
+
+    def test_unknown_extension_has_no_language_id(self, tmp_path):
+        from copilot_session_tools.scanner import _parse_cli_jsonl_file
+
+        events = self._tool_pair("t1", "create", {"path": "C:\\proj\\notes.xyz", "file_text": "hello\n"})
+        session = _parse_cli_jsonl_file(self._write_events(tmp_path, events))
+
+        changes = self._all_file_changes(session)
+        assert len(changes) == 1
+        assert changes[0].language_id is None
+
+    def test_edit_without_strings_emits_no_file_change(self, tmp_path):
+        from copilot_session_tools.scanner import _parse_cli_jsonl_file
+
+        events = self._tool_pair("t1", "edit", {"path": "C:\\proj\\mod.py"})
+        session = _parse_cli_jsonl_file(self._write_events(tmp_path, events))
+
+        assert self._all_file_changes(session) == []
+
+    def test_create_then_edits_consolidate_to_one_card(self, tmp_path):
+        from copilot_session_tools.scanner import _parse_cli_jsonl_file
+
+        events = []
+        events += self._tool_pair("t1", "create", {"path": "C:\\proj\\u.py", "file_text": "a = 1\n"})
+        events += self._tool_pair("t2", "edit", {"path": "C:\\proj\\u.py", "old_str": "a = 1\n", "new_str": "a = 1\nb = 2\n"})
+        events += self._tool_pair("t3", "edit", {"path": "C:\\proj\\u.py", "old_str": "b = 2\n", "new_str": "b = 2\nc = 3\n"})
+        session = _parse_cli_jsonl_file(self._write_events(tmp_path, events))
+
+        changes = self._all_file_changes(session)
+        assert len(changes) == 1  # 3 ops to same file → single consolidated card
+        fc = changes[0]
+        assert fc.diff is not None
+        # Net diff: created in-turn, all final lines are additions
+        assert "+a = 1" in fc.diff and "+b = 2" in fc.diff and "+c = 3" in fc.diff
+
+    def test_distinct_files_stay_separate(self, tmp_path):
+        from copilot_session_tools.scanner import _parse_cli_jsonl_file
+
+        events = []
+        events += self._tool_pair("t1", "create", {"path": "C:\\proj\\a.py", "file_text": "x\n"})
+        events += self._tool_pair("t2", "create", {"path": "C:\\proj\\b.py", "file_text": "y\n"})
+        session = _parse_cli_jsonl_file(self._write_events(tmp_path, events))
+
+        changes = self._all_file_changes(session)
+        assert len(changes) == 2
+        assert {c.path for c in changes} == {"C:\\proj\\a.py", "C:\\proj\\b.py"}
+
+    def test_edit_only_same_file_stacks_into_one_card(self, tmp_path):
+        from copilot_session_tools.scanner import _parse_cli_jsonl_file
+
+        events = []
+        events += self._tool_pair("t1", "edit", {"path": "C:\\proj\\m.py", "old_str": "x = 1\n", "new_str": "x = 2\n"})
+        events += self._tool_pair("t2", "edit", {"path": "C:\\proj\\m.py", "old_str": "y = 1\n", "new_str": "y = 2\n"})
+        session = _parse_cli_jsonl_file(self._write_events(tmp_path, events))
+
+        changes = self._all_file_changes(session)
+        assert len(changes) == 1  # not reconstructable (no create) → stacked hunks, one card
+        assert changes[0].diff.count("@@") >= 2
+
+    def test_edit_only_with_prior_full_view_reconstructs_net_diff(self, tmp_path):
+        """A full-file view earlier in the session lets edit-only sequences form ONE net diff."""
+        from copilot_session_tools.scanner import _parse_cli_jsonl_file
+
+        events = []
+        events += self._view("v1", "C:\\proj\\app.py", ["x = 1", "y = 1", "z = 1"])  # full read (no range)
+        events += self._tool_pair("t1", "edit", {"path": "C:\\proj\\app.py", "old_str": "x = 1\n", "new_str": "x = 2\n"})
+        events += self._tool_pair("t2", "edit", {"path": "C:\\proj\\app.py", "old_str": "y = 1\n", "new_str": "y = 9\n"})
+        session = _parse_cli_jsonl_file(self._write_events(tmp_path, events))
+
+        changes = self._all_file_changes(session)
+        assert len(changes) == 1
+        fc = changes[0]
+        # Single coherent net diff against the viewed base (line-number prefixes stripped)
+        assert "-x = 1" in fc.diff and "+x = 2" in fc.diff
+        assert "-y = 1" in fc.diff and "+y = 9" in fc.diff
+        assert "z = 1" in fc.diff  # trailing unchanged context preserved → real base was used
+
+    def test_edit_only_partial_view_falls_back_to_stacked(self, tmp_path):
+        """A range-limited view is not trusted as a base; stays stacked hunks."""
+        from copilot_session_tools.scanner import _parse_cli_jsonl_file
+
+        events = []
+        events += self._view("v1", "C:\\proj\\m.py", ["x = 1", "y = 1"], view_range=[1, 2])
+        events += self._tool_pair("t1", "edit", {"path": "C:\\proj\\m.py", "old_str": "x = 1\n", "new_str": "x = 2\n"})
+        events += self._tool_pair("t2", "edit", {"path": "C:\\proj\\m.py", "old_str": "q = 1\n", "new_str": "q = 2\n"})
+        session = _parse_cli_jsonl_file(self._write_events(tmp_path, events))
+
+        changes = self._all_file_changes(session)
+        assert len(changes) == 1
+        assert changes[0].diff.count("@@") >= 2  # not reconstructed → stacked
+
+    def test_edit_only_view_base_mismatch_falls_back(self, tmp_path):
+        """If any old_str doesn't match the viewed base (stale file), fall back safely."""
+        from copilot_session_tools.scanner import _parse_cli_jsonl_file
+
+        events = []
+        events += self._view("v1", "C:\\proj\\m.py", ["x = 1", "y = 1"])
+        events += self._tool_pair("t1", "edit", {"path": "C:\\proj\\m.py", "old_str": "x = 1\n", "new_str": "x = 2\n"})
+        events += self._tool_pair("t2", "edit", {"path": "C:\\proj\\m.py", "old_str": "NOT_PRESENT\n", "new_str": "z\n"})
+        session = _parse_cli_jsonl_file(self._write_events(tmp_path, events))
+
+        changes = self._all_file_changes(session)
+        assert len(changes) == 1
+        assert changes[0].diff.count("@@") >= 2  # mismatch → stacked, never a wrong base
+
+
+class TestConsolidateCliFileOps:
+    """Unit tests for the pure consolidation helper, incl. backfill of existing cases."""
+
+    def _ops(self):
+        from copilot_session_tools.scanner.diff import CliFileOp
+
+        return CliFileOp
+
+    @staticmethod
+    def _diff(fc) -> str:
+        assert fc.diff is not None
+        return fc.diff
+
+    def test_single_create_is_all_additions(self):
+        from copilot_session_tools.scanner.diff import consolidate_cli_file_ops
+
+        op = self._ops()("create", "/a.py", file_text="a\nb\n")
+        out = consolidate_cli_file_ops([op])
+        assert len(out) == 1 and out[0].content == "a\nb\n" and "+a" in self._diff(out[0])
+
+    def test_create_led_edits_net_diff(self):
+        from copilot_session_tools.scanner.diff import consolidate_cli_file_ops
+
+        C = self._ops()
+        ops = [C("create", "/a.py", file_text="a\n"), C("edit", "/a.py", old_str="a\n", new_str="a\nb\n")]
+        out = consolidate_cli_file_ops(ops)
+        assert len(out) == 1 and "+a" in self._diff(out[0]) and "+b" in self._diff(out[0])
+
+    def test_edit_only_no_base_stacks(self):
+        from copilot_session_tools.scanner.diff import consolidate_cli_file_ops
+
+        C = self._ops()
+        ops = [C("edit", "/a.py", old_str="x\n", new_str="y\n"), C("edit", "/a.py", old_str="p\n", new_str="q\n")]
+        out = consolidate_cli_file_ops(ops)
+        assert len(out) == 1 and self._diff(out[0]).count("@@") >= 2
+
+    def test_edit_only_with_base_reconstructs(self):
+        from copilot_session_tools.scanner.diff import consolidate_cli_file_ops
+
+        C = self._ops()
+        ops = [C("edit", "/a.py", old_str="x\n", new_str="y\n")]
+        out = consolidate_cli_file_ops(ops, bases={"/a.py": "x\nkeep\n"})
+        assert " keep" in self._diff(out[0])
+
+    def test_base_mismatch_falls_back(self):
+        from copilot_session_tools.scanner.diff import consolidate_cli_file_ops
+
+        C = self._ops()
+        ops = [C("edit", "/a.py", old_str="zzz\n", new_str="y\n")]
+        out = consolidate_cli_file_ops(ops, bases={"/a.py": "x\nkeep\n"})
+        assert self._diff(out[0]).count("@@") >= 1 and " keep" not in self._diff(out[0])
+
+    def test_fallback_preserves_create_when_edit_mismatches(self):
+        """Mixed create+failed-edit must not drop the create's content (review #3)."""
+        from copilot_session_tools.scanner.diff import consolidate_cli_file_ops
+
+        C = self._ops()
+        ops = [C("create", "/a.py", file_text="line1\nline2\n"), C("edit", "/a.py", old_str="NOPE\n", new_str="z\n")]
+        out = consolidate_cli_file_ops(ops)
+        assert len(out) == 1
+        assert "+line1" in self._diff(out[0]) and "+line2" in self._diff(out[0])  # creation not lost
+
+    def test_view_base_updates_after_consolidation(self):
+        """Reconstructed content is written back so later turns aren't stale (review #2)."""
+        from copilot_session_tools.scanner.diff import consolidate_cli_file_ops
+
+        C = self._ops()
+        bases = {"/a.py": "x = 1\nkeep\n"}
+        consolidate_cli_file_ops([C("edit", "/a.py", old_str="x = 1\n", new_str="x = 2\n")], bases)
+        assert bases["/a.py"] == "x = 2\nkeep\n"  # base advanced to post-edit content
+
+    def test_strip_view_line_numbers_keeps_empty_lines_and_trailing_newline(self):
+        """Prefix stripping must preserve blank lines and trailing newline (review #4)."""
+        from copilot_session_tools.scanner.diff import strip_view_line_numbers
+
+        # line 2 is blank; original ends with newline
+        assert strip_view_line_numbers("1. a\n2.\n3. b\n") == "a\n\nb\n"
+
+
 class TestWorkspaceYamlParsing:
     """Tests for workspace.yaml parsing and CLI session title extraction."""
 
@@ -1787,6 +2079,7 @@ class TestCLINewEventHandlers:
             {"type": "session.truncation", "data": {"reason": "context_window"}},
             {"type": "session.workspace_file_changed", "data": {"operation": "updated", "path": "src/app.py"}},
             {"type": "system.notification", "data": {"content": "Shell command completed"}},
+            {"type": "hook.progress", "data": {"message": "\x1b[33mRunning postToolUse hook\x1b[0m", "temporary": False}},
             {"type": "hook.end", "data": {"hookType": "postToolUse", "success": False, "error": "blocked"}},
         )
 
@@ -1796,6 +2089,7 @@ class TestCLINewEventHandlers:
         assert self._find_status_blocks(session, "truncation")[0].content == "Context truncated: context_window"
         assert self._find_status_blocks(session, "workspace-file")[0].content == "Workspace file changed: updated src/app.py"
         assert self._find_status_blocks(session, "notification")[0].content == "Shell command completed"
+        assert self._find_status_blocks(session, "hook-progress")[0].content == "Hook progress: Running postToolUse hook"
         assert self._find_status_blocks(session, "hook-error")[0].content == "Hook failed: postToolUse - blocked"
 
     def test_status_event_payloads_strip_ansi_codes(self, tmp_path):
@@ -2840,16 +3134,22 @@ class TestCLIv105EventHandlers:
             "sampling.requested",
             "session.background_tasks_changed",
             "session.canvas.opened",
+            "session.canvas.closed",
             "session.canvas.registry_changed",
             "session.custom_notification",
             "session.custom_agents_updated",
             "session.extensions_loaded",
+            "session.extensions.attachments_pushed",
             "session.idle",
             "session.import_legacy",
             "session.mcp_server_status_changed",
             "session.mcp_servers_loaded",
+            "session.autopilot_objective_changed",
+            "session.binary_asset",
+            "session.permissions_changed",
             "session.skills_loaded",
             "session.snapshot_rewind",
+            "session.todos_changed",
             "session.tools_updated",
             "session.usage_info",
             "subagent.selected",
