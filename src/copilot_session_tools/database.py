@@ -665,6 +665,9 @@ class Database:
         Idempotent: deletes existing data for this session_id, then inserts fresh.
         """
         with self._get_connection() as conn:
+            # Attach Chronicle (best-effort, idempotent) so the turn count can be
+            # recorded on cst_sessions for like-for-like incremental staleness checks.
+            self._attach_chronicle(conn)
             db_storage.enrich_session(conn, session)
 
     def cleanup_orphaned_cst_sessions(self) -> list[str]:

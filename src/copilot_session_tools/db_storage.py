@@ -31,7 +31,7 @@ from .db_schema import (
 from .markdown_exporter import message_to_markdown
 from .scanner import ChatSession
 
-CST_SCHEMA_VERSION = 11
+CST_SCHEMA_VERSION = 12
 CHRONICLE_SCHEMA_VERSION = 4
 
 
@@ -57,7 +57,8 @@ CREATE TABLE IF NOT EXISTS cst_sessions (
     repository_url TEXT,
     parser_version INTEGER NOT NULL DEFAULT 1,
     source_format TEXT,
-    enrichment_version TEXT
+    enrichment_version TEXT,
+    builtin_turns INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS cst_messages (
@@ -402,6 +403,13 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         # v10 → v11: Add CLI source event ids for fork-aware search de-duplication.
         if current_version < 11:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_cst_messages_source_event ON cst_messages(source_event_id)")
+        # v11 → v12: Store Chronicle turn count per enriched CLI session so
+        # incremental scans detect growth via a like-for-like comparison
+        # instead of comparing Chronicle turns against enriched user-message
+        # counts (which differ and caused perpetual re-enrichment).
+        if current_version < 12:
+            with contextlib.suppress(sqlite3.OperationalError):
+                cursor.execute("ALTER TABLE cst_sessions ADD COLUMN builtin_turns INTEGER")
         cursor.execute(
             "UPDATE cst_schema_version SET version = ?",
             (CST_SCHEMA_VERSION,),
@@ -444,15 +452,23 @@ def has_cst_tables(conn: sqlite3.Connection, *, unenriched_only: bool = False) -
 
 
 def discover_sessions_needing_enrichment(conn: sqlite3.Connection, *, has_chronicle: bool = False) -> list[dict]:
-    """Find CLI sessions needing enrichment by comparing Chronicle turns vs cst_messages.
+    """Find CLI sessions needing enrichment by comparing Chronicle turn counts.
 
-    When Chronicle is ATTACHed (``has_chronicle=True``), compares
-    ``chronicle.sessions``/``chronicle.turns`` against ``cst_messages``.
-    Without Chronicle, returns an empty list (no discovery source).
+    When Chronicle is ATTACHed (``has_chronicle=True``), compares the current
+    ``chronicle.turns`` count for each session against the turn count stored on
+    ``cst_sessions.builtin_turns`` at the last enrichment.  Without Chronicle,
+    returns an empty list (no discovery source).
 
     Returns sessions where:
     - No cst_sessions row exists (new, never enriched)
-    - Turn count differs (session has new messages since last enrichment)
+    - ``builtin_turns`` was never recorded (enriched before v12 — backfilled once)
+    - The Chronicle turn count changed since last enrichment (session grew)
+
+    The comparison is like-for-like (stored Chronicle turn count vs current
+    Chronicle turn count).  An earlier version compared Chronicle turns against
+    the count of enriched ``role='user'`` messages; those counts differ by a
+    source-dependent offset, so already-current sessions were re-flagged stale
+    and fully re-written on *every* scan.
 
     Uses direct sqlite_master probe (not has_cst_tables()) so this works
     correctly even when --unenriched-only is set — scan should still enrich.
@@ -469,23 +485,23 @@ def discover_sessions_needing_enrichment(conn: sqlite3.Connection, *, has_chroni
                 SELECT
                     s.id as session_id,
                     COUNT(DISTINCT t.turn_index) as builtin_turns,
-                    (SELECT COUNT(*) FROM cst_messages cm
-                     WHERE cm.session_id = s.id AND cm.role = 'user') as cst_user_msgs,
+                    cs.builtin_turns as stored_turns,
                     CASE WHEN cs.session_id IS NULL THEN 'new'
                          ELSE 'stale' END as status
                 FROM chronicle.sessions s
                 LEFT JOIN chronicle.turns t ON s.id = t.session_id
                 LEFT JOIN cst_sessions cs ON s.id = cs.session_id
                 GROUP BY s.id
-                HAVING cst_user_msgs != builtin_turns
-                    OR cs.session_id IS NULL
+                HAVING cs.session_id IS NULL
+                    OR cs.builtin_turns IS NULL
+                    OR cs.builtin_turns != COUNT(DISTINCT t.turn_index)
             """).fetchall()
         else:
             rows = conn.execute("""
                 SELECT
                     s.id as session_id,
                     COUNT(DISTINCT t.turn_index) as builtin_turns,
-                    0 as cst_user_msgs,
+                    NULL as stored_turns,
                     'new' as status
                 FROM chronicle.sessions s
                 LEFT JOIN chronicle.turns t ON s.id = t.session_id
@@ -526,7 +542,15 @@ def _delete_session_data(cursor: sqlite3.Cursor, session_id: str) -> None:
         "DELETE FROM cst_command_runs WHERE message_id IN (SELECT id FROM cst_messages WHERE session_id = ?)",
         (session_id,),
     )
-    cursor.execute("DELETE FROM cst_messages_fts WHERE session_id = ?", (session_id,))
+    # Delete FTS rows by rowid (== cst_messages.id) via the indexed session
+    # lookup.  ``session_id`` is UNINDEXED in the FTS5 table, so deleting by it
+    # forces a full external scan of every FTS doc; deleting by rowid is a
+    # direct lookup.  Must run before the cst_messages delete below so the
+    # subquery can still resolve the message ids.
+    cursor.execute(
+        "DELETE FROM cst_messages_fts WHERE rowid IN (SELECT id FROM cst_messages WHERE session_id = ?)",
+        (session_id,),
+    )
     cursor.execute("DELETE FROM cst_root_agent_intervals WHERE session_id = ?", (session_id,))
     cursor.execute("DELETE FROM cst_session_contexts WHERE session_id = ?", (session_id,))
     cursor.execute("DELETE FROM cst_messages WHERE session_id = ?", (session_id,))
@@ -949,6 +973,24 @@ def get_all_file_metadata(conn: sqlite3.Connection) -> dict[str, tuple[float, in
 # ---------------------------------------------------------------------------
 
 
+def _builtin_turn_count(conn: sqlite3.Connection, session_id: str) -> int | None:
+    """Return the current Chronicle turn count for *session_id*, or None.
+
+    Returns None when Chronicle is not ATTACHed (so the caller stores NULL and
+    the session is re-evaluated on a later scan that has Chronicle).  Returns 0
+    for a Chronicle session that genuinely has no turns, so it converges instead
+    of being re-flagged forever.
+    """
+    try:
+        row = conn.execute(
+            "SELECT COUNT(DISTINCT turn_index) FROM chronicle.turns WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None  # Chronicle not attached
+    return row[0] if row else 0
+
+
 def enrich_session(conn: sqlite3.Connection, session: ChatSession) -> None:
     """Write/update cst_* tables for a parsed ChatSession.
 
@@ -957,6 +999,10 @@ def enrich_session(conn: sqlite3.Connection, session: ChatSession) -> None:
     from copilot_session_tools import __version__
 
     enriched_at = datetime.now(UTC).isoformat()
+
+    # Record the Chronicle turn count so incremental scans can detect growth
+    # with a like-for-like comparison (see discover_sessions_needing_enrichment).
+    builtin_turns = _builtin_turn_count(conn, session.session_id)
 
     cursor = conn.cursor()
 
@@ -969,7 +1015,7 @@ def enrich_session(conn: sqlite3.Connection, session: ChatSession) -> None:
     # Insert session
     cursor.execute(
         insert_sql("cst_sessions", CST_SESSION_COLUMNS),
-        session_to_row(session, enrichment_version=__version__, updated_at_fallback=enriched_at),
+        session_to_row(session, enrichment_version=__version__, updated_at_fallback=enriched_at, builtin_turns=builtin_turns),
     )
 
     for interval in session.root_agent_intervals:

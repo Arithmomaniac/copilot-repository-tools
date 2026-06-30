@@ -2501,10 +2501,11 @@ class TestTwoTierRendering:
         _insert_builtin_session(chronicle_path, "sess-a", summary="A")
         _insert_builtin_turn(chronicle_path, "sess-a", 0, "q", "a")
 
-        # Session B: in both Chronicle and cst_sessions → already enriched
+        # Session B: enriched with the current Chronicle turn count → up to date.
+        # Enrichment (not add_session) records builtin_turns for like-for-like checks.
         _insert_builtin_session(chronicle_path, "sess-b", summary="B")
         _insert_builtin_turn(chronicle_path, "sess-b", 0, "q", "a")
-        full_db.add_session(
+        full_db.enrich_session(
             ChatSession(
                 session_id="sess-b",
                 workspace_name="proj",
@@ -2518,6 +2519,63 @@ class TestTwoTierRendering:
         ids = [r["session_id"] for r in needing]
         assert "sess-a" in ids
         assert "sess-b" not in ids
+
+    def test_discover_detects_grown_session_not_unchanged(self, full_db):
+        """A session is re-flagged only when its Chronicle turn count changes.
+
+        Guards against the prior bug where already-current sessions were
+        re-flagged on every scan because Chronicle turns were compared against
+        the enriched user-message count (an incompatible quantity).
+        """
+        chronicle_path = str(full_db.chronicle_db_path)
+        _insert_builtin_session(chronicle_path, "sess-grow", summary="G")
+        _insert_builtin_turn(chronicle_path, "sess-grow", 0, "q1", "a1")
+        _insert_builtin_turn(chronicle_path, "sess-grow", 1, "q2", "a2")
+
+        # Enrich at 2 turns — the enriched session has more user messages than
+        # turns, which previously caused a perpetual false positive.
+        full_db.enrich_session(
+            ChatSession(
+                session_id="sess-grow",
+                workspace_name="proj",
+                workspace_path="/tmp/proj",
+                messages=[
+                    ChatMessage(role="user", content="q1"),
+                    ChatMessage(role="assistant", content="a1"),
+                    ChatMessage(role="user", content="q2"),
+                ],
+                created_at="2025-01-15T10:00:00Z",
+            )
+        )
+
+        # Unchanged → not flagged (the core regression guard).
+        assert "sess-grow" not in [r["session_id"] for r in full_db.discover_sessions_needing_enrichment()]
+
+        # A new Chronicle turn arrives → flagged again.
+        _insert_builtin_turn(chronicle_path, "sess-grow", 2, "q3", "a3")
+        assert "sess-grow" in [r["session_id"] for r in full_db.discover_sessions_needing_enrichment()]
+
+    def test_discover_converges_after_enrichment(self, full_db):
+        """Enriching a discovered session removes it from the next discovery pass."""
+        chronicle_path = str(full_db.chronicle_db_path)
+        _insert_builtin_session(chronicle_path, "sess-conv", summary="C")
+        _insert_builtin_turn(chronicle_path, "sess-conv", 0, "q", "a")
+
+        first = [r["session_id"] for r in full_db.discover_sessions_needing_enrichment()]
+        assert "sess-conv" in first
+
+        full_db.enrich_session(
+            ChatSession(
+                session_id="sess-conv",
+                workspace_name="proj",
+                workspace_path="/tmp/proj",
+                messages=[ChatMessage(role="user", content="q")],
+                created_at="2025-01-15T10:00:00Z",
+            )
+        )
+
+        second = [r["session_id"] for r in full_db.discover_sessions_needing_enrichment()]
+        assert "sess-conv" not in second
 
     # -- 8. delete_cst_session ---------------------------------------------
 
