@@ -7,7 +7,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.17.0] - 2026-06-25
+## [0.17.0] - 2026-06-29
+
+### Added
+
+- **CLI File Changes**: CLI `edit`/`create` tool calls now render as per-message file-change diffs, matching the VS Code view across the web viewer, Markdown export, and HTML export.
+- **Per-turn consolidation**: Multiple edits to the same file within a turn collapse into one card — a true net diff when the file is created in-turn, or reconstructed from a prior full-file `view` (including subagent views), with a stacked-hunks fallback when no base is available.
 
 ### Fixed
 
